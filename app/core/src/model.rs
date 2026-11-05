@@ -225,6 +225,14 @@ impl StreamDenoiser {
         }
     }
 
+    /// Drops the model's streaming state (noise estimate, speaker lock) and
+    /// whatever it was holding. Used when the chain starts over after a long
+    /// silence: a stopped residual denoiser also has a stale noise estimate.
+    pub fn reset(&mut self) {
+        self.pending.clear();
+        self.model.reset();
+    }
+
     /// Emits the tail still held by the model (end of stream).
     pub fn flush(&mut self, out: &mut Vec<f32>) {
         if !self.pending.is_empty() {

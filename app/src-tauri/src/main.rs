@@ -886,6 +886,14 @@ fn save_window(app: &tauri::AppHandle) {
     let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
         return;
     };
+    // a minimized window reports (-32000, -32000); saving that made the next
+    // start invisible
+    if window.is_minimized().unwrap_or(false)
+        || position.x <= -30000
+        || position.y <= -30000
+    {
+        return;
+    }
     let state = WindowState {
         x: position.x,
         y: position.y,
@@ -895,6 +903,24 @@ fn save_window(app: &tauri::AppHandle) {
     if let Ok(text) = serde_json::to_string(&state) {
         let _ = std::fs::write(window_state_path(), text);
     }
+}
+
+/// True when at least a corner of the window is on a real monitor.
+fn monitor_contains(app: &tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> bool {
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return true;
+    };
+    monitors.iter().any(|monitor| {
+        let area = monitor.work_area();
+        let left = area.position.x;
+        let top = area.position.y;
+        let right = left + area.size.width as i32;
+        let bottom = top + area.size.height as i32;
+        x < right && x + w as i32 > left && y < bottom && y + h as i32 > top
+    })
 }
 
 fn restore_window(app: &tauri::AppHandle) {
@@ -907,8 +933,16 @@ fn restore_window(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let _ = window.set_size(tauri::PhysicalSize::new(state.w.max(640), state.h.max(480)));
-    let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+    let w = state.w.max(640);
+    let h = state.h.max(480);
+    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+    // -32000 is the minimized sentinel, and a monitor may have been unplugged:
+    // either way putting the window there leaves no window at all
+    if state.x > -30000 && state.y > -30000 && monitor_contains(app, state.x, state.y, w, h) {
+        let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+    } else {
+        let _ = window.center();
+    }
 }
 
 fn main() {

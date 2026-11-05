@@ -137,6 +137,9 @@ pub struct Agc {
     target_lin: f64,
     smooth_coef: f64,
     smooth_rate: f64,
+    /// a new phrase started: the first detector window may set the gain
+    /// straight to the measured value instead of ramping up from zero
+    fresh: bool,
     pub target_db: f64,
     pub max_gain_db: f64,
     pub min_gain_db: f64,
@@ -159,6 +162,7 @@ impl Default for Agc {
             target_lin: 1.0,
             smooth_coef: 0.0,
             smooth_rate: 0.0,
+            fresh: true,
             target_db: -24.0,
             max_gain_db: 12.0,
             min_gain_db: 0.0,
@@ -198,12 +202,20 @@ impl Agc {
                 self.rms = if self.rms <= 0.0 { block_rms } else { self.rms * 0.9 + block_rms * 0.1 };
                 let rms_db = 20.0 * self.rms.log10();
                 let wanted = (self.target_db - rms_db).clamp(self.min_gain_db, self.max_gain_db);
-                // drop fast, lift slowly: a loud syllable must be caught at once,
-                // but raising the level over a couple of seconds is what keeps
-                // the loudness even instead of jumping between words
-                let step = wanted - self.gain_db;
-                let coef = if step < 0.0 { 0.5 } else { 0.25 };
-                self.gain_db += step.clamp(-5.0, 5.0) * coef;
+                if self.fresh {
+                    // first window of a new phrase: the previous gain says
+                    // nothing about this level, so start at the measured value
+                    // (the per-sample smoother still ramps it over 30 ms)
+                    self.gain_db = wanted;
+                    self.fresh = false;
+                } else {
+                    // drop fast, lift slowly: a loud syllable must be caught at once,
+                    // but raising the level over a couple of seconds is what keeps
+                    // the loudness even instead of jumping between words
+                    let step = wanted - self.gain_db;
+                    let coef = if step < 0.0 { 0.5 } else { 0.25 };
+                    self.gain_db += step.clamp(-5.0, 5.0) * coef;
+                }
                 self.target_lin = 10f64.powf(self.gain_db / 20.0);
             }
         }
@@ -213,12 +225,20 @@ impl Agc {
         x * self.gain_lin
     }
 
+    /// A new phrase started: the held gain and average belong to the previous
+    /// one, so the first detector window may set the gain straight away.
+    pub fn start_phrase(&mut self) {
+        self.rms = 0.0;
+        self.fresh = true;
+    }
+
     pub fn reset(&mut self) {
         self.block_sum = 0.0;
         self.block_count = 0;
         self.rms = 0.0;
         self.gain_db = 0.0;
         self.gain_lin = 1.0;
+        self.fresh = true;
     }
 }
 
@@ -342,6 +362,10 @@ impl Chain {
     /// is in the current block; the AGC only lifts the level for that speaker,
     /// so residual noise and other voices are not amplified.
     pub fn set_target_present(&mut self, present: bool) {
+        if present && !self.agc.target_present {
+            // a new phrase: do not ramp up from the previous phrase's gain
+            self.agc.start_phrase();
+        }
         self.agc.target_present = present;
     }
 
@@ -502,5 +526,22 @@ mod tests {
         }
 
         assert!(biggest < 0.005, "gain stepped by {biggest:.4} in one sample");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn agc_starts_a_new_phrase_at_the_measured_gain() {
+        // a phrase after a pause must not fade in over seconds: the first
+        // detector window after `start_phrase` sets the gain directly
+        let mut agc = Agc::default();
+        agc.target_db = -24.0;
+        agc.max_gain_db = 12.0;
+        agc.start_phrase();
+        agc.target_present = true;
+        for n in 0..14_400 {
+            let x = (2.0 * std::f64::consts::PI * 220.0 * n as f64 / 48_000.0).sin() * 0.02;
+            let _ = agc.process(x, 48_000.0);
+        }
+        assert!(agc.gain_db > 10.0, "agc stayed at {:.1} dB", agc.gain_db);
     }
 }

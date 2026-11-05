@@ -54,6 +54,9 @@ pub struct Settings {
     pub mode: String,
     pub profile_path: Option<String>,
     pub isolation_strength: f32,
+    /// hard floor under the voice: the processed output is never more than this
+    /// many dB below the model input while the input is speech. 0 = no limit.
+    pub max_suppression_db: f32,
 
     /// remembered device names, so a restart keeps the user's choice
     pub input_device: String,
@@ -132,6 +135,7 @@ impl Default for Settings {
             mode: "profile".into(),
             profile_path: None,
             isolation_strength: 1.0,
+            max_suppression_db: 24.0,
 
             input_device: String::new(),
             output_device: String::new(),

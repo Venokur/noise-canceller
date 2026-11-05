@@ -15,6 +15,7 @@ interface Settings {
   mode: string;
   profilePath: string | null;
   isolationStrength: number;
+  maxSuppressionDb: number;
   inputDevice: string;
   outputDevice: string;
   inputLeveling: boolean;
@@ -1320,6 +1321,11 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
                   class="ml-1 text-[12px] font-normal text-[var(--muted)]"
                   >дБ</span
                 >
+                <span
+                  v-if="stats.suppressionDb > 0.5 && settings && settings.maxSuppressionDb > 0"
+                  class="ml-1 text-[11px] font-normal text-[var(--muted)]"
+                  >/ {{ settings.maxSuppressionDb.toFixed(0) }}</span
+                >
               </div>
             </div>
           </div>
@@ -1746,9 +1752,9 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
           </section>
 
           <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Изоляция голоса</div>
+            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Автоподавление голоса</div>
             <div :class="settingRow">
-              <AppLabel text="Удаление чужих голосов" hint="VoxLock пропускает только ваш голос. Выключено — остаётся обычный шумодав: легче процессору и профиль не нужен." />
+              <AppLabel text="Оставлять только мой голос" hint="VoxLock пропускает только ваш голос. Выключено — остаётся обычный шумодав: легче процессору и профиль не нужен." />
               <AppSwitch v-model="settings.voiceIsolation" @update:model-value="restartSoon" />
             </div>
             <p :class="muted" class="mb-1">
@@ -1763,6 +1769,16 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
                 :max="1"
                 :step="0.05"
                 :format="(v) => v.toFixed(2)"
+              />
+            </div>
+            <div v-if="settings.voiceIsolation" :class="settingRow">
+              <AppLabel text="Предел подавления" hint="Выход модели никогда не будет тише входа больше чем на эту величину, пока вы говорите. 0 — без предела: максимальная изоляция, но модель может полностью заглушить голос." />
+              <AppSlider
+                v-model="settings.maxSuppressionDb"
+                :min="0"
+                :max="40"
+                :step="1"
+                :format="(v) => (v <= 0 ? 'без предела' : `${v} дБ`)"
               />
             </div>
             <div v-if="settings.voiceIsolation" :class="settingRow">
