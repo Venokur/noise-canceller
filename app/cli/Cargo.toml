@@ -1,0 +1,13 @@
+[package]
+name = "noise-canceller-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "nc"
+path = "src/main.rs"
+
+[dependencies]
+noise-canceller-core = { path = "../core" }
+anyhow.workspace = true
+hound.workspace = true

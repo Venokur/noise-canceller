@@ -1,0 +1,25 @@
+# Rust / Tauri build artifacts
+app/target/
+app/dist/
+app/node_modules/
+app/data/
+
+# runtime data
+portable/data/
+portable/models/
+portable/native/
+portable/*.exe
+data/
+
+# models and native libraries are downloaded
+models/
+app/models/
+app/native/
+
+# editor / os
+.vs/
+.idea/
+*.user
+*.log
+Thumbs.db
+desktop.ini
