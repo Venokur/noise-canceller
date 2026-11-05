@@ -61,8 +61,6 @@ interface Stats {
   rtf: number;
   latencyMs: number;
   underruns: number;
-  underSamples: number;
-  underMs: number;
   overflows: number;
   captureDrops: number;
   backend: string;
@@ -142,8 +140,6 @@ const stats = ref<Stats>({
   rtf: 0,
   latencyMs: 0,
   underruns: 0,
-  underSamples: 0,
-  underMs: 0,
   overflows: 0,
   captureDrops: 0,
   backend: "",
@@ -2008,15 +2004,8 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
               </span>
               <span class="text-[var(--muted)]">Сбросов модели</span>
               <span class="tabular-nums">{{ stats.guardResets }}</span>
-              <span class="text-[var(--muted)]" title="Колбэки вывода, которые не успели получить данные. В скобках — суммарная длительность пропусков.">
-                Пропусков буфера
-              </span>
-              <span class="tabular-nums">
-                {{ stats.underruns
-                }}<span v-if="stats.underruns" class="text-[var(--muted)]">
-                  · {{ stats.underMs.toFixed(0) }} мс</span
-                >
-              </span>
+              <span class="text-[var(--muted)]">Пропусков буфера</span>
+              <span class="tabular-nums">{{ stats.underruns }}</span>
               <span class="text-[var(--muted)]" title="Блоки, которые не влезли в кольцо вывода и были потеряны. Ноль — норма.">
                 Переполнений буфера
               </span>

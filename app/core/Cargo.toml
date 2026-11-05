@@ -11,6 +11,3 @@ cpal.workspace = true
 rtrb.workspace = true
 libloading.workspace = true
 hound.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Threading"] }

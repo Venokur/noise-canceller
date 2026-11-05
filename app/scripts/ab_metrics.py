@@ -33,51 +33,9 @@ def env(x, rate, ms=20):
     return 20 * np.log10(rms + 1e-12)
 
 
-def align(raw, clean, rate):
-    """Compensate the capture/processor offset (100-200 ms).
-
-    The raw take is written from the capture callback and the clean one from
-    the processing thread, so they start at different moments. Without this,
-    a speech frame is compared with a pause frame and the metrics lie: the
-    last take reported -33 dB "level moved" purely because of the offset.
-    """
-    er = env(raw, rate)
-    ec = env(clean, rate)
-    frames = min(len(er), len(ec))
-    if frames < 20:
-        return raw, clean, 0
-    best = (0, -1.0)
-    # +/-600 ms in 20 ms frames
-    for lag in range(-30, 31):
-        if lag >= 0:
-            a = er[: frames - lag]
-            b = ec[lag:frames]
-        else:
-            a = er[-lag:frames]
-            b = ec[: frames + lag]
-        if len(a) < 20:
-            continue
-        corr = float(np.corrcoef(a, b)[0, 1])
-        if corr > best[1]:
-            best = (lag, corr)
-    lag, corr = best
-    if corr < 0.3:
-        return raw, clean, 0
-    span = max(1, int(rate * 0.02))
-    if lag > 0:
-        # clean is later by `lag` frames: drop its head
-        clean = clean[lag * span :]
-        raw = raw[: len(clean)]
-    elif lag < 0:
-        raw = raw[(-lag) * span :]
-        clean = clean[: len(raw)]
-    return raw, clean, lag * 20
-
-
 def main(raw_path, clean_path):
     raw, rate = load(raw_path)
     clean, _ = load(clean_path)
-    raw, clean, align_ms = align(raw, clean, rate)
     n = min(len(raw), len(clean))
     raw, clean = raw[:n], clean[:n]
 
@@ -92,13 +50,10 @@ def main(raw_path, clean_path):
     floor = float(np.percentile(er, 10))
     speech = er > max(floor + 18.0, -55.0)
     pause = er < floor + 5.0
-    # a 10 s take of continuous speech has almost no real pauses; measuring
-    # "contrast" on word gaps then fails a perfectly good take
-    has_pauses = float(pause.mean()) >= 0.03
 
     clean_speech = float(np.median(ec[speech])) if speech.any() else -120.0
     raw_speech = float(np.median(er[speech])) if speech.any() else -120.0
-    clean_pause = float(np.median(ec[pause])) if has_pauses else None
+    clean_pause = float(np.median(ec[pause])) if pause.any() else -120.0
 
     muted = speech & (ec < clean_speech - 30.0)
     runs = []
@@ -113,29 +68,19 @@ def main(raw_path, clean_path):
         else:
             i += 1
 
-    # how much the *audible* voice level moves between phrases: the complaint
-    # was "the voice jumps in volume" even when the take is otherwise clean
-    audible = speech & (ec > -70.0)
-    if audible.sum() >= 5:
-        level_spread = float(np.percentile(ec[audible], 90) - np.percentile(ec[audible], 10))
-    else:
-        level_spread = None
-
     metrics = {
         "speech_level_db": round(clean_speech, 1),
         "level_delta_db": round(clean_speech - raw_speech, 1),
-        "pause_contrast_db": round(clean_speech - clean_pause, 1) if has_pauses else None,
+        "pause_contrast_db": round(clean_speech - clean_pause, 1),
         "muted_total_s": round(float(muted.sum()) * 0.02, 2),
         "longest_dropout_s": round(max(runs) if runs else 0.0, 2),
-        "level_spread_db": round(level_spread, 1) if level_spread is not None else None,
-        "align_ms": round(align_ms, 0),
     }
     print(json.dumps(metrics))
 
     problems = []
     if metrics["longest_dropout_s"] > 0.4:
         problems.append(f"dropout {metrics['longest_dropout_s']}s > 0.4s")
-    if metrics["pause_contrast_db"] is not None and metrics["pause_contrast_db"] < 12.0:
+    if metrics["pause_contrast_db"] < 12.0:
         problems.append(f"pauses only {metrics['pause_contrast_db']} dB below speech < 12 dB")
     if abs(metrics["level_delta_db"]) > 20.0:
         problems.append(f"level moved {metrics['level_delta_db']} dB from the raw take")
