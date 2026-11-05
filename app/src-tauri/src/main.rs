@@ -31,6 +31,7 @@ struct StatsDto {
     rtf: f32,
     latency_ms: f32,
     underruns: u32,
+    out_rate: u32,
     overflows: u32,
     capture_drops: u32,
     backend: String,
@@ -117,6 +118,7 @@ fn stats(state: State<'_, AppState>) -> StatsDto {
             rtf: 0.0,
             latency_ms: 0.0,
             underruns: 0,
+            out_rate: 0,
             overflows: 0,
             capture_drops: 0,
             backend: String::new(),
@@ -143,6 +145,7 @@ fn stats(state: State<'_, AppState>) -> StatsDto {
                 rtf: s.rtf,
                 latency_ms: s.latency_ms,
                 underruns: s.underruns,
+                out_rate: s.out_rate,
                 overflows: s.overflows,
                 capture_drops: s.capture_drops,
                 backend: s.backend,
@@ -165,6 +168,7 @@ fn stats(state: State<'_, AppState>) -> StatsDto {
             rtf: 0.0,
             latency_ms: 0.0,
             underruns: 0,
+            out_rate: 0,
             overflows: 0,
             capture_drops: 0,
             backend: String::new(),
@@ -196,8 +200,9 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 fn set_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
+    settings.sanitize();
     let old_hotkey = state
         .settings
         .lock()
@@ -764,6 +769,24 @@ fn prune_recordings_keep(keep: usize) -> usize {
             }
         }
     }
+    // a settings snapshot whose wav pair was deleted by hand (or never written)
+    // is litter: it has no stamp in `stamps`, so remove it here
+    if let Ok(read) = std::fs::read_dir(&dir) {
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(rest) = name.strip_prefix("ab-") else {
+                continue;
+            };
+            let Some(stamp) = rest.strip_suffix(".json") else {
+                continue;
+            };
+            let raw = dir.join(format!("ab-{stamp}-raw.wav"));
+            let clean = dir.join(format!("ab-{stamp}-clean.wav"));
+            if !raw.exists() && !clean.exists() && std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
     removed
 }
 
@@ -989,6 +1012,9 @@ fn main() {
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
+                // a second launch while the window is minimized used to show
+                // and focus it but leave it minimized
+                let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }

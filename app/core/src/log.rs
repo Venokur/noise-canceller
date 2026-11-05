@@ -23,7 +23,11 @@ pub fn info(message: &str) {
 
     if let Ok(meta) = std::fs::metadata(&path) {
         if meta.len() > 1_000_000 {
-            let _ = std::fs::rename(&path, path.with_extension("log.old"));
+            let old = path.with_extension("log.old");
+            // Windows refuses to rename onto an existing file, so the second
+            // rotation used to fail silently and the log grew forever
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&path, &old);
         }
     }
 

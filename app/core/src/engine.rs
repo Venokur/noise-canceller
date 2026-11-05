@@ -30,6 +30,8 @@ pub struct Stats {
     pub rtf: f32,
     pub latency_ms: f32,
     pub underruns: u32,
+    /// output sample rate, so the UI can turn the sample counter into ms
+    pub out_rate: u32,
     pub backend: String,
     pub spectrum: [f32; BANDS],
     /// how much the model is cutting right now, positive dB
@@ -1582,6 +1584,7 @@ impl Engine {
             rtf: f32::from_bits(self.shared.rtf.load(Ordering::Relaxed)),
             latency_ms: f32::from_bits(self.shared.latency.load(Ordering::Relaxed)),
             underruns: self.shared.underruns.load(Ordering::Relaxed),
+            out_rate: self.out_rate,
             overflows: self.shared.overflows.load(Ordering::Relaxed),
             capture_drops: self.shared.capture_drops.load(Ordering::Relaxed),
             backend: self.backend.clone(),

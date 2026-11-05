@@ -61,6 +61,7 @@ interface Stats {
   rtf: number;
   latencyMs: number;
   underruns: number;
+  outRate: number;
   overflows: number;
   captureDrops: number;
   backend: string;
@@ -140,6 +141,7 @@ const stats = ref<Stats>({
   rtf: 0,
   latencyMs: 0,
   underruns: 0,
+  outRate: 0,
   overflows: 0,
   captureDrops: 0,
   backend: "",
@@ -1103,6 +1105,8 @@ onMounted(async () => {
   // a USB microphone can drop off the bus for a second; stop cleanly and come
   // back as soon as it is listed again
   deviceTimer = window.setInterval(async () => {
+    // the window is hidden in the tray: do not enumerate devices every 3 s
+    if (document.hidden) return;
     try {
       await refreshDevices();
       const inputGone = !!selectedInput.value && !inputs.value.includes(selectedInput.value);
@@ -2004,8 +2008,15 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
               </span>
               <span class="text-[var(--muted)]">Сбросов модели</span>
               <span class="tabular-nums">{{ stats.guardResets }}</span>
-              <span class="text-[var(--muted)]">Пропусков буфера</span>
-              <span class="tabular-nums">{{ stats.underruns }}</span>
+              <span class="text-[var(--muted)]" title="Сэмплы, которые не успели доехать до вывода; в скобках — примерная длительность. Растёт — обработка не успевает.">
+                Пропущено сэмплов
+              </span>
+              <span class="tabular-nums">
+                {{ stats.underruns
+                }}<span v-if="stats.underruns && stats.outRate" class="text-[var(--muted)]">
+                  · ≈ {{ ((stats.underruns / stats.outRate) * 1000).toFixed(0) }} мс</span
+                >
+              </span>
               <span class="text-[var(--muted)]" title="Блоки, которые не влезли в кольцо вывода и были потеряны. Ноль — норма.">
                 Переполнений буфера
               </span>

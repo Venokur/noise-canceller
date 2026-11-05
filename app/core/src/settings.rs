@@ -197,6 +197,43 @@ impl Settings {
         }
     }
 
+    /// Keeps a hand-edited or imported settings file from driving the engine
+    /// into invalid ranges: 0 ms blocks, 0 recordings kept, unknown modes.
+    pub fn sanitize(&mut self) {
+        self.isolation_strength = self.isolation_strength.clamp(0.0, 1.0);
+        self.max_suppression_db = self.max_suppression_db.clamp(0.0, 48.0);
+        self.buffer_ms = self.buffer_ms.clamp(20.0, 250.0);
+        self.chunk_ms = self.chunk_ms.clamp(20.0, 200.0);
+        self.denoiser_threads = self.denoiser_threads.clamp(1, 16);
+        self.agc_target_db = self.agc_target_db.clamp(-40.0, -6.0);
+        self.agc_max_gain_db = self.agc_max_gain_db.clamp(0.0, 30.0);
+        self.gate_threshold_db = self.gate_threshold_db.clamp(-80.0, -20.0);
+        self.gate_ratio = self.gate_ratio.clamp(1.0, 10.0);
+        self.gate_attack_ms = self.gate_attack_ms.clamp(1.0, 100.0);
+        self.gate_release_ms = self.gate_release_ms.clamp(20.0, 1000.0);
+        self.gate_hold_ms = self.gate_hold_ms.clamp(0.0, 1000.0);
+        self.output_gain_db = self.output_gain_db.clamp(-24.0, 6.0);
+        self.high_pass_hz = self.high_pass_hz.clamp(20.0, 300.0);
+        self.comfort_noise_db = self.comfort_noise_db.clamp(-90.0, -30.0);
+        self.ab_seconds = self.ab_seconds.clamp(5.0, 60.0);
+        self.keep_recordings = self.keep_recordings.clamp(1, 100);
+        if !matches!(self.mode.as_str(), "profile" | "auto") {
+            self.mode = "profile".into();
+        }
+        if !matches!(self.residual_denoise.as_str(), "off" | "gtcrn") {
+            self.residual_denoise = "gtcrn".into();
+        }
+        if !matches!(self.residual_order.as_str(), "after" | "before") {
+            self.residual_order = "after".into();
+        }
+        if !matches!(self.hotkey_mode.as_str(), "toggle" | "hold") {
+            self.hotkey_mode = "toggle".into();
+        }
+        if self.mute_hotkey.trim().is_empty() {
+            self.mute_hotkey = "Ctrl+Alt+M".into();
+        }
+    }
+
     pub fn load(path: &std::path::Path) -> Self {
         let mut settings: Self = std::fs::read_to_string(path)
             .ok()
@@ -296,6 +333,7 @@ impl Settings {
             settings.input_device.clear();
         }
 
+        settings.sanitize();
         settings
     }
 
@@ -354,5 +392,37 @@ mod tests {
 
         settings.auto_threads = true;
         assert_eq!(settings.effective_threads(), recommended_threads(60.0));
+    }
+
+    #[test]
+    fn sanitize_clamps_a_hand_edited_file() {
+        let mut settings = Settings {
+            buffer_ms: 0.0,
+            chunk_ms: 0.0,
+            denoiser_threads: 0,
+            agc_max_gain_db: 99.0,
+            keep_recordings: 0,
+            ab_seconds: 1.0,
+            max_suppression_db: 99.0,
+            mode: "nonsense".into(),
+            residual_denoise: "nonsense".into(),
+            residual_order: "nonsense".into(),
+            hotkey_mode: "nonsense".into(),
+            mute_hotkey: "  ".into(),
+            ..Settings::default()
+        };
+        settings.sanitize();
+        assert_eq!(settings.buffer_ms, 20.0);
+        assert_eq!(settings.chunk_ms, 20.0);
+        assert_eq!(settings.denoiser_threads, 1);
+        assert_eq!(settings.agc_max_gain_db, 30.0);
+        assert_eq!(settings.keep_recordings, 1);
+        assert_eq!(settings.ab_seconds, 5.0);
+        assert_eq!(settings.max_suppression_db, 48.0);
+        assert_eq!(settings.mode, "profile");
+        assert_eq!(settings.residual_denoise, "gtcrn");
+        assert_eq!(settings.residual_order, "after");
+        assert_eq!(settings.hotkey_mode, "toggle");
+        assert_eq!(settings.mute_hotkey, "Ctrl+Alt+M");
     }
 }
