@@ -235,8 +235,73 @@ fn envelope(samples: &[f32], window: usize) -> Vec<f32> {
         .collect()
 }
 
-fn percentile(values: &[f32], percent: f32) -> f32 {
-    if values.is_empty() {
+/// The raw take is written from the capture callback and the clean one from the
+/// processing thread, so they start 100-200 ms apart. Comparing frame i of one
+/// with frame i of the other compares speech with a pause and makes every
+/// metric lie. Align on the 20 ms envelopes first.
+fn align_ab(raw: Vec<f32>, clean: Vec<f32>, rate: u32) -> (Vec<f32>, Vec<f32>) {
+    let window = (rate as usize / 50).max(1);
+    let raw_env = envelope(&raw, window);
+    let clean_env = envelope(&clean, window);
+    let frames = raw_env.len().min(clean_env.len());
+    if frames < 20 {
+        return (raw, clean);
+    }
+    let mut best = (0i32, -1.0f32);
+    for lag in -30i32..=30 {
+        if lag >= 0 && lag as usize >= frames {
+            continue;
+        }
+        if lag < 0 && (-lag) as usize >= frames {
+            continue;
+        }
+        let (a, b) = if lag >= 0 {
+            (&raw_env[..frames - lag as usize], &clean_env[lag as usize..frames])
+        } else {
+            (&raw_env[(-lag) as usize..frames], &clean_env[..frames - (-lag) as usize])
+        };
+        if a.len() < 20 {
+            continue;
+        }
+        let n = a.len() as f32;
+        let mean_a = a.iter().sum::<f32>() / n;
+        let mean_b = b.iter().sum::<f32>() / n;
+        let (mut num, mut da, mut db) = (0.0f32, 0.0f32, 0.0f32);
+        for (x, y) in a.iter().zip(b.iter()) {
+            let dx = x - mean_a;
+            let dy = y - mean_b;
+            num += dx * dy;
+            da += dx * dx;
+            db += dy * dy;
+        }
+        let corr = if da > 1e-9 && db > 1e-9 {
+            num / (da.sqrt() * db.sqrt())
+        } else {
+            -1.0
+        };
+        if corr > best.1 {
+            best = (lag, corr);
+        }
+    }
+    if best.1 < 0.3 {
+        return (raw, clean);
+    }
+    let shift = (best.0.unsigned_abs() as usize) * window;
+    let mut raw = raw;
+    let mut clean = clean;
+    if best.0 > 0 {
+        let drop = shift.min(clean.len());
+        clean.drain(..drop);
+        raw.truncate(clean.len());
+    } else if best.0 < 0 {
+        let drop = shift.min(raw.len());
+        raw.drain(..drop);
+        clean.truncate(raw.len());
+    }
+    (raw, clean)
+}
+
+fn percentile(values: &[f32], percent: f32) -> f32 {    if values.is_empty() {
         return -120.0;
     }
     let mut copy = values.to_vec();
@@ -255,6 +320,7 @@ fn percentile(values: &[f32], percent: f32) -> f32 {
 pub fn ab_metrics(raw: &std::path::Path, clean: &std::path::Path) -> Result<AbMetrics> {
     let (raw_samples, rate) = read_wav(raw)?;
     let (clean_samples, _) = read_wav(clean)?;
+    let (raw_samples, clean_samples) = align_ab(raw_samples, clean_samples, rate);
     let n = raw_samples.len().min(clean_samples.len());
     if n == 0 {
         return Err(anyhow!("запись пуста"));

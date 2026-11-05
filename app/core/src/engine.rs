@@ -30,6 +30,10 @@ pub struct Stats {
     pub rtf: f32,
     pub latency_ms: f32,
     pub underruns: u32,
+    /// samples the render callback had to fake (a buffer miss can be many)
+    pub under_samples: u64,
+    /// total missing audio in milliseconds, for the diagnostics card
+    pub under_ms: f32,
     pub backend: String,
     pub spectrum: [f32; BANDS],
     /// how much the model is cutting right now, positive dB
@@ -82,6 +86,8 @@ struct Shared {
     output_rms: Arc<AtomicU32>,
     rtf: Arc<AtomicU32>,
     underruns: Arc<AtomicU32>,
+    /// samples the render callback had to fake; `underruns` counts callbacks
+    under_samples: Arc<AtomicU64>,
     overflows: Arc<AtomicU32>,
     latency: Arc<AtomicU32>,
     settings: Arc<Mutex<Settings>>,
@@ -126,6 +132,7 @@ impl Shared {
             output_rms: Arc::new(AtomicU32::new(0)),
             rtf: Arc::new(AtomicU32::new(0)),
             underruns: Arc::new(AtomicU32::new(0)),
+            under_samples: Arc::new(AtomicU64::new(0)),
             overflows: Arc::new(AtomicU32::new(0)),
             latency: Arc::new(AtomicU32::new(0)),
             settings: Arc::new(Mutex::new(settings.clone())),
@@ -897,6 +904,7 @@ impl Engine {
         let processor = thread::Builder::new()
             .name("voxlock-processor".into())
             .spawn(move || {
+                boost_processing_thread();
                 while proc_shared.running.load(Ordering::Relaxed) {
                     let seq = proc_shared.settings_seq.load(Ordering::Relaxed);
                     if seq != chain_seq {
@@ -923,7 +931,12 @@ impl Engine {
                         / out_rate.max(1) as f32
                         * 1000.0;
                     let block_ms = chunk_samples as f32 / MODEL_RATE as f32 * 1000.0;
-                    let ref_ms = buffer_ms + callback_ms.max(block_ms * 0.5);
+                    // the ring must hold the user buffer, one whole model block
+                    // and one device callback: the old target (buffer + max(
+                    // half block, callback) = 82 ms with a 64 ms block) left
+                    // only 18 ms of slack, and a 65 ms model reset always
+                    // emptied it (tens of thousands of missing samples)
+                    let ref_ms = buffer_ms + block_ms + callback_ms;
                     let max_fill = (out_rate as f32 * ref_ms / 1000.0) as usize + chunk_out + 64;
                     // leave room for a whole block plus the resampler's tail:
                     // pushing into a nearly full ring silently dropped the rest
@@ -976,9 +989,11 @@ impl Engine {
                         drift_logs += 1;
                         if drift_logs.is_multiple_of(8) {
                             crate::log::info(&format!(
-                                "clock: fill {fill_ms:.0} ms, ref {ref_ms:.0} ms, cb {callback_ms:.0} ms, step {:.0} ppm, underruns {}, overflows {}, input drops {}",
+                                "clock: fill {fill_ms:.0} ms, ref {ref_ms:.0} ms, cb {callback_ms:.0} ms, step {:.0} ppm, underruns {} ({} ms), overflows {}, input drops {}",
                                 (slew_step - 1.0) * 1e6,
                                 proc_shared.underruns.load(Ordering::Relaxed),
+                                proc_shared.under_samples.load(Ordering::Relaxed) as f32 * 1000.0
+                                    / out_rate.max(1) as f32,
                                 proc_shared.overflows.load(Ordering::Relaxed),
                                 proc_shared.capture_drops.load(Ordering::Relaxed),
                             ));
@@ -1099,7 +1114,10 @@ impl Engine {
                     // its speaker state is stale. Start it over before it sees
                     // the first word, otherwise it cuts 40+ dB until it finds
                     // the speaker again (the "no voice at the start" report).
-                    let cold_onset = dropout.cold_onset(input_voice.voiced());
+                    let (in_db, _) = input_voice.levels_db();
+                    let cold_onset = dropout.cold_onset(
+                        input_voice.voiced() && cap_voice && in_db > -48.0,
+                    );
                     if cold_onset {
                         if let Some(model) = denoiser.as_mut() {
                             model.reset();
@@ -1582,6 +1600,9 @@ impl Engine {
             rtf: f32::from_bits(self.shared.rtf.load(Ordering::Relaxed)),
             latency_ms: f32::from_bits(self.shared.latency.load(Ordering::Relaxed)),
             underruns: self.shared.underruns.load(Ordering::Relaxed),
+            under_samples: self.shared.under_samples.load(Ordering::Relaxed),
+            under_ms: self.shared.under_samples.load(Ordering::Relaxed) as f32 * 1000.0
+                / self.out_rate.max(1) as f32,
             overflows: self.shared.overflows.load(Ordering::Relaxed),
             capture_drops: self.shared.capture_drops.load(Ordering::Relaxed),
             backend: self.backend.clone(),
@@ -1701,10 +1722,12 @@ impl Engine {
             return;
         }
         crate::log::info(&format!(
-            "engine stop: slew {:.0} ppm, model resets {}, underruns {}, overflows {}",
+            "engine stop: slew {:.0} ppm, model resets {}, underruns {} ({} ms), overflows {}",
             f32::from_bits(self.shared.slew_ppm.load(Ordering::Relaxed)),
             self.shared.guard_resets.load(Ordering::Relaxed),
             self.shared.underruns.load(Ordering::Relaxed),
+            self.shared.under_samples.load(Ordering::Relaxed) as f32 * 1000.0
+                / self.out_rate.max(1) as f32,
             self.shared.overflows.load(Ordering::Relaxed),
         ));
         self.input.take();
@@ -1852,6 +1875,7 @@ fn render_f32(
     shared.pulled.fetch_add(frames as u64, Ordering::Relaxed);
 
     let muted = shared.muted.load(Ordering::Relaxed);
+    let mut missed = 0u32;
 
     for f in 0..frames {
         // a starved ring repeats the last sample instead of inserting silence: a
@@ -1861,7 +1885,8 @@ fn render_f32(
         let value = match ring.pop() {
             Ok(sample) => sample,
             Err(_) => {
-                shared.underruns.fetch_add(1, Ordering::Relaxed);
+                missed += 1;
+                shared.under_samples.fetch_add(1, Ordering::Relaxed);
                 last *= 0.985;
                 last
             }
@@ -1873,6 +1898,12 @@ fn render_f32(
         for c in 0..channels {
             data[f * channels + c] = value;
         }
+    }
+
+    // one "buffer miss" is one callback that could not be filled completely;
+    // the sample counter keeps the impact visible in milliseconds
+    if missed > 0 {
+        shared.underruns.fetch_add(1, Ordering::Relaxed);
     }
 
     let rms = if frames > 0 {
@@ -1888,6 +1919,25 @@ fn render_f32(
 }
 
 static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+
+/// The processor thread is a normal-priority `std::thread`. When the machine is
+/// busy it can be descheduled for tens of milliseconds, which empties the
+/// output ring (audible holes). One step above normal is enough to win that
+/// race without starving the UI or the WASAPI callbacks.
+#[cfg(windows)]
+fn boost_processing_thread() {
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
+    };
+    // SAFETY: the pseudo-handle is valid for the calling thread; the return
+    // value is a best-effort hint and deliberately ignored.
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    }
+}
+
+#[cfg(not(windows))]
+fn boost_processing_thread() {}
 
 /// A panic in the processing thread used to leave silence with no trace; log it
 /// so `data/app.log` explains what happened.
