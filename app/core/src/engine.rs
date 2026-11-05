@@ -29,6 +29,8 @@ pub struct Stats {
     pub output_rms: f32,
     pub rtf: f32,
     pub latency_ms: f32,
+    /// effective output ring buffer (auto or manual), ms
+    pub buffer_ms: f32,
     pub underruns: u32,
     /// output sample rate, so the UI can turn the sample counter into ms
     pub out_rate: u32,
@@ -84,6 +86,8 @@ struct Shared {
     output_rms: Arc<AtomicU32>,
     rtf: Arc<AtomicU32>,
     underruns: Arc<AtomicU32>,
+    /// callbacks that could not be filled completely (the auto-buffer signal)
+    underrun_events: Arc<AtomicU32>,
     overflows: Arc<AtomicU32>,
     latency: Arc<AtomicU32>,
     settings: Arc<Mutex<Settings>>,
@@ -128,6 +132,7 @@ impl Shared {
             output_rms: Arc::new(AtomicU32::new(0)),
             rtf: Arc::new(AtomicU32::new(0)),
             underruns: Arc::new(AtomicU32::new(0)),
+            underrun_events: Arc::new(AtomicU32::new(0)),
             overflows: Arc::new(AtomicU32::new(0)),
             latency: Arc::new(AtomicU32::new(0)),
             settings: Arc::new(Mutex::new(settings.clone())),
@@ -774,7 +779,20 @@ impl Engine {
         shared
             .wet
             .store(settings.isolation_strength.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
-        shared.buffer_ms.store(settings.buffer_ms.to_bits(), Ordering::Relaxed);
+
+        // the auto buffer is learned between sessions: start from the stored
+        // value, otherwise from the manual one; the ring is prefilled to it
+        let auto_buffer_path = paths::data_dir().join("auto-buffer.txt");
+        let mut buffer_ms = settings.buffer_ms;
+        if settings.buffer_auto {
+            if let Ok(text) = std::fs::read_to_string(&auto_buffer_path) {
+                if let Ok(value) = text.trim().parse::<f32>() {
+                    buffer_ms = value;
+                }
+            }
+        }
+        let buffer_ms = buffer_ms.clamp(40.0, 250.0);
+        shared.buffer_ms.store(buffer_ms.to_bits(), Ordering::Relaxed);
 
         // rings ------------------------------------------------------------
         let (mut in_prod, mut in_cons) = rtrb::RingBuffer::<f32>::new(MODEL_RATE as usize * 2);
@@ -783,7 +801,7 @@ impl Engine {
         // prefill the output ring so playback starts cleanly: one block plus the
         // buffer, otherwise the first block arrives too late and starts with a
         // hole right away
-        let prefill = (out_rate as f32 * (settings.buffer_ms + chunk_ms + 24.0) / 1000.0) as usize;
+        let prefill = (out_rate as f32 * (buffer_ms + chunk_ms + 24.0) / 1000.0) as usize;
         for _ in 0..prefill {
             let _ = out_prod.push(0.0);
         }
@@ -848,6 +866,12 @@ impl Engine {
         let mut dropout = DropoutGuard::new();
         let mut max_suppression = settings.max_suppression_db.clamp(0.0, 48.0);
         let mut cap_mix = 0.0f32;
+        // auto buffer: learn the smallest ring that does not miss
+        let mut auto_enabled = settings.buffer_auto;
+        let mut auto_ms = buffer_ms;
+        let mut auto_events = 0u32;
+        let mut auto_at = Instant::now();
+        let mut auto_changed = Instant::now();
         let mut vad_gain = 1.0f32;
         let vad_attack = 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp();
         let vad_release = 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp();
@@ -905,6 +929,28 @@ impl Engine {
                         if let Ok(current) = proc_shared.settings.lock() {
                             chain.configure(&current, out_rate);
                             max_suppression = current.max_suppression_db.clamp(0.0, 48.0);
+                            if current.buffer_auto {
+                                if !auto_enabled {
+                                    auto_ms = std::fs::read_to_string(&auto_buffer_path)
+                                        .ok()
+                                        .and_then(|text| text.trim().parse::<f32>().ok())
+                                        .unwrap_or_else(|| {
+                                            f32::from_bits(
+                                                proc_shared.buffer_ms.load(Ordering::Relaxed),
+                                            )
+                                        })
+                                        .clamp(40.0, 250.0);
+                                    proc_shared
+                                        .buffer_ms
+                                        .store(auto_ms.to_bits(), Ordering::Relaxed);
+                                    auto_events =
+                                        proc_shared.underrun_events.load(Ordering::Relaxed);
+                                    auto_changed = Instant::now();
+                                }
+                                auto_enabled = true;
+                            } else {
+                                auto_enabled = false;
+                            }
                         }
                         chain_seq = seq;
                     }
@@ -925,12 +971,52 @@ impl Engine {
                         / out_rate.max(1) as f32
                         * 1000.0;
                     let block_ms = chunk_samples as f32 / MODEL_RATE as f32 * 1000.0;
-                    let ref_ms = buffer_ms + callback_ms.max(block_ms * 0.5);
+                    // the ring must hold the user buffer, one whole model block
+                    // and one device callback; `buffer + max(half block, cb)`
+                    // left 18 ms of slack at the default and a 65 ms model reset
+                    // always emptied it
+                    let ref_ms = buffer_ms + block_ms + callback_ms;
                     let max_fill = (out_rate as f32 * ref_ms / 1000.0) as usize + chunk_out + 64;
                     // leave room for a whole block plus the resampler's tail:
                     // pushing into a nearly full ring silently dropped the rest
                     // of the block, which is a hole in the middle of a word
                     let need = chunk_out + 64;
+
+                    // Auto buffer: one step every 4 s. A real miss raises the
+                    // ring by 20 ms and is persisted for the next session; 90 s
+                    // without misses lowers it by 10 ms, so latency settles at
+                    // the smallest value this machine actually sustains.
+                    if auto_at.elapsed() >= Duration::from_secs(4) {
+                        auto_at = Instant::now();
+                        if auto_enabled && session_start.elapsed() > Duration::from_secs(10) {
+                            let events = proc_shared.underrun_events.load(Ordering::Relaxed);
+                            if events > auto_events {
+                                let delta = events - auto_events;
+                                auto_events = events;
+                                auto_ms = (auto_ms + 20.0).min(250.0);
+                                proc_shared
+                                    .buffer_ms
+                                    .store(auto_ms.to_bits(), Ordering::Relaxed);
+                                let _ = std::fs::write(&auto_buffer_path, format!("{auto_ms:.0}"));
+                                auto_changed = Instant::now();
+                                crate::log::info(&format!(
+                                    "auto buffer: {auto_ms:.0} ms (+{delta} buffer miss)"
+                                ));
+                            } else if auto_changed.elapsed() > Duration::from_secs(90)
+                                && auto_ms > 40.0
+                            {
+                                auto_ms = (auto_ms - 10.0).max(40.0);
+                                proc_shared
+                                    .buffer_ms
+                                    .store(auto_ms.to_bits(), Ordering::Relaxed);
+                                let _ = std::fs::write(&auto_buffer_path, format!("{auto_ms:.0}"));
+                                auto_changed = Instant::now();
+                                crate::log::info(&format!(
+                                    "auto buffer: {auto_ms:.0} ms (90 s without misses)"
+                                ));
+                            }
+                        }
+                    }
 
                     // Rate control on the real ring level. Comparing pushed with
                     // pulled sample counts jumped by a whole block at every window
@@ -1527,7 +1613,7 @@ impl Engine {
         output_stream.play()?;
 
         crate::log::info(&format!(
-            "engine start: in='{}' {} Hz, out='{}' {} Hz, block {} ms, {} threads, buffer {} ms",
+            "engine start: in='{}' {} Hz, out='{}' {} Hz, block {} ms, {} threads, buffer {:.0} ms{}",
             input_name.as_deref().unwrap_or("default"),
             in_rate,
             if test_mode {
@@ -1538,7 +1624,8 @@ impl Engine {
             out_rate,
             chunk_ms,
             threads,
-            settings.buffer_ms
+            buffer_ms,
+            if settings.buffer_auto { ", auto" } else { "" }
         ));
 
         Ok(Self {
@@ -1560,9 +1647,13 @@ impl Engine {
         self.shared
             .wet
             .store(settings.isolation_strength.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
-        self.shared
-            .buffer_ms
-            .store(settings.buffer_ms.to_bits(), Ordering::Relaxed);
+        // in auto mode the processor owns the buffer; do not overwrite the
+        // learned value with the manual slider
+        if !settings.buffer_auto {
+            self.shared
+                .buffer_ms
+                .store(settings.buffer_ms.to_bits(), Ordering::Relaxed);
+        }
         self.shared
             .leveling
             .store(settings.input_leveling, Ordering::Relaxed);
@@ -1583,6 +1674,7 @@ impl Engine {
             output_rms: f32::from_bits(self.shared.output_rms.load(Ordering::Relaxed)),
             rtf: f32::from_bits(self.shared.rtf.load(Ordering::Relaxed)),
             latency_ms: f32::from_bits(self.shared.latency.load(Ordering::Relaxed)),
+            buffer_ms: f32::from_bits(self.shared.buffer_ms.load(Ordering::Relaxed)),
             underruns: self.shared.underruns.load(Ordering::Relaxed),
             out_rate: self.out_rate,
             overflows: self.shared.overflows.load(Ordering::Relaxed),
@@ -1855,6 +1947,7 @@ fn render_f32(
     shared.pulled.fetch_add(frames as u64, Ordering::Relaxed);
 
     let muted = shared.muted.load(Ordering::Relaxed);
+    let mut missed = 0u32;
 
     for f in 0..frames {
         // a starved ring repeats the last sample instead of inserting silence: a
@@ -1864,6 +1957,7 @@ fn render_f32(
         let value = match ring.pop() {
             Ok(sample) => sample,
             Err(_) => {
+                missed += 1;
                 shared.underruns.fetch_add(1, Ordering::Relaxed);
                 last *= 0.985;
                 last
@@ -1876,6 +1970,11 @@ fn render_f32(
         for c in 0..channels {
             data[f * channels + c] = value;
         }
+    }
+
+    // the auto buffer reacts to callbacks that missed data, not to samples
+    if missed > 0 {
+        shared.underrun_events.fetch_add(1, Ordering::Relaxed);
     }
 
     let rms = if frames > 0 {

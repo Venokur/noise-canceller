@@ -40,6 +40,7 @@ interface Settings {
   outputGainDb: number;
   closeToTray: boolean;
   bufferMs: number;
+  bufferAuto: boolean;
   chunkMs: number;
   autoThreads: boolean;
   denoiserThreads: number;
@@ -60,6 +61,7 @@ interface Stats {
   outputRms: number;
   rtf: number;
   latencyMs: number;
+  bufferMs: number;
   underruns: number;
   outRate: number;
   overflows: number;
@@ -140,6 +142,7 @@ const stats = ref<Stats>({
   outputRms: 0,
   rtf: 0,
   latencyMs: 0,
+  bufferMs: 0,
   underruns: 0,
   outRate: 0,
   overflows: 0,
@@ -1916,8 +1919,30 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
           <section v-if="!settings.basicUi" :class="card">
             <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Задержка и нагрузка</div>
             <div :class="settingRow">
-              <AppLabel text="Буфер" hint="Запас в кольце вывода. Больше — стабильнее и без пропусков, но выше задержка." />
-              <AppSlider v-model="settings.bufferMs" :min="20" :max="250" :step="10" :format="(v) => `${v} мс`" />
+              <AppLabel text="Буфер автоматически" hint="Подбирает минимальный буфер без пропусков: при пропуске +20 мс, после 90 с без пропусков −10 мс. Значение запоминается между запусками." />
+              <AppSwitch v-model="settings.bufferAuto" />
+            </div>
+            <div :class="settingRow">
+              <AppLabel
+                text="Буфер"
+                :hint="
+                  settings.bufferAuto
+                    ? 'Текущее значение подобрано автоматически. Выключите авто, чтобы задать вручную.'
+                    : 'Запас в кольце вывода. Больше — стабильнее и без пропусков, но выше задержка.'
+                "
+              />
+              <AppSlider
+                v-if="!settings.bufferAuto"
+                v-model="settings.bufferMs"
+                :min="20"
+                :max="250"
+                :step="10"
+                :format="(v) => `${v} мс`"
+              />
+              <span v-else class="tabular-nums text-[13px]">
+                {{ stats.bufferMs ? stats.bufferMs.toFixed(0) + " мс" : "—" }}
+                <span class="text-[var(--muted)]">· авто</span>
+              </span>
             </div>
             <div :class="settingRow">
               <AppLabel text="Блок модели" hint="Размер блока VoxLock: меньше — ниже задержка и выше нагрузка. 60 мс — баланс." />

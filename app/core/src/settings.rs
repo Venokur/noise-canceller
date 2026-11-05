@@ -116,6 +116,8 @@ pub struct Settings {
     /// A/B take length in seconds
     pub ab_seconds: f32,
     pub buffer_ms: f32,
+    /// pick the buffer automatically from the observed buffer misses
+    pub buffer_auto: bool,
     pub chunk_ms: f32,
     /// pick the thread count from the machine instead of `denoiser_threads`
     pub auto_threads: bool,
@@ -177,6 +179,7 @@ impl Default for Settings {
             keep_recordings: 20,
             ab_seconds: 30.0,
             buffer_ms: 50.0,
+            buffer_auto: true,
             chunk_ms: 60.0,
             auto_threads: true,
             denoiser_threads: default_threads(),
