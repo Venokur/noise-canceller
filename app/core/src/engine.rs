@@ -17,6 +17,11 @@ use crate::settings::Settings;
 
 pub const MODEL_RATE: u32 = 16_000;
 pub const BANDS: usize = 32;
+/// Blocks of near-digital silence after which the model is skipped.
+///
+/// Shared with `nc replay`: a different value there (it used to be 100) meant
+/// the offline regression ran a different audio path than the live app.
+pub const SILENCE_SKIP_BLOCKS: u32 = 5;
 
 #[derive(Default)]
 pub struct Stats {
@@ -259,6 +264,228 @@ impl FixedStage {
     #[cfg(test)]
     fn queued(&self) -> usize {
         self.pending.len()
+    }
+}
+
+/// Where the *microphone* is in the conversation, independent of the model.
+///
+/// The output-side VAD follows VoxLock, so while the model is cold it reports
+/// silence exactly when the speaker is talking. The dropout guard and the AGC
+/// need a verdict on the input instead. This uses the level jump over the
+/// room's long-term average rather than Silero: in a quiet room the detector
+/// reports a steady fan as speech, and then the silence counter never grows.
+/// The live engine and `nc replay` share this type so they cannot drift.
+pub struct InputVoice {
+    /// this block is speech (confirmed over a couple of blocks)
+    speech: bool,
+    /// consecutive blocks above the room
+    run: u32,
+    /// blocks without speech since the last phrase ended
+    quiet: u32,
+    /// long-term average of the room level, so a steady fan is not speech
+    avg_db: Option<f32>,
+    /// last block level, dBFS (diagnostics)
+    last_db: f32,
+    /// the model may be stale: speech resumed after a pause
+    cold: bool,
+    cold_hold: u32,
+    /// one-shot: speech resumed after a *long* quiet stretch
+    reset_onset: bool,
+}
+
+impl InputVoice {
+    /// ~1 s of quiet: enough for the model's state to need a nudge.
+    const COLD_BLOCKS: u32 = 16;
+    /// ~5 s of quiet: worth restarting VoxLock before it even sees the word.
+    const RESET_BLOCKS: u32 = 80;
+    /// how long after the onset the model is treated as stale (~5 s)
+    const HOLD_BLOCKS: u32 = 80;
+    /// speech sits at least this far above the room's average
+    const JUMP_DB: f32 = 13.0;
+    /// two blocks (~130 ms): reject a door slam or a single noise peak
+    const CONFIRM_BLOCKS: u32 = 2;
+
+    pub fn new() -> Self {
+        Self {
+            speech: false,
+            run: 0,
+            quiet: 0,
+            avg_db: None,
+            last_db: -120.0,
+            cold: false,
+            cold_hold: 0,
+            reset_onset: false,
+        }
+    }
+
+    /// Feeds one block of the raw microphone and returns true while it looks
+    /// like the speaker (a level jump over the room's average).
+    pub fn update(&mut self, block: &[f32]) -> bool {
+        let db = 20.0 * (rms_of(block).max(1e-9)).log10();
+        self.last_db = db;
+        // a ~3 s average follows the room. A minimum tracker was tried first
+        // and failed: fan noise dips and peaks by 10-15 dB, so every peak
+        // looked like a word.
+        let avg = match self.avg_db {
+            None => db,
+            Some(a) => a + (db - a) * 0.02,
+        };
+        self.avg_db = Some(avg);
+
+        if db - avg > Self::JUMP_DB && db > -70.0 {
+            self.run = self.run.saturating_add(1);
+        } else {
+            self.run = 0;
+        }
+        let voiced = self.run >= Self::CONFIRM_BLOCKS;
+
+        if voiced {
+            if !self.speech {
+                // a long silence: the model has drifted away from the speaker
+                if self.quiet >= Self::RESET_BLOCKS && !self.cold {
+                    self.reset_onset = true;
+                }
+                if self.quiet >= Self::COLD_BLOCKS {
+                    self.cold = true;
+                    self.cold_hold = Self::HOLD_BLOCKS;
+                }
+            }
+            self.quiet = 0;
+        } else {
+            self.quiet = self.quiet.saturating_add(1);
+        }
+
+        self.cold_hold = self.cold_hold.saturating_sub(1);
+        if self.cold_hold == 0 {
+            self.cold = false;
+        }
+        self.speech = voiced;
+        voiced
+    }
+
+    pub fn speech(&self) -> bool {
+        self.speech
+    }
+
+    /// Blocks since the last speech, for diagnostics.
+    pub fn quiet_blocks(&self) -> u32 {
+        self.quiet
+    }
+
+    /// Current block level and tracked room level, dBFS, for diagnostics.
+    pub fn levels_db(&self) -> (f32, f32) {
+        (self.last_db, self.avg_db.unwrap_or(-120.0))
+    }
+
+    /// True for a few seconds after speech resumed after a pause: VoxLock is
+    /// starting from the room, not from the speaker, and its cuts mean nothing.
+    pub fn cold(&self) -> bool {
+        self.cold
+    }
+
+    /// One-shot: this block is the first speech after a really long silence.
+    pub fn take_reset_onset(&mut self) -> bool {
+        std::mem::take(&mut self.reset_onset)
+    }
+}
+
+impl Default for InputVoice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Decides when VoxLock has lost the speaker and must be restarted.
+///
+/// The old rule required eight "open" blocks right before a cut. After a pause
+/// the model has been suppressing the room, so there are zero open blocks and
+/// the guard never fired exactly when it was needed; after one reset it also
+/// disarmed itself for good. Both made a dropout last until the model found the
+/// speaker on its own — audible as several seconds of silence after a pause.
+pub struct DropoutGuard {
+    cut: u32,
+    cool: u32,
+    open: u32,
+    armed: bool,
+    cold: bool,
+    retries: u32,
+    pub resets: u32,
+}
+
+impl DropoutGuard {
+    pub fn new() -> Self {
+        Self {
+            cut: 0,
+            cool: 0,
+            open: 0,
+            armed: false,
+            cold: false,
+            retries: 0,
+            resets: 0,
+        }
+    }
+
+    /// Returns true when the caller must reset the model and replay the
+    /// pre-roll. `out_db` is -120 when the model returned nothing.
+    pub fn observe(&mut self, in_db: f32, out_db: f32, in_speech: bool, cold_onset: bool) -> bool {
+        if cold_onset {
+            self.cold = true;
+            self.retries = 0;
+            // the room may have kept the model in a cut until now: that cut
+            // is not the speaker's episode, this block is
+            self.cut = 0;
+            self.armed = true;
+        }
+
+        // `!out_db.is_finite()` also catches NaN: a model that returns NaN
+        // used to look "not a cut" and the guard stayed blind for the episode
+        let dead = !out_db.is_finite() || out_db < in_db - 26.0;
+        let cut = in_db > -54.0 && dead;
+        if cut {
+            if self.cut == 0 {
+                self.armed = self.open >= 8 || self.cold;
+            }
+            self.cut += 1;
+        } else {
+            self.cut = 0;
+        }
+
+        if out_db > in_db - 20.0 {
+            self.open += 1;
+        } else {
+            self.open = 0;
+        }
+        self.cool = self.cool.saturating_sub(1);
+
+        // the phrase is over and the model is not cutting: the cold window ends
+        if !in_speech && self.cut == 0 {
+            self.cold = false;
+            self.retries = 0;
+        }
+        if !self.cold && !in_speech {
+            self.retries = 0;
+        }
+
+        let ready = self.cut >= 3 && self.cool == 0 && self.retries < 4;
+        if ready && (self.armed || self.cold) {
+            self.resets += 1;
+            self.retries += 1;
+            self.cut = 0;
+            self.cool = 15;
+            self.open = 0;
+            // a reset that did not help may be retried, but only while the
+            // input still looks like the speaker: background the model
+            // suppresses on purpose must not keep the guard hot forever
+            self.armed = self.cold;
+            return true;
+        }
+        false
+    }
+}
+
+impl Default for DropoutGuard {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -610,6 +837,10 @@ impl Engine {
         } else {
             None
         };
+        // the model-facing level detector: the output-side VAD follows VoxLock
+        // and reports silence exactly while the model is cold
+        let mut input_voice = InputVoice::new();
+        let mut dropout = DropoutGuard::new();
         let mut vad_gain = 1.0f32;
         let vad_attack = 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp();
         let vad_release = 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp();
@@ -639,10 +870,10 @@ impl Engine {
         let mut speech_hold = 0u32;
         let mut slew = Slew::new();
         let mut input_ring: Vec<f32> = Vec::with_capacity(4096);
-        let mut model_cut = 0u32;
-        let mut guard_cool = 0u32;
-        let mut open_blocks = 0u32;
-        let mut cut_started_open = false;
+        let mut block_index = 0usize;
+        // how long the model takes to pass speech again after a long pause
+        let mut episode: Option<(usize, u32)> = None;
+        let mut episode_open = 0u32;
         let mut slew_out: Vec<f32> = Vec::with_capacity(chunk_samples * 4);
         let mut slew_step = 1.0f64;
         // rate control: the ring level is an integral of the clock error, so a
@@ -767,6 +998,15 @@ impl Engine {
                     for slot in block.iter_mut() {
                         *slot = in_cons.pop().unwrap_or(0.0);
                     }
+                    block_index += 1;
+
+                    // the guard and the AGC need to know whether the *room*
+                    // has speech, not whether VoxLock passes it. Measured on
+                    // the raw microphone: the leveler moves its gain by up to
+                    // 6 dB per block, and that jump looks exactly like a word.
+                    let in_voice = input_voice.update(&block);
+                    let cold_onset = input_voice.take_reset_onset();
+                    let cold = input_voice.cold();
 
                     // silence costs nothing: skip the model and emit a clean
                     // zero block once the room has been quiet for a moment
@@ -777,7 +1017,16 @@ impl Engine {
                         silent_run = 0;
                     }
 
-                    if silent_run > 5 {
+                    if silent_run > SILENCE_SKIP_BLOCKS {
+                        // keep the pre-roll current: after a long gap it used
+                        // to hold audio from before the silence, so a guard
+                        // reset replayed the wrong thing
+                        input_ring.extend_from_slice(&block);
+                        let keep = 3200; // 200 ms at 16 kHz
+                        if input_ring.len() > keep {
+                            let drop = input_ring.len() - keep;
+                            input_ring.drain(..drop);
+                        }
                         // the detector has not seen audio for a while: leave the
                         // gate open, otherwise it needs ~300 ms to notice the
                         // next word and swallows the first syllable
@@ -846,6 +1095,38 @@ impl Engine {
                     }
 
                     let started = Instant::now();
+                    // after a long pause the model has not seen audio for
+                    // seconds: its speaker state is stale and the first words
+                    // come out suppressed until it finds the speaker again.
+                    // Start it over before it even sees the phrase.
+                    if cold_onset {
+                        if let Some(model) = denoiser.as_mut() {
+                            model.reset();
+                            isolate_stage.reset();
+                            // the residual stages were also sitting on the
+                            // room for minutes; without this the model passes
+                            // the word and GTCRN swallows it for another
+                            // 300-400 ms
+                            if let Some(model) = gtcrn_after.as_mut() {
+                                model.reset();
+                                gtcrn_stage.reset();
+                            }
+                            if let Some(model) = gtcrn_before.as_mut() {
+                                model.reset();
+                                gtcrn_before_stage.reset();
+                            }
+                            if let Some(model) = dpdfnet.as_mut() {
+                                model.reset();
+                                dpdf_stage.reset();
+                            }
+                            episode = Some((block_index, dropout.resets));
+                            episode_open = 0;
+                            crate::log::info(&format!(
+                                "cold start: VoxLock reset after a long pause (in {:.0} dB)",
+                                20.0 * raw_rms.max(1e-9).log10()
+                            ));
+                        }
+                    }
                     // every stage below hands back exactly `chunk_samples`
                     let mut model_out_rms: Option<f32> = None;
                     match denoiser.as_mut() {
@@ -870,46 +1151,27 @@ impl Engine {
                     let mut isolated: &[f32] = &isolate_out;
 
                     // VoxLock loses the speaker now and then and cuts 40+ dB
-                    // for up to a second. Reset it and replay the last 200 ms of
-                    // the input so it locks again immediately; the output of the
+                    // for seconds. Reset it and replay the last 200 ms of the
+                    // input so it locks again immediately; the output of the
                     // replay is thrown away, only the internal state is rebuilt.
                     if let Some(model) = denoiser.as_mut() {
                         let in_now = rms_of(&block);
                         let in_db = 20.0 * in_now.max(1e-9).log10();
-                        let out_db = 20.0
-                            * model_out_rms.unwrap_or(0.0).max(1e-9).log10();
-                        // a cut is only a dropout when it *starts* from an open
-                        // model. Background the model suppresses on purpose stays
-                        // low forever, and resetting for that made the guard fire
-                        // every couple of seconds in a noisy room.
-                        let cut = model_out_rms.is_some()
-                            && in_now > 2e-3
-                            && out_db < in_db - 26.0
-                            // VoxLock needs a moment to lock on after a start;
-                            // resets there only cost CPU and change nothing
-                            && session_start.elapsed() > Duration::from_secs(3);
-                        if cut {
-                            if model_cut == 0 {
-                                // the model must have been passing sound for half
-                                // a second before the cut: game audio or a door
-                                // slam that slips through one block is not a
-                                // dropout
-                                cut_started_open = open_blocks >= 8;
-                            }
-                            model_cut += 1;
-                        } else {
-                            model_cut = 0;
-                        }
-                        if out_db > in_db - 20.0 {
-                            open_blocks += 1;
-                        } else {
-                            open_blocks = 0;
-                        }
-                        guard_cool = guard_cool.saturating_sub(1);
-                        if model_cut >= 3 && guard_cool == 0 && cut_started_open {
+                        // NaN or no output is as dead as a 26 dB cut: the old
+                        // comparison let NaN through and the guard stayed blind
+                        let out_db = match model_out_rms {
+                            Some(v) if v.is_finite() && v > 0.0 => 20.0 * v.log10(),
+                            _ => -120.0,
+                        };
+                        // VoxLock needs a moment to lock on at start; resets
+                        // there only cost CPU and change nothing
+                        let warm = session_start.elapsed() > Duration::from_secs(1);
+                        let reset_now = warm && dropout.observe(in_db, out_db, in_voice, cold_onset);
+                        if reset_now {
                             proc_shared.guard_resets.fetch_add(1, Ordering::Relaxed);
                             crate::log::info(&format!(
-                                "dropout guard: VoxLock reset + 200 ms pre-roll (in {in_db:.0} dB, out {out_db:.0} dB)"
+                                "dropout guard: VoxLock reset + 200 ms pre-roll (in {in_db:.0} dB, out {out_db:.0} dB, reset #{})",
+                                dropout.resets
                             ));
                             model.reset();
                             isolate_stage.reset();
@@ -924,17 +1186,41 @@ impl Engine {
                             };
                             isolate_stage.take(&model_out, &mut isolate_out, None);
                             isolated = &isolate_out;
-                            model_cut = 0;
-                            guard_cool = 15;
-                            // the model was just told to start over: its output
-                            // is not "open" until it passes something again
-                            open_blocks = 0;
                         }
                         input_ring.extend_from_slice(&block);
                         let keep = 3200; // 200 ms at 16 kHz
                         if input_ring.len() > keep {
                             let drop = input_ring.len() - keep;
                             input_ring.drain(..drop);
+                        }
+
+                        // Diagnostics for "no voice for three seconds after a
+                        // pause": how long the model takes to pass speech again
+                        // and how many resets it needed.
+                        if let Some((start, resets0)) = episode {
+                            let out_now = match model_out_rms {
+                                Some(v) if v.is_finite() && v > 0.0 => 20.0 * v.log10(),
+                                _ => -120.0,
+                            };
+                            if out_now > in_db - 20.0 {
+                                episode_open += 1;
+                            } else {
+                                episode_open = 0;
+                            }
+                            if episode_open >= 3 {
+                                let ms = (block_index - start) * chunk_samples * 1000
+                                    / MODEL_RATE as usize;
+                                crate::log::info(&format!(
+                                    "cold start: speech audible after {ms} ms, {} reset(s)",
+                                    dropout.resets - resets0
+                                ));
+                                episode = None;
+                                episode_open = 0;
+                            } else if block_index.saturating_sub(start) > 300 {
+                                // ~19 s: do not carry the episode forever
+                                episode = None;
+                                episode_open = 0;
+                            }
                         }
                     }
                     out_scratch.clear();
@@ -952,8 +1238,10 @@ impl Engine {
                         let smoothed = current + (atten - current) * 0.1;
                         proc_shared.suppression.store(smoothed.to_bits(), Ordering::Relaxed);
                         // a block the model cut hard is not the target speaker:
-                        // do not lift its level, or the noise comes back
-                        chain.set_target_present(atten < 8.0);
+                        // do not lift its level, or the noise comes back. Right
+                        // after a long pause the model is cold, so its verdict
+                        // means nothing yet.
+                        chain.set_target_present(atten < 8.0 || cold);
                     }
                     let wet = f32::from_bits(proc_shared.wet.load(Ordering::Relaxed)).clamp(0.0, 1.0);
 
@@ -1025,7 +1313,10 @@ impl Engine {
                     // cuts even the enrolled voice by 10-14 dB, and refusing to
                     // lift those blocks made phrase levels differ by 5 dB or more
                     if let Some(speech) = voiced {
-                        chain.set_target_present(speech);
+                        // during the cold window the model may be cutting the
+                        // speaker itself; keep the level control working so the
+                        // first words are audible as soon as it passes them
+                        chain.set_target_present(speech || cold);
                     }
 
                     // GTCRN works at 16 kHz, right after VoxLock
@@ -1892,5 +2183,68 @@ mod tests {
         knock[10] = 0.95;
         guard.process(&mut knock);
         assert!(knock[10] <= 0.52, "knock left at {}", knock[10]);
+    }
+
+    #[test]
+    fn dropout_guard_fires_after_a_cold_onset_without_open_blocks() {
+        // after a pause the model suppressed the room, so `open` is 0; the
+        // first words used to be cut with no reset at all
+        let mut guard = DropoutGuard::new();
+        let mut fired = 0;
+        for i in 0..12 {
+            let cut = guard.observe(-34.0, -80.0, true, i == 0);
+            if cut {
+                fired += 1;
+            }
+        }
+        assert!(fired >= 1, "the guard never fired after a cold onset");
+    }
+
+    #[test]
+    fn dropout_guard_retries_while_the_model_keeps_cutting() {
+        let mut guard = DropoutGuard::new();
+        // a cut with no cold onset and no open blocks is background the model
+        // suppresses on purpose: never reset for it
+        for _ in 0..12 {
+            assert!(!guard.observe(-34.0, -80.0, true, false));
+        }
+
+        // a cold onset arms the guard; if one reset does not help it must try
+        // again instead of leaving the speaker muted until the model recovers
+        let mut resets = 0;
+        for i in 0..150 {
+            if guard.observe(-34.0, -80.0, true, i == 0) {
+                resets += 1;
+            }
+        }
+        assert!(resets >= 2, "the guard gave up after {resets} reset(s)");
+        assert!(resets <= 4, "the guard reset {resets} times: it should be bounded");
+    }
+
+    #[test]
+    fn dropout_guard_treats_nan_output_as_a_cut() {
+        let mut guard = DropoutGuard::new();
+        // NaN used to make every comparison false, so the guard stayed blind
+        assert!(!guard.observe(-34.0, f32::NAN, true, true));
+        assert!(!guard.observe(-34.0, f32::NAN, true, false));
+        assert!(guard.observe(-34.0, f32::NAN, true, false));
+    }
+
+    #[test]
+    fn input_voice_reports_a_cold_onset_only_after_a_long_quiet_stretch() {
+        let mut voice = InputVoice::new();
+        let quiet = vec![0.0f32; 1024];
+        for _ in 0..InputVoice::RESET_BLOCKS {
+            assert!(!voice.update(&quiet));
+        }
+        let speech = vec![0.02f32; 1024];
+        // two blocks confirm speech: one loud peak is not an onset
+        assert!(!voice.update(&speech));
+        assert!(voice.update(&speech));
+        assert!(voice.take_reset_onset(), "a long silence must trigger a reset");
+        assert!(voice.cold(), "the model is cold right after the onset");
+        // the flag is one-shot
+        assert!(voice.update(&speech));
+        assert!(!voice.take_reset_onset());
     }
 }

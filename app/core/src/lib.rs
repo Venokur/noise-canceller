@@ -9,6 +9,8 @@ pub mod resample;
 pub mod settings;
 pub mod spectrum;
 
-pub use engine::{FixedStage, Leveler, PeakGuard};
+pub use engine::{
+    DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard, SILENCE_SKIP_BLOCKS,
+};
 pub use model::{Denoiser, StreamDenoiser, Vad};
 pub use settings::Settings;

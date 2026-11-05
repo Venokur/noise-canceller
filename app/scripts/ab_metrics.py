@@ -68,18 +68,45 @@ def main(raw_path, clean_path):
         else:
             i += 1
 
+    # how long the output stays dead after a pause while the raw take already
+    # has speech again: the "no voice for three seconds" report. A cold VoxLock
+    # used to leave the output at -180 until it found the speaker on its own.
+    recovery = 0.0
+    i = 0
+    while i < len(muted):
+        if not muted[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(muted) and muted[j]:
+            j += 1
+        # only count when the speaker is still talking after the dead run; a
+        # run that ends because the take ends is not a recovery
+        if (j - i) * 0.02 >= 0.3 and j < len(speech) and speech[j]:
+            k = j
+            while k < len(ec) and ec[k] <= clean_speech - 25.0 and (k - i) * 0.02 < 3.5:
+                k += 1
+            if k < len(ec) and ec[k] > clean_speech - 25.0:
+                recovery = max(recovery, (k - i) * 0.02)
+        i = j
+
     metrics = {
         "speech_level_db": round(clean_speech, 1),
         "level_delta_db": round(clean_speech - raw_speech, 1),
         "pause_contrast_db": round(clean_speech - clean_pause, 1),
         "muted_total_s": round(float(muted.sum()) * 0.02, 2),
         "longest_dropout_s": round(max(runs) if runs else 0.0, 2),
+        "recovery_after_pause_s": round(recovery, 2),
     }
     print(json.dumps(metrics))
 
     problems = []
     if metrics["longest_dropout_s"] > 0.4:
         problems.append(f"dropout {metrics['longest_dropout_s']}s > 0.4s")
+    if metrics["recovery_after_pause_s"] > 1.0:
+        problems.append(
+            f"voice came back {metrics['recovery_after_pause_s']}s after a pause > 1.0s"
+        )
     if metrics["pause_contrast_db"] < 12.0:
         problems.append(f"pauses only {metrics['pause_contrast_db']} dB below speech < 12 dB")
     if abs(metrics["level_delta_db"]) > 20.0:
