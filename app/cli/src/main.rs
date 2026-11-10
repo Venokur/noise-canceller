@@ -5,7 +5,7 @@ use noise_canceller_core::dsp::Chain;
 use noise_canceller_core::paths;
 use noise_canceller_core::resample::Resampler;
 use noise_canceller_core::settings::Settings;
-use noise_canceller_core::Denoiser;
+use noise_canceller_core::{devices, wav, Denoiser};
 use noise_canceller_core::{
     cap_dry_mix, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard, SILENCE_SKIP_BLOCKS,
 };
@@ -16,11 +16,11 @@ fn main() -> Result<()> {
     match mode.as_str() {
         "devices" => {
             println!("input:");
-            for (i, name) in noise_canceller_core::engine::input_devices().iter().enumerate() {
+            for (i, name) in devices::input_devices().iter().enumerate() {
                 println!("  [{i}] {name}");
             }
             println!("output:");
-            for (i, name) in noise_canceller_core::engine::output_devices().iter().enumerate() {
+            for (i, name) in devices::output_devices().iter().enumerate() {
                 println!("  [{i}] {name}");
             }
             Ok(())
@@ -80,8 +80,8 @@ fn run_engine() -> Result<()> {
         }
     };
 
-    let input = pick(noise_canceller_core::engine::input_devices(), in_index);
-    let output = pick(noise_canceller_core::engine::output_devices(), out_index);
+    let input = pick(devices::input_devices(), in_index);
+    let output = pick(devices::output_devices(), out_index);
 
     let threads: u16 = std::env::args()
         .nth(5)
@@ -201,7 +201,7 @@ fn replay_file() -> Result<()> {
     let profile = std::env::args().nth(4).map(std::path::PathBuf::from);
     let settings_path = std::env::args().nth(5).map(std::path::PathBuf::from);
 
-    let (samples, rate) = read_wav(std::path::Path::new(&input))?;
+    let (samples, rate) = wav::read_mono(std::path::Path::new(&input))?;
 
     let mut down = Resampler::new(rate, 16_000);
     let mut at16 = vec![0.0f32; down.max_output(samples.len()) + 64];
@@ -212,7 +212,7 @@ fn replay_file() -> Result<()> {
         Some(path) => Settings::load(path),
         None => Settings::default(),
     };
-    let chunk = (((16_000.0 * settings.chunk_ms / 1000.0) as usize).max(128) + 64) / 128 * 128;
+    let chunk = noise_canceller_core::engine::block_samples(settings.chunk_ms);
 
     // the live engine always feeds full blocks; pad the tail so replay does too
     // and the model stages see the same lengths as in the app
@@ -280,17 +280,6 @@ fn replay_file() -> Result<()> {
             }
         }
     }
-    let mut dpdfnet = if residual_kind == "dpdfnet" && paths::dpdfnet_model().exists() {
-        Denoiser::new_dpdfnet(
-            &paths::dpdfnet_model(),
-            settings.residual_attenuation_db,
-            settings.denoiser_threads,
-        )
-        .ok()
-        .map(noise_canceller_core::StreamDenoiser::new)
-    } else {
-        None
-    };
     let mut res16: Vec<f32> = Vec::new();
     let mut vad = if settings.vad_gate && paths::vad_model().exists() {
         noise_canceller_core::Vad::new(&paths::vad_model(), 0.5).ok()
@@ -302,7 +291,6 @@ fn replay_file() -> Result<()> {
     let mut vad_gain = 1.0f32;
     let vad_attack = 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp();
     let vad_release = 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp();
-    let mut res48: Vec<f32> = Vec::new();
     // the same fixed-length stages as the live engine: a model that returns more
     // or less than a block must not shift speech in time
     let mut isolate_out = vec![0.0f32; chunk];
@@ -311,8 +299,6 @@ fn replay_file() -> Result<()> {
     let mut gtcrn_stage = FixedStage::new();
     let mut gtcrn_before_out = vec![0.0f32; chunk];
     let mut gtcrn_before_stage = FixedStage::new();
-    let mut dpdf_out = vec![0.0f32; up_buf.len()];
-    let mut dpdf_stage = FixedStage::new();
     // diagnostics for NC_TRACE: how much each model stage really returns
     let mut stats_vox = (0usize, 0usize, 0usize);
     let mut stats_gt = (0usize, 0usize, 0usize);
@@ -379,10 +365,6 @@ fn replay_file() -> Result<()> {
                 if let Some(model) = gtcrn_before.as_mut() {
                     model.reset();
                     gtcrn_before_stage.reset();
-                }
-                if let Some(model) = dpdfnet.as_mut() {
-                    model.reset();
-                    dpdf_stage.reset();
                 }
                 if std::env::var("NC_TRACE").is_ok() {
                     eprintln!(
@@ -532,12 +514,6 @@ fn replay_file() -> Result<()> {
         }
 
         let produced = up.process(source, &mut up_buf);
-        if let Some(model) = dpdfnet.as_mut() {
-            res48.clear();
-            model.process(&up_buf[..produced], &mut res48);
-            dpdf_stage.take(&res48, &mut dpdf_out[..produced], Some(&up_buf[..produced]));
-            up_buf[..produced].copy_from_slice(&dpdf_out[..produced]);
-        }
         if std::env::var("NC_TRACE").is_ok() && written_total < rate as usize * 4 {
             let t = written_total as f32 / rate as f32;
             if (t * 4.0) as i32 > last_trace {
@@ -597,7 +573,8 @@ fn replay_file() -> Result<()> {
     Ok(())
 }
 
-fn denoise_file() -> Result<()> {    use noise_canceller_core::dsp::Biquad;
+fn denoise_file() -> Result<()> {
+    use noise_canceller_core::dsp::Biquad;
 
     let input = std::env::args()
         .nth(2)
@@ -608,7 +585,7 @@ fn denoise_file() -> Result<()> {    use noise_canceller_core::dsp::Biquad;
     let hp_hz: f32 = std::env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(0.0);
     let profile = std::env::args().nth(5).map(std::path::PathBuf::from);
 
-    let (samples, rate) = read_wav(std::path::Path::new(&input))?;
+    let (samples, rate) = wav::read_mono(std::path::Path::new(&input))?;
 
     let mut resampler = Resampler::new(rate, 16_000);
     let mut at16 = vec![0.0f32; resampler.max_output(samples.len()) + 64];
@@ -665,18 +642,22 @@ fn denoise_file() -> Result<()> {    use noise_canceller_core::dsp::Biquad;
     Ok(())
 }
 
-fn show_settings() -> Result<()> {    let path = std::env::args()
+fn show_settings() -> Result<()> {
+    let path = std::env::args()
         .nth(2)
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| paths::data_dir().join("settings.json"));
 
     let s = Settings::load(&path);
+    let block_ms = noise_canceller_core::engine::block_ms(noise_canceller_core::engine::block_samples(
+        s.chunk_ms,
+    ));
     println!("file      {}", path.display());
     println!("rev       {}", s.defaults_rev);
     println!(
-        "chunk     {} ms · threads {} ({}) · buffer {} ms",
+        "chunk     {} ms (block {block_ms:.0} ms) · threads {} ({}) · buffer {} ms",
         s.chunk_ms,
-        s.effective_threads(),
+        s.effective_threads(block_ms),
         if s.auto_threads {
             "auto".to_string()
         } else {
@@ -705,7 +686,7 @@ fn selftest() -> Result<()> {    let dir = paths::models_dir();
 
     println!("models: {}", dir.display());
 
-    let (samples16, rate) = read_wav(&combined)?;
+    let (samples16, rate) = wav::read_mono(&combined)?;
     println!("input: {} samples @ {rate} Hz ({:.2}s)", samples16.len(), samples16.len() as f32 / rate as f32);
 
     // simulate a 48 kHz microphone
@@ -803,36 +784,6 @@ fn selftest() -> Result<()> {    let dir = paths::models_dir();
     println!("rtf={rtf:.3} ({})", if rtf < 1.0 { "OK" } else { "SLOW" });
 
     Ok(())
-}
-
-fn read_wav(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
-    let mut reader = hound::WavReader::open(path)?;
-    let spec = reader.spec();
-    let mut out = Vec::new();
-
-    match spec.sample_format {
-        hound::SampleFormat::Int => {
-            let scale = 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32;
-            for sample in reader.samples::<i32>() {
-                out.push(sample? as f32 * scale);
-            }
-        }
-        hound::SampleFormat::Float => {
-            for sample in reader.samples::<f32>() {
-                out.push(sample?);
-            }
-        }
-    }
-
-    if spec.channels > 1 {
-        let ch = spec.channels as usize;
-        out = out
-            .chunks(ch)
-            .map(|frame| frame.iter().sum::<f32>() / ch as f32)
-            .collect();
-    }
-
-    Ok((out, spec.sample_rate))
 }
 
 fn rms(data: &[f32]) -> f32 {

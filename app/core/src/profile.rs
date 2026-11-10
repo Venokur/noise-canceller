@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use anyhow::{anyhow, Result};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use hound::{SampleFormat, WavSpec, WavWriter};
 
+use crate::devices;
 use crate::engine::BANDS;
 use crate::paths;
 use crate::resample::Resampler;
@@ -63,8 +64,9 @@ pub fn score_file(path: &std::path::Path) -> Result<Quality> {
     Ok(evaluate(&samples, spec.sample_rate))
 }
 
-pub fn record(input_name: Option<&str>, seconds: f32) -> Result<Profile> {    let host = cpal::default_host();
-    let device = find_device(&host, input_name)?;
+pub fn record(input_name: Option<&str>, seconds: f32) -> Result<Profile> {
+    let host = cpal::default_host();
+    let device = devices::pick_input(&host, input_name)?;
     let config = device.default_input_config()?;
     let rate = config.sample_rate();
     let channels = config.channels() as usize;
@@ -257,27 +259,6 @@ pub fn evaluate(samples: &[f32], rate: u32) -> Quality {
         clip_percent,
         score: score.clamp(0.0, 100.0) as i32,
     }
-}
-
-fn find_device(host: &cpal::Host, name: Option<&str>) -> Result<cpal::Device> {
-    if let Some(target) = name {
-        if let Ok(list) = host.input_devices() {
-            for device in list {
-                if device
-                    .description()
-                    .ok()
-                    .map(|d| d.name().to_string())
-                    .as_deref()
-                    == Some(target)
-                {
-                    return Ok(device);
-                }
-            }
-        }
-    }
-
-    host.default_input_device()
-        .ok_or_else(|| anyhow!("no input device"))
 }
 
 pub fn list() -> Vec<String> {

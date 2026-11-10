@@ -26,7 +26,7 @@
 | Слой | Решение |
 |---|---|
 | Ядро | Rust 2021, `cpal` 0.18 (WASAPI), `rtrb` 0.4, `libloading` 0.8 |
-| Модель | **sherpa-onnx 2.0.1** через C API + VoxLock int8 (16 кГц) + GTCRN/DPDFNet (остаточный шум) |
+| Модель | **sherpa-onnx 2.0.1** через C API + VoxLock int8 (16 кГц) + GTCRN (остаточный шум) |
 | Оболочка | Tauri 2.12.5, `decorations: false` (свой заголовок) |
 | UI | Vue 3 (`<script setup>`) + TypeScript + Vite 8 + Tailwind 4 |
 | Сборка | портативная папка: exe + `models/` + `native/` |
@@ -43,6 +43,9 @@ app/
     spectrum.rs    FFT + 32 лог-полосы
     profile.rs     запись профиля 15 с, оценка качества
     playback.rs    прослушивание wav через cpal
+    devices.rs     выбор устройств, кабель, имена по умолчанию
+    wav.rs         чтение/запись моно wav (A/B, замеры, превью)
+    recordings.rs  пары A/B на диске: имена, поиск, удаление, чистка
     settings.rs    модель настроек (serde)
     log.rs         app.log: старт/стоп движка, ошибки устройств, сбросы модели
     paths.rs       каталоги, 8.3-путь для нативных вызовов
@@ -50,7 +53,7 @@ app/
   src-tauri/   Tauri: команды, трей, автозапуск, один экземпляр
   src/         Vue: App.vue + components/{TitleBar,AppSelect,AppSwitch,AppSlider}
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
-  models/denoise/  gtcrn.onnx (0,5 МБ), dpdfnet2.onnx (10 МБ)
+  models/denoise/  gtcrn.onnx (0,5 МБ), silero_vad.onnx
   native/      sherpa-onnx-c-api.dll + onnxruntime.dll
   scripts/     fetch-models.ps1, golden.ps1
 portable/     готовая сборка (exe + models + native + README)
@@ -313,7 +316,7 @@ copy target\release\noise-canceller.exe ..\portable\
     паузы модель давит комнату, открытых блоков нет, и старый сторож не срабатывал
     именно там, где нужен. `InputVoice` ловит скачок уровня микрофона на 8 дБ выше
     среднего за ~3 с; если до этого модель была закрыта ≥0.5 с (`DropoutGuard`
-    считает `closed_run`), VoxLock, GTCRN/DPDFNet и их `FixedStage` сбрасываются
+    считает `closed_run`), VoxLock, GTCRN и их `FixedStage` сбрасываются
     **до** подачи первого слова. Это убирает «первые 1–3 секунды тишины после
     простоя». Повторные сбросы разрешены, пока вход остаётся речью; фон, который
     модель давит штатно, сторож не трогает (нет ни холодного старта, ни открытых

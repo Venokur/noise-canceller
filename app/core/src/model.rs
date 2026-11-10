@@ -13,6 +13,8 @@ struct GtcrnConfig {
     model: *const c_char,
 }
 
+/// Part of the C struct layout and therefore part of `ModelConfig`; the app no
+/// longer offers DPDFNet (it clipped words and clicked), so it stays null.
 #[repr(C)]
 struct DpdfNetConfig {
     model: *const c_char,
@@ -291,32 +293,6 @@ impl Denoiser {
                 dpdfnet: DpdfNetConfig {
                     model: ptr::null(),
                     attenuation_limit_db: 0.0,
-                },
-                voxlock: VoxLockConfig {
-                    enroll_model: ptr::null(),
-                    chunk_model: ptr::null(),
-                    voice_sample: ptr::null(),
-                },
-            },
-        };
-
-        Self::create(api, config)
-    }
-
-    /// DPDFNet: a stronger 48 kHz enhancer with a configurable attenuation cap.
-    pub fn new_dpdfnet(model: &Path, attenuation_limit_db: f32, threads: u16) -> Result<Self> {
-        let api = api()?;
-        let model_c = CString::new(crate::paths::native_safe(model).to_string_lossy().as_bytes())?;
-
-        let config = OnlineConfig {
-            model: ModelConfig {
-                gtcrn: GtcrnConfig { model: ptr::null() },
-                num_threads: threads.max(1) as i32,
-                debug: 0,
-                provider: ptr::null(),
-                dpdfnet: DpdfNetConfig {
-                    model: model_c.as_ptr(),
-                    attenuation_limit_db: attenuation_limit_db.clamp(0.0, 48.0),
                 },
                 voxlock: VoxLockConfig {
                     enroll_model: ptr::null(),

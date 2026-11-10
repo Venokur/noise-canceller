@@ -20,7 +20,6 @@ interface Settings {
   outputDevice: string;
   inputLeveling: boolean;
   residualDenoise: string;
-  residualAttenuationDb: number;
   vadGate: boolean;
   voiceIsolation: boolean;
   highPassEnabled: boolean;

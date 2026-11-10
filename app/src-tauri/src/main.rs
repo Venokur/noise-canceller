@@ -4,9 +4,10 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use noise_canceller_core::engine::{self, Engine};
+use noise_canceller_core::engine::Engine;
 use noise_canceller_core::paths;
 use noise_canceller_core::settings::Settings;
+use noise_canceller_core::{devices, recordings};
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, ContextMenu, Menu, MenuItem};
 use tauri::Manager;
@@ -49,9 +50,66 @@ struct StatsDto {
     healthy: bool,
 }
 
+impl Default for StatsDto {
+    fn default() -> Self {
+        Self {
+            input_rms: 0.0,
+            output_rms: 0.0,
+            rtf: 0.0,
+            latency_ms: 0.0,
+            buffer_ms: 0.0,
+            underruns: 0,
+            out_rate: 0,
+            overflows: 0,
+            capture_drops: 0,
+            backend: String::new(),
+            running: false,
+            spectrum: Vec::new(),
+            suppression_db: 0.0,
+            speech: false,
+            // silence, not full scale: the clip indicator reads this value
+            input_peak_db: -120.0,
+            muted: false,
+            guard_resets: 0,
+            leveler_gain_db: 0.0,
+            slew_ppm: 0.0,
+            threads: 0,
+            healthy: false,
+        }
+    }
+}
+
+impl From<noise_canceller_core::engine::Stats> for StatsDto {
+    fn from(s: noise_canceller_core::engine::Stats) -> Self {
+        Self {
+            input_rms: s.input_rms,
+            output_rms: s.output_rms,
+            rtf: s.rtf,
+            latency_ms: s.latency_ms,
+            buffer_ms: s.buffer_ms,
+            underruns: s.underruns,
+            out_rate: s.out_rate,
+            overflows: s.overflows,
+            capture_drops: s.capture_drops,
+            backend: s.backend,
+            running: true,
+            spectrum: s.spectrum.to_vec(),
+            suppression_db: s.suppression_db,
+            speech: s.speech,
+            input_peak_db: s.input_peak_db,
+            muted: s.muted,
+            guard_resets: s.guard_resets,
+            leveler_gain_db: s.leveler_gain_db,
+            slew_ppm: s.slew_ppm,
+            threads: s.threads,
+            healthy: s.healthy,
+        }
+    }
+}
+
 #[tauri::command(async)]
 fn list_devices() -> (Vec<String>, Vec<String>) {
-    (engine::input_devices(), engine::output_devices())
+    (devices::input_devices(), devices::output_devices())
 }
 
 #[tauri::command]
@@ -113,82 +171,12 @@ fn stop(state: State<'_, AppState>) {
 #[tauri::command]
 fn stats(state: State<'_, AppState>) -> StatsDto {
     let Ok(guard) = state.engine.lock() else {
-        return StatsDto {
-            input_rms: 0.0,
-            output_rms: 0.0,
-            rtf: 0.0,
-            latency_ms: 0.0,
-            buffer_ms: 0.0,
-            underruns: 0,
-            out_rate: 0,
-            overflows: 0,
-            capture_drops: 0,
-            backend: String::new(),
-            running: false,
-            spectrum: Vec::new(),
-            suppression_db: 0.0,
-            speech: false,
-            input_peak_db: -120.0,
-            muted: false,
-            guard_resets: 0,
-            leveler_gain_db: 0.0,
-            slew_ppm: 0.0,
-            threads: 0,
-            healthy: false,
-        };
+        return StatsDto::default();
     };
-
-    match guard.as_ref() {
-        Some(engine) => {
-            let s = engine.stats();
-            StatsDto {
-                input_rms: s.input_rms,
-                output_rms: s.output_rms,
-                rtf: s.rtf,
-                latency_ms: s.latency_ms,
-                buffer_ms: s.buffer_ms,
-                underruns: s.underruns,
-                out_rate: s.out_rate,
-                overflows: s.overflows,
-                capture_drops: s.capture_drops,
-                backend: s.backend,
-                running: true,
-                spectrum: s.spectrum.to_vec(),
-                suppression_db: s.suppression_db,
-                speech: s.speech,
-                input_peak_db: s.input_peak_db,
-                muted: s.muted,
-                guard_resets: s.guard_resets,
-                leveler_gain_db: s.leveler_gain_db,
-                slew_ppm: s.slew_ppm,
-                threads: s.threads,
-                healthy: s.healthy,
-            }
-        }
-        None => StatsDto {
-            input_rms: 0.0,
-            output_rms: 0.0,
-            rtf: 0.0,
-            latency_ms: 0.0,
-            buffer_ms: 0.0,
-            underruns: 0,
-            out_rate: 0,
-            overflows: 0,
-            capture_drops: 0,
-            backend: String::new(),
-            running: false,
-            spectrum: Vec::new(),
-            suppression_db: 0.0,
-            speech: false,
-            input_peak_db: -120.0,
-            muted: false,
-            guard_resets: 0,
-            leveler_gain_db: 0.0,
-            slew_ppm: 0.0,
-            threads: 0,
-            healthy: false,
-        },
-    }
+    guard
+        .as_ref()
+        .map(|engine| StatsDto::from(engine.stats()))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -212,27 +200,40 @@ fn set_settings(
         .lock()
         .map(|s| s.mute_hotkey.clone())
         .unwrap_or_default();
-    settings.save(&state.settings_path);
+    let rearm = settings.mute_hotkey != old_hotkey;
 
+    // the setting is saved either way: the old shortcut is gone, so a failed
+    // registration has to reach the user instead of being swallowed
+    match apply_settings(&app, &state, settings, rearm) {
+        Some(message) if rearm => Err(message),
+        _ => Ok(()),
+    }
+}
+
+/// Saves the settings, hands them to the running engine and optionally re-arms
+/// the mute shortcut. Returns the registration error, if any: the caller decides
+/// whether it is an error (a shortcut the user just picked) or a note (a reset
+/// or an import that already went through).
+fn apply_settings(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    settings: Settings,
+    rearm_hotkey: bool,
+) -> Option<String> {
+    settings.save(&state.settings_path);
     if let Ok(mut guard) = state.settings.lock() {
         *guard = settings.clone();
     }
-
     if let Ok(guard) = state.engine.lock() {
         if let Some(engine) = guard.as_ref() {
             engine.update_settings(&settings);
         }
     }
-
-    if settings.mute_hotkey != old_hotkey {
-        if let Some(message) = register_hotkey(&app, &settings.mute_hotkey) {
-            // the setting is saved either way: the old shortcut is gone, so the
-            // user has to know that the new one did not take
-            return Err(message);
-        }
+    if rearm_hotkey {
+        register_hotkey(app, &settings.mute_hotkey)
+    } else {
+        None
     }
-
-    Ok(())
 }
 
 
@@ -302,33 +303,9 @@ struct LastAb {
 /// files are still there.
 #[tauri::command(async)]
 fn last_ab() -> Option<LastAb> {
-    let dir = paths::recordings_dir();
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-
-    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_string()) else {
-            continue;
-        };
-        if !name.starts_with("ab-") || !name.ends_with("-raw.wav") {
-            continue;
-        }
-        let Some(time) = entry.metadata().ok().and_then(|m| m.modified().ok()) else {
-            continue;
-        };
-        if newest.as_ref().map(|(t, _)| time > *t).unwrap_or(true) {
-            newest = Some((time, path));
-        }
-    }
-
-    let (_, raw) = newest?;
-    let name = raw.file_name()?.to_string_lossy().to_string();
-    let clean = raw.with_file_name(name.replace("-raw.wav", "-clean.wav"));
-    if !clean.exists() {
-        return None;
-    }
+    let (_, raw, clean) = recordings::newest_pair()?;
     Some(LastAb {
-        folder: dir.to_string_lossy().to_string(),
+        folder: recordings::dir().to_string_lossy().to_string(),
         raw: raw.to_string_lossy().to_string(),
         clean: clean.to_string_lossy().to_string(),
     })
@@ -336,7 +313,7 @@ fn last_ab() -> Option<LastAb> {
 
 #[tauri::command(async)]
 fn cable_present() -> bool {
-    noise_canceller_core::engine::cable_present()
+    devices::cable_present()
 }
 
 #[tauri::command]
@@ -363,6 +340,16 @@ async fn play_profile(
     .map_err(|e| e.to_string())
 }
 
+/// Runs a PowerShell script with no console window. Both the cable installer and
+/// the model check used to carry their own copy of this invocation, and the
+/// `CREATE_NO_WINDOW` flag was easy to forget in a new one.
+fn powershell(script: &str) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+}
+
 #[tauri::command]
 async fn install_cable() -> Result<String, String> {
     const SCRIPT: &str = r#"
@@ -382,15 +369,10 @@ Start-Process -FilePath $exe.FullName -Verb RunAs -WorkingDirectory $exe.Directo
 'started'
 "#;
 
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", SCRIPT])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    let output = tauri::async_runtime::spawn_blocking(move || powershell(SCRIPT))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -404,15 +386,10 @@ Start-Process -FilePath $exe.FullName -Verb RunAs -WorkingDirectory $exe.Directo
 async fn check_model_update() -> Result<String, String> {
     const SCRIPT: &str = "$m = Invoke-RestMethod 'https://huggingface.co/api/models/arbazsiddiqui/voxlock'; $m.sha";
 
-    let output = tauri::async_runtime::spawn_blocking(move || {
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", SCRIPT])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    let output = tauri::async_runtime::spawn_blocking(move || powershell(SCRIPT))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err("не удалось связаться с huggingface.co".to_string());
@@ -561,16 +538,7 @@ fn open_log() -> Result<(), String> {
 #[tauri::command]
 fn reset_settings(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
     let fresh = Settings::default();
-    fresh.save(&state.settings_path);
-    if let Ok(mut guard) = state.settings.lock() {
-        *guard = fresh.clone();
-    }
-    if let Ok(guard) = state.engine.lock() {
-        if let Some(engine) = guard.as_ref() {
-            engine.update_settings(&fresh);
-        }
-    }
-    register_hotkey(&app, &fresh.mute_hotkey);
+    apply_settings(&app, &state, fresh.clone(), true);
     noise_canceller_core::log::info("settings reset to defaults");
     Ok(fresh)
 }
@@ -591,16 +559,7 @@ fn import_settings(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
         return Err("нет файла settings-export.json в папке data".to_string());
     }
     let settings = Settings::load(&path);
-    settings.save(&state.settings_path);
-    if let Ok(mut guard) = state.settings.lock() {
-        *guard = settings.clone();
-    }
-    if let Ok(guard) = state.engine.lock() {
-        if let Some(engine) = guard.as_ref() {
-            engine.update_settings(&settings);
-        }
-    }
-    register_hotkey(&app, &settings.mute_hotkey);
+    apply_settings(&app, &state, settings.clone(), true);
     noise_canceller_core::log::info("settings imported");
     Ok(settings)
 }
@@ -615,52 +574,29 @@ struct AbEntry {
 
 #[tauri::command(async)]
 fn list_recordings() -> Vec<AbEntry> {
-    let dir = paths::recordings_dir();
-    let mut out: Vec<AbEntry> = Vec::new();
-    if let Ok(read) = std::fs::read_dir(&dir) {
-        for entry in read.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let Some(rest) = name.strip_prefix("ab-") else {
-                continue;
-            };
-            let Some(stamp_text) = rest.strip_suffix("-raw.wav") else {
-                continue;
-            };
-            let Ok(stamp) = stamp_text.parse::<u64>() else {
-                continue;
-            };
-            let clean = dir.join(format!("ab-{stamp}-clean.wav"));
-            if !clean.exists() {
-                continue;
-            }
-            out.push(AbEntry {
+    recordings::pairs()
+        .into_iter()
+        .take(20)
+        .map(|stamp| {
+            let (raw, clean) = recordings::pair(stamp);
+            AbEntry {
                 stamp,
-                raw: entry.path().to_string_lossy().to_string(),
+                raw: raw.to_string_lossy().to_string(),
                 clean: clean.to_string_lossy().to_string(),
-            });
-        }
-    }
-    out.sort_by_key(|entry| std::cmp::Reverse(entry.stamp));
-    out.truncate(20);
-    out
+            }
+        })
+        .collect()
 }
 
 #[tauri::command(async)]
 fn delete_recording(stamp: u64) -> Result<(), String> {
-    let dir = paths::recordings_dir();
-    for suffix in ["-raw.wav", "-clean.wav", ".json"] {
-        let path = dir.join(format!("ab-{stamp}{suffix}"));
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
+    recordings::delete(stamp).map_err(|e| e.to_string())
 }
 
 
 #[tauri::command(async)]
 fn default_devices() -> (Option<String>, Option<String>) {
-    engine::default_device_names()
+    devices::default_names()
 }
 
 #[derive(Serialize)]
@@ -710,12 +646,10 @@ fn profile_scores() -> Vec<ProfileScoreDto> {
 /// How much louder the processed take is than the raw one (dB, speech RMS).
 #[tauri::command(async)]
 fn ab_level_delta(stamp: u64) -> Result<f32, String> {
-    let dir = paths::recordings_dir();
-    let raw = dir.join(format!("ab-{stamp}-raw.wav"));
-    let clean = dir.join(format!("ab-{stamp}-clean.wav"));
-    let raw_db = noise_canceller_core::playback::speech_rms_db(&raw).map_err(|e| e.to_string())?;
-    let clean_db =
-        noise_canceller_core::playback::speech_rms_db(&clean).map_err(|e| e.to_string())?;
+    let raw_db = noise_canceller_core::playback::speech_rms_db(&recordings::raw(stamp))
+        .map_err(|e| e.to_string())?;
+    let clean_db = noise_canceller_core::playback::speech_rms_db(&recordings::clean(stamp))
+        .map_err(|e| e.to_string())?;
     Ok(clean_db - raw_db)
 }
 
@@ -733,65 +667,17 @@ struct AbMetricsDto {
 /// applies in the regression run, so the UI and CI agree.
 #[tauri::command(async)]
 fn ab_metrics(stamp: u64) -> Result<AbMetricsDto, String> {
-    let dir = paths::recordings_dir();
-    let raw = dir.join(format!("ab-{stamp}-raw.wav"));
-    let clean = dir.join(format!("ab-{stamp}-clean.wav"));
-    let m =
-        noise_canceller_core::playback::ab_metrics(&raw, &clean).map_err(|e| e.to_string())?;
+    let m = noise_canceller_core::playback::ab_metrics(
+        &recordings::raw(stamp),
+        &recordings::clean(stamp),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(AbMetricsDto {
         speech_level_db: (m.speech_level_db * 10.0).round() / 10.0,
         level_delta_db: (m.level_delta_db * 10.0).round() / 10.0,
         pause_contrast_db: (m.pause_contrast_db * 10.0).round() / 10.0,
         longest_dropout_s: (m.longest_dropout_s * 100.0).round() / 100.0,
     })
-}
-
-fn prune_recordings_keep(keep: usize) -> usize {
-    let dir = paths::recordings_dir();
-    let mut stamps: Vec<u64> = Vec::new();
-    if let Ok(read) = std::fs::read_dir(&dir) {
-        for entry in read.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let Some(rest) = name.strip_prefix("ab-") else {
-                continue;
-            };
-            let Some(stamp) = rest.strip_suffix("-clean.wav") else {
-                continue;
-            };
-            if let Ok(stamp) = stamp.parse::<u64>() {
-                stamps.push(stamp);
-            }
-        }
-    }
-    stamps.sort_unstable_by_key(|stamp| std::cmp::Reverse(*stamp));
-    let mut removed = 0;
-    for stamp in stamps.into_iter().skip(keep.max(1)) {
-        for suffix in ["-raw.wav", "-clean.wav", ".json"] {
-            let path = dir.join(format!("ab-{stamp}{suffix}"));
-            if std::fs::remove_file(&path).is_ok() {
-                removed += 1;
-            }
-        }
-    }
-    // a settings snapshot whose wav pair was deleted by hand (or never written)
-    // is litter: it has no stamp in `stamps`, so remove it here
-    if let Ok(read) = std::fs::read_dir(&dir) {
-        for entry in read.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let Some(rest) = name.strip_prefix("ab-") else {
-                continue;
-            };
-            let Some(stamp) = rest.strip_suffix(".json") else {
-                continue;
-            };
-            let raw = dir.join(format!("ab-{stamp}-raw.wav"));
-            let clean = dir.join(format!("ab-{stamp}-clean.wav"));
-            if !raw.exists() && !clean.exists() && std::fs::remove_file(entry.path()).is_ok() {
-                removed += 1;
-            }
-        }
-    }
-    removed
 }
 
 #[tauri::command(async)]
@@ -801,7 +687,7 @@ fn prune_recordings(state: State<'_, AppState>) -> usize {
         .lock()
         .map(|s| s.keep_recordings as usize)
         .unwrap_or(20);
-    prune_recordings_keep(keep)
+    recordings::prune(keep)
 }
 
 
@@ -1012,7 +898,7 @@ fn main() {
     let start_minimized = settings.start_minimized;
     let start_hotkey = settings.mute_hotkey.clone();
     noise_canceller_core::log::info("app start");
-    let pruned = prune_recordings_keep(settings.keep_recordings as usize);
+    let pruned = recordings::prune(settings.keep_recordings as usize);
     if pruned > 0 {
         noise_canceller_core::log::info(&format!("removed {pruned} old A/B files"));
     }

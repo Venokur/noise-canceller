@@ -4,9 +4,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 
+use crate::devices;
 use crate::resample::Resampler;
+use crate::wav;
 
 /// Set by `stop()`; the stream fades to silence and `play` returns.
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -34,7 +36,7 @@ fn play_inner(
     target_db: Option<f32>,
 ) -> Result<()> {
     CANCEL.store(false, Ordering::Relaxed);
-    let (mut samples, rate) = read_wav(path)?;
+    let (mut samples, rate) = wav::read_mono(path)?;
     if samples.is_empty() {
         return Err(anyhow!("файл пуст"));
     }
@@ -43,7 +45,7 @@ fn play_inner(
     }
 
     let host = cpal::default_host();
-    let device = pick(&host, device_name)?;
+    let device = devices::pick_output(&host, device_name)?;
     let config = device.default_output_config()?;
     let out_rate = config.sample_rate();
     let channels = config.channels() as usize;
@@ -59,7 +61,6 @@ fn play_inner(
         samples
     };
 
-    let total = data.len();
     let data = Arc::new(data);
     let cursor = Arc::new(AtomicUsize::new(0));
     let finished = Arc::new(AtomicBool::new(false));
@@ -147,8 +148,6 @@ fn play_inner(
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
-    let _ = cursor.load(Ordering::Relaxed);
-    let _ = total;
     Ok(())
 }
 
@@ -181,7 +180,7 @@ fn normalize(samples: &mut [f32], rate: u32, target_db: f32) {
 /// Speech RMS of a wav in dBFS: 10 ms windows below -50 dB are ignored, so
 /// pauses do not drag the value down.
 pub fn speech_rms_db(path: &std::path::Path) -> Result<f32> {
-    let (samples, rate) = read_wav(path)?;
+    let (samples, rate) = wav::read_mono(path)?;
     let window = (rate as usize / 100).max(1);
     let mut sum = 0.0f64;
     let mut frames = 0usize;
@@ -253,8 +252,8 @@ fn percentile(values: &[f32], percent: f32) -> f32 {
 /// -45 dB, an absolute threshold calls it speech, and a take that correctly
 /// silenced the noise looked like one long dropout.
 pub fn ab_metrics(raw: &std::path::Path, clean: &std::path::Path) -> Result<AbMetrics> {
-    let (raw_samples, rate) = read_wav(raw)?;
-    let (clean_samples, _) = read_wav(clean)?;
+    let (raw_samples, rate) = wav::read_mono(raw)?;
+    let (clean_samples, _) = wav::read_mono(clean)?;
     let n = raw_samples.len().min(clean_samples.len());
     if n == 0 {
         return Err(anyhow!("запись пуста"));
@@ -315,78 +314,9 @@ pub fn ab_metrics(raw: &std::path::Path, clean: &std::path::Path) -> Result<AbMe
     })
 }
 
-fn pick(host: &cpal::Host, name: Option<&str>) -> Result<cpal::Device> {
-    if let Some(target) = name.filter(|n| !n.is_empty()) {
-        if let Ok(list) = host.output_devices() {
-            for device in list {
-                if device
-                    .description()
-                    .ok()
-                    .map(|d| d.name().to_string())
-                    .as_deref()
-                    == Some(target)
-                {
-                    return Ok(device);
-                }
-            }
-            return Err(anyhow!("выходное устройство «{target}» не найдено"));
-        }
-    }
-
-    host.default_output_device()
-        .ok_or_else(|| anyhow!("нет устройства вывода"))
-}
-
-fn read_wav(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
-    let mut reader = hound::WavReader::open(path)?;
-    let spec = reader.spec();
-    let mut out = Vec::new();
-
-    match spec.sample_format {
-        hound::SampleFormat::Int => {
-            let scale = 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32;
-            for sample in reader.samples::<i32>() {
-                out.push(sample? as f32 * scale);
-            }
-        }
-        hound::SampleFormat::Float => {
-            for sample in reader.samples::<f32>() {
-                out.push(sample?);
-            }
-        }
-    }
-
-    if spec.channels > 1 {
-        let channels = spec.channels as usize;
-        out = out
-            .chunks(channels)
-            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-            .collect();
-    }
-
-    Ok((out, spec.sample_rate))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hound::{SampleFormat, WavSpec, WavWriter};
-
-    fn write_wav(path: &std::path::Path, samples: &[f32], rate: u32) {
-        let spec = WavSpec {
-            channels: 1,
-            sample_rate: rate,
-            bits_per_sample: 16,
-            sample_format: SampleFormat::Int,
-        };
-        let mut writer = WavWriter::create(path, spec).expect("create wav");
-        for sample in samples {
-            writer
-                .write_sample((sample * 32767.0) as i16)
-                .expect("write sample");
-        }
-        writer.finalize().expect("finalize");
-    }
 
     /// speech 0.1 in the raw take, silence between words, and one word muted
     /// in the processed take: the numbers must show both suppression and the gap
@@ -415,8 +345,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let raw_path = dir.join("raw.wav");
         let clean_path = dir.join("clean.wav");
-        write_wav(&raw_path, &raw, rate);
-        write_wav(&clean_path, &clean, rate);
+        wav::write_mono(&raw_path, &raw, rate).expect("write raw");
+        wav::write_mono(&clean_path, &clean, rate).expect("write clean");
 
         let m = ab_metrics(&raw_path, &clean_path).expect("metrics");
         let _ = std::fs::remove_dir_all(&dir);

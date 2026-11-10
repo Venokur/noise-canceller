@@ -6,24 +6,38 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 
+use crate::devices;
 use crate::dsp::Chain;
 use crate::model::{Denoiser, Vad};
 use crate::paths;
+use crate::recordings;
 use crate::resample::Resampler;
 use crate::settings::Settings;
+use crate::wav;
 
 pub const MODEL_RATE: u32 = 16_000;
 pub const BANDS: usize = 32;
+
+/// The model works on 128-sample hops at 16 kHz, so a requested block is
+/// rounded to the nearest multiple: the 60 ms slider runs as 64 ms.
+pub fn block_samples(chunk_ms: f32) -> usize {
+    let samples = ((MODEL_RATE as f32 * chunk_ms / 1000.0) as usize).max(128);
+    ((samples + 64) / 128).max(1) * 128
+}
+
+pub fn block_ms(samples: usize) -> f32 {
+    samples as f32 * 1000.0 / MODEL_RATE as f32
+}
+
 /// Blocks of near-digital silence after which the model is skipped.
 ///
 /// Shared with `nc replay`: a different value there (it used to be 100) meant
 /// the offline regression ran a different audio path than the live app.
 pub const SILENCE_SKIP_BLOCKS: u32 = 5;
 
-#[derive(Default)]
 pub struct Stats {
     pub input_rms: f32,
     pub output_rms: f32,
@@ -657,41 +671,6 @@ impl PeakGuard {
     }
 }
 
-/// Names of the Windows default input/output, for "follow the system device".
-pub fn default_device_names() -> (Option<String>, Option<String>) {
-    let host = cpal::default_host();
-    let input = host
-        .default_input_device()
-        .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()))
-        // the cable's capture side is not a microphone: following it means
-        // processing our own output (feedback) and every app playing into it
-        .filter(|name| !is_cable_name(name));
-    let output = host
-        .default_output_device()
-        .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()));
-    (input, output)
-}
-
-/// True for the virtual cable in either direction.
-pub fn is_cable_name(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("cable") || lower.contains("vb-audio") || lower.contains("vb-cable")
-}
-
-pub fn input_devices() -> Vec<String> {
-    let host = cpal::default_host();
-    host.input_devices()
-        .map(|it| it.filter_map(|d| d.description().ok().map(|desc| desc.name().to_string())).collect())
-        .unwrap_or_default()
-}
-
-pub fn output_devices() -> Vec<String> {
-    let host = cpal::default_host();
-    host.output_devices()
-        .map(|it| it.filter_map(|d| d.description().ok().map(|desc| desc.name().to_string())).collect())
-        .unwrap_or_default()
-}
-
 pub struct Engine {
     shared: Shared,
     input: Option<cpal::Stream>,
@@ -714,12 +693,11 @@ impl Engine {
         install_panic_hook();
 
         let host = cpal::default_host();
-        let input = pick_device(&host, input_name.as_deref(), true)?;
+        let input = devices::pick_input(&host, input_name.as_deref())?;
         // the cable's capture side is our own output: processing it is a
         // feedback loop (and every app playing into the cable is "the speaker")
-        if let Ok(desc) = input.description() {
-            let name = desc.name().to_string();
-            if is_cable_name(&name) {
+        if let Some(name) = devices::name_of(&input) {
+            if devices::is_cable_name(&name) {
                 return Err(anyhow!(
                     "«{name}» — это виртуальный кабель, а не микрофон: приложение услышит собственный выход. Выберите настоящий микрофон."
                 ));
@@ -729,9 +707,9 @@ impl Engine {
         // a normal run must never speak into the speakers: that is what the
         // explicit "test in speakers" mode is for
         let output = if test_mode {
-            pick_device(&host, output_name.as_deref(), false)?
+            devices::pick_output(&host, output_name.as_deref())?
         } else {
-            match find_cable(&host) {
+            match devices::find_cable(&host) {
                 Some(device) => device,
                 None => {
                     return Err(anyhow!(
@@ -747,17 +725,11 @@ impl Engine {
         let in_rate = in_cfg.sample_rate();
         let out_rate = out_cfg.sample_rate();
 
-        let chunk_samples = ((MODEL_RATE as f32 * settings.chunk_ms / 1000.0) as usize).max(128);
-        // round to the nearest multiple of 128: 60 ms must stay 60 ms, not 56
-        let chunk_samples = ((chunk_samples + 64) / 128).max(1) * 128;
-        let chunk_ms = chunk_samples as f32 * 1000.0 / MODEL_RATE as f32;
+        let chunk_samples = block_samples(settings.chunk_ms);
+        let chunk_ms = block_ms(chunk_samples);
 
         // the automatic pick uses the *rounded* block, not the slider value
-        let threads = if settings.auto_threads {
-            crate::settings::recommended_threads(chunk_ms)
-        } else {
-            settings.denoiser_threads.clamp(1, 16)
-        };
+        let threads = settings.effective_threads(chunk_ms);
 
         let denoiser = if settings.voice_isolation {
             Some(Denoiser::new(
@@ -770,9 +742,9 @@ impl Engine {
             None
         };
         let backend = if settings.voice_isolation {
-            format!("VoxLock · CPU · {} мс блок", settings.chunk_ms as u32)
+            format!("VoxLock · CPU · {} мс блок", chunk_ms.round() as u32)
         } else {
-            format!("Шумодав без изоляции · {} мс блок", settings.chunk_ms as u32)
+            format!("Шумодав без изоляции · {} мс блок", chunk_ms.round() as u32)
         };
 
         let shared = Shared::new(settings.clone());
@@ -840,19 +812,7 @@ impl Engine {
                 }
             }
         }
-        let mut dpdfnet = if residual_kind == "dpdfnet" && paths::dpdfnet_model().exists() {
-            Denoiser::new_dpdfnet(
-                &paths::dpdfnet_model(),
-                settings.residual_attenuation_db,
-                threads,
-            )
-            .ok()
-            .map(crate::model::StreamDenoiser::new)
-        } else {
-            None
-        };
         let mut res16: Vec<f32> = Vec::with_capacity(chunk_samples * 2);
-        let mut res48: Vec<f32> = Vec::with_capacity(chunk_samples * 8);
         let mut vad = if settings.vad_gate && paths::vad_model().exists() {
             Vad::new(&paths::vad_model(), 0.5).ok()
         } else {
@@ -879,7 +839,6 @@ impl Engine {
         let mut analyzer = crate::spectrum::Spectrum::new(1024, out_rate as f32);
         let mut chain_seq = 0u32;
         let mut rtf_window = (0usize, Duration::ZERO);
-        let mut cpu_window_start = Instant::now();
         // remember the level between runs: without it the first words of a
         // session start quiet and climb for a second or two
         let level_path = paths::data_dir().join("leveler.txt");
@@ -917,8 +876,6 @@ impl Engine {
         let mut gtcrn_stage = FixedStage::new();
         let mut gtcrn_before_out = vec![0.0f32; chunk_samples];
         let mut gtcrn_before_stage = FixedStage::new();
-        let mut dpdf_out = vec![0.0f32; up_buf.len()];
-        let mut dpdf_stage = FixedStage::new();
 
         let processor = thread::Builder::new()
             .name("voxlock-processor".into())
@@ -1201,10 +1158,6 @@ impl Engine {
                                 model.reset();
                                 gtcrn_before_stage.reset();
                             }
-                            if let Some(model) = dpdfnet.as_mut() {
-                                model.reset();
-                                dpdf_stage.reset();
-                            }
                             crate::log::info(&format!(
                                 "cold start: VoxLock reset while the model was closed (in {:.0} dB)",
                                 20.0 * raw_rms.max(1e-9).log10()
@@ -1424,14 +1377,6 @@ impl Engine {
 
                     let produced = up.process(source, &mut up_buf);
 
-                    // DPDFNet works at 48 kHz, after the resampler
-                    if let Some(model) = dpdfnet.as_mut() {
-                        res48.clear();
-                        model.process(&up_buf[..produced], &mut res48);
-                        dpdf_stage.take(&res48, &mut dpdf_out[..produced], Some(&up_buf[..produced]));
-                        up_buf[..produced].copy_from_slice(&dpdf_out[..produced]);
-                    }
-
                     if sanitize(&mut up_buf[..produced]) {
                         let seen = proc_shared.bad_blocks.fetch_add(1, Ordering::Relaxed) + 1;
                         if seen == 1 {
@@ -1486,8 +1431,6 @@ impl Engine {
                     // controller with it
                     proc_shared.pushed.fetch_add(written as u64, Ordering::Relaxed);
 
-                    let _available = out_prod.slots();
-
                     let elapsed = started.elapsed();
                     rtf_window.0 += count;
                     rtf_window.1 += elapsed;
@@ -1495,10 +1438,6 @@ impl Engine {
                         let rtf = rtf_window.1.as_secs_f32() / (rtf_window.0 as f32 / MODEL_RATE as f32);
                         proc_shared.rtf.store(rtf.to_bits(), Ordering::Relaxed);
                         rtf_window = (0, Duration::ZERO);
-                    }
-
-                    if cpu_window_start.elapsed() > Duration::from_secs(1) {
-                        cpu_window_start = Instant::now();
                     }
                 }
             })
@@ -1742,8 +1681,7 @@ impl Engine {
         // no answer an hour later
         if let Ok(current) = self.shared.settings.lock() {
             if let Ok(text) = serde_json::to_string_pretty(&*current) {
-                let path = paths::recordings_dir().join(format!("ab-{stamp}.json"));
-                let _ = std::fs::write(path, text);
+                let _ = std::fs::write(recordings::snapshot(stamp), text);
             }
         }
         if let Ok(mut folder) = self.shared.ab_folder.lock() {
@@ -1813,48 +1751,6 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-pub fn cable_present() -> bool {
-    find_cable(&cpal::default_host()).is_some()
-}
-
-fn find_cable(host: &cpal::Host) -> Option<cpal::Device> {
-    let list = host.output_devices().ok()?;
-    for device in list {
-        let name = device
-            .description()
-            .ok()
-            .map(|d| d.name().to_string())
-            .unwrap_or_default();
-        if name.contains("CABLE Input") || name.contains("VB-Audio") || name.contains("VB-CABLE") {
-            return Some(device);
-        }
-    }
-    None
-}
-
-fn pick_device(host: &cpal::Host, name: Option<&str>, input: bool) -> Result<cpal::Device> {
-    if let Some(target) = name {
-        if !target.is_empty() {
-            let list = if input { host.input_devices()? } else { host.output_devices()? };
-            for device in list {
-                if device.description().ok().map(|d| d.name().to_string()).as_deref() == Some(target)
-                {
-                    return Ok(device);
-                }
-            }
-            return Err(anyhow!(
-                "устройство «{target}» не найдено — обновите список устройств"
-            ));
-        }
-    }
-
-    if input {
-        host.default_input_device().ok_or_else(|| anyhow!("no input device"))
-    } else {
-        host.default_output_device().ok_or_else(|| anyhow!("no output device"))
     }
 }
 
@@ -1934,7 +1830,7 @@ fn render_f32(
     // smooth the fill over ~0.5 s: the producer pushes a whole block at once, so
     // the raw value is a sawtooth and a controller fed with it hunts
     let fill = ring.slots() as f32;
-    shared.out_raw.store(ring.slots() as u32, Ordering::Relaxed);
+    shared.out_raw.store(fill as u32, Ordering::Relaxed);
     shared.callback_frames.store(frames as u32, Ordering::Relaxed);
     if *smoothed <= 0.0 {
         *smoothed = fill;
@@ -2098,11 +1994,10 @@ fn ab_append_clean(
 }
 
 fn write_ab(buf: &AbBuffer) -> anyhow::Result<(String, String, String)> {
-    let dir = paths::recordings_dir();
-    let raw = dir.join(format!("ab-{}-raw.wav", buf.stamp));
-    let clean = dir.join(format!("ab-{}-clean.wav", buf.stamp));
-    write_mono(&raw, &buf.raw, buf.raw_rate)?;
-    write_mono(&clean, &buf.clean, buf.out_rate)?;
+    let dir = recordings::dir();
+    let (raw, clean) = recordings::pair(buf.stamp);
+    wav::write_mono(&raw, &buf.raw, buf.raw_rate)?;
+    wav::write_mono(&clean, &buf.clean, buf.out_rate)?;
     Ok((
         dir.to_string_lossy().to_string(),
         raw.to_string_lossy().to_string(),
@@ -2110,24 +2005,21 @@ fn write_ab(buf: &AbBuffer) -> anyhow::Result<(String, String, String)> {
     ))
 }
 
-fn write_mono(path: &std::path::Path, samples: &[f32], rate: u32) -> anyhow::Result<()> {
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(path, spec)?;
-    for sample in samples {
-        writer.write_sample((sample.clamp(-1.0, 1.0) * 32767.0) as i16)?;
-    }
-    writer.finalize()?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_is_rounded_to_the_models_hop() {
+        // 60 ms is what the slider says; the model works in 128-sample hops at
+        // 16 kHz, so it runs as 64 ms and the status line has to say 64
+        assert_eq!(block_samples(60.0), 1024);
+        assert_eq!(block_ms(block_samples(60.0)), 64.0);
+        assert_eq!(block_samples(20.0), 384);
+        assert_eq!(block_ms(block_samples(20.0)), 24.0);
+        // never below one hop, whatever the settings file says
+        assert_eq!(block_samples(1.0), 128);
+    }
 
     fn tone(rms: f32, len: usize, phase: &mut f32) -> Vec<f32> {
         let amplitude = rms * std::f32::consts::SQRT_2;

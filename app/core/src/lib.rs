@@ -1,3 +1,4 @@
+pub mod devices;
 pub mod dsp;
 pub mod engine;
 pub mod log;
@@ -5,9 +6,11 @@ pub mod model;
 pub mod paths;
 pub mod playback;
 pub mod profile;
+pub mod recordings;
 pub mod resample;
 pub mod settings;
 pub mod spectrum;
+pub mod wav;
 
 pub use engine::{
     cap_dry_mix, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard, SILENCE_SKIP_BLOCKS,

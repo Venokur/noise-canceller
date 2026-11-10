@@ -65,9 +65,8 @@ pub struct Settings {
     /// keeps the model input at a usable level on quiet microphones
     pub input_leveling: bool,
 
-    /// second denoiser after VoxLock: "off" | "gtcrn" | "dpdfnet"
+    /// second denoiser after VoxLock: "off" | "gtcrn"
     pub residual_denoise: String,
-    pub residual_attenuation_db: f32,
     /// "after" (VoxLock then denoise) or "before" (denoise then VoxLock)
     pub residual_order: String,
     /// Silero VAD drives the output gate instead of a level threshold
@@ -144,7 +143,6 @@ impl Default for Settings {
             input_leveling: true,
 
             residual_denoise: "gtcrn".into(),
-            residual_attenuation_db: 18.0,
             residual_order: "after".into(),
             vad_gate: true,
             voice_isolation: true,
@@ -190,11 +188,12 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Threads actually handed to the model: the automatic pick when enabled,
-    /// otherwise the slider value.
-    pub fn effective_threads(&self) -> u16 {
+    /// Threads actually handed to the model for a given (already rounded) block.
+    /// The engine rounds the block to VoxLock's 128-sample hop first, so the
+    /// automatic pick has to see the rounded value, not the slider.
+    pub fn effective_threads(&self, chunk_ms: f32) -> u16 {
         if self.auto_threads {
-            recommended_threads(self.chunk_ms)
+            recommended_threads(chunk_ms)
         } else {
             self.denoiser_threads.clamp(1, 16)
         }
@@ -323,16 +322,9 @@ impl Settings {
             settings.defaults_rev = DEFAULTS_REV;
         }
 
-        // only known stages are allowed; anything else (including the removed
-        // DPDFNet option) falls back to GTCRN
-        match settings.residual_denoise.as_str() {
-            "off" | "gtcrn" => {}
-            _ => settings.residual_denoise = "gtcrn".into(),
-        }
-
         // the cable's capture side is not a microphone: a saved selection of it
         // turns the app into a feedback loop, so drop it once and pick a real one
-        if !settings.input_device.is_empty() && crate::engine::is_cable_name(&settings.input_device) {
+        if !settings.input_device.is_empty() && crate::devices::is_cable_name(&settings.input_device) {
             settings.input_device.clear();
         }
 
@@ -391,10 +383,13 @@ mod tests {
             chunk_ms: 60.0,
             ..Settings::default()
         };
-        assert_eq!(settings.effective_threads(), 7);
+        assert_eq!(settings.effective_threads(60.0), 7);
 
         settings.auto_threads = true;
-        assert_eq!(settings.effective_threads(), recommended_threads(60.0));
+        assert_eq!(
+            settings.effective_threads(60.0),
+            recommended_threads(60.0)
+        );
     }
 
     #[test]

@@ -83,10 +83,6 @@ pub fn gtcrn_model() -> PathBuf {
     denoise_dir().join("gtcrn.onnx")
 }
 
-pub fn dpdfnet_model() -> PathBuf {
-    denoise_dir().join("dpdfnet2.onnx")
-}
-
 pub fn vad_model() -> PathBuf {
     denoise_dir().join("silero_vad.onnx")
 }
