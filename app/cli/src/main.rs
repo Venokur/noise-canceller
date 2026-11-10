@@ -279,6 +279,7 @@ fn replay_file() -> Result<()> {
     let mut vad_all = 0u32;
     let mut written_total = 0usize;
     let mut last_trace = -1i32;
+    let trace = std::env::var("NC_TRACE").is_ok();
     let mut stats_vox = (0usize, 0usize, 0usize);
     let zeros = vec![0.0f32; chunk];
     let mut silent_run = 0u32;
@@ -308,14 +309,23 @@ fn replay_file() -> Result<()> {
         }
 
         let allow_up = out.len() as f32 / rate as f32 > 1.5;
-        leveler.process(block, settings.input_leveling, allow_up);
+        leveler.process(block, settings.input_leveling, allow_up, in_voice);
         guard.process(block);
 
         let wet = settings.isolation_strength.clamp(0.0, 1.0);
         let warm = block_index as f32 * chunk as f32 / 16_000.0 > 1.0;
-        let out_block = pipeline.process(block, wet, warm, in_voice, input_voice.voiced());
+        let out_block = pipeline.process(block, wet, warm, in_voice);
 
-        if out_block.cold_reset && std::env::var("NC_TRACE").is_ok() {
+        if out_block.leak_reset && trace {
+            eprintln!(
+                "leak guard: reset at {:.2} s (in {:.0} dB, atten {:.0} dB)",
+                block_index as f32 * chunk as f32 / 16_000.0,
+                20.0 * out_block.in_rms.max(1e-9).log10(),
+                out_block.atten_db
+            );
+        }
+
+        if out_block.cold_reset && trace {
             eprintln!(
                 "cold start: reset while the model was closed at {:.2} s (in {:.0} dB)",
                 block_index as f32 * chunk as f32 / 16_000.0,
@@ -343,23 +353,31 @@ fn replay_file() -> Result<()> {
         }
         was_speaking = speaking;
 
-        chain.set_target_present(out_block.target_model);
+        // same target as the live engine: the output detector must agree with
+        // the mic that the user is talking, otherwise an audiobook is lifted
+        let vad_ok = out_block.target_vad.unwrap_or(out_block.target_model);
+        chain.set_target_present((in_voice && vad_ok) || out_block.cap_active);
         if let Some(speech) = out_block.target_vad {
-            chain.set_target_present(speech || out_block.cap_active);
             if speech {
                 vad_true += 1;
             }
             vad_all += 1;
         }
         let produced = up.process(out_block.wet, &mut up_buf);
-        if std::env::var("NC_TRACE").is_ok() && written_total < rate as usize * 4 {
+        if trace {
             let t = written_total as f32 / rate as f32;
             if (t * 4.0) as i32 > last_trace {
                 last_trace = (t * 4.0) as i32;
                 eprintln!(
-                    "t {t:.2} level {:.1} agc {:.1}",
+                    "t {t:.2} in {:.0} out {:.0} atten {:.0} cap {} voice {} vad {} level {:.1} agc {:.1}",
+                    20.0 * out_block.in_rms.max(1e-9).log10(),
+                    20.0 * out_block.out_rms.max(1e-9).log10(),
+                    out_block.atten_db,
+                    u8::from(out_block.cap_active),
+                    u8::from(in_voice),
+                    u8::from(out_block.target_vad.unwrap_or(false)),
                     leveler.gain_db(),
-                    chain.agc_gain_db()
+                    chain.agc_gain_db(),
                 );
             }
         }
@@ -599,10 +617,12 @@ fn selftest() -> Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
     let mut leveler = Leveler::new(start_gain);
+    let mut input_voice = InputVoice::new();
 
     for block in at16[..at16_len].chunks_mut(chunk) {
         let second = isolated.len() as f32 / 16_000.0;
-        leveler.process(block, true, second > 1.5);
+        let speaker = input_voice.update(block);
+        leveler.process(block, true, second > 1.5, speaker);
         let produced = denoiser.run(block);
         if produced.len() != block.len() {
             mismatched += 1;

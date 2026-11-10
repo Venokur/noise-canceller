@@ -45,7 +45,7 @@ impl LearnedState {
     /// of this file.
     pub fn load(dir: &Path) -> Self {
         match std::fs::read_to_string(Self::path(dir)) {
-            Ok(text) => match serde_json::from_str::<Self>(&text) {
+            Ok(text) => match serde_json::from_str::<Self>(text.trim_start_matches('\u{feff}')) {
                 Ok(state) => state.sanitized(),
                 Err(err) => {
                     crate::log::info(&format!(

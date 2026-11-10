@@ -89,7 +89,7 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
               <div v-if="settings.voiceIsolation" :class="settingRow">
                 <AppLabel
                   text="Предел подавления"
-                  hint="Выход модели никогда не будет тише входа больше чем на эту величину, пока вы говорите. 0 — без предела: максимальная изоляция, но модель может полностью заглушить голос."
+                  hint="Защита от провалов: пока вы говорите, выход модели не станет тише входа больше чем на эту величину. Включается только на ваших фразах — музыку и телевизор в паузах он не возвращает. 0 — без защиты: максимальная изоляция, но модель иногда может проглотить слово."
                 />
                 <AppSlider
                   v-model="settings.maxSuppressionDb"
@@ -205,7 +205,7 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
               <div :class="settingRow">
                 <AppLabel
                   text="Автогромкость"
-                  hint="AGC возвращает уровень, который срезала модель, и выравнивает громкость фраз. Работает только на речи."
+                  hint="Выравнивает громкость фраз: подтягивает тихие и приглушает громкие, но медленно, чтобы не дёргать уровень внутри слова. Работает только на вашей речи."
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.agcEnabled" /></div>
               </div>

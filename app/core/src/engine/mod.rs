@@ -8,7 +8,9 @@ mod helpers;
 mod streams;
 
 pub use ab::AbStatus;
-pub use helpers::{cap_dry_mix, rms_of, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard};
+pub use helpers::{
+    cap_dry_mix, rms_of, DropoutGuard, FixedStage, InputVoice, LeakGuard, Leveler, PeakGuard,
+};
 
 use ab::{ab_append_clean, AbBuffer};
 use helpers::*;
@@ -606,7 +608,10 @@ impl Engine {
 
                     let leveling = proc_shared.leveling.load(Ordering::Relaxed);
                     let allow_up = session_start.elapsed() > Duration::from_millis(1500) || speech_hold > 2;
-                    leveler.process(&mut block, leveling, allow_up);
+                    // only the speaker's own blocks may move the level: a steady
+                    // bed (music, a television) used to pull the gain around and
+                    // the voice "caught up" after it stopped
+                    leveler.process(&mut block, leveling, allow_up, in_voice);
                     proc_shared
                         .leveler_gain
                         .store(leveler.gain_db().to_bits(), Ordering::Relaxed);
@@ -626,12 +631,18 @@ impl Engine {
                     // VoxLock needs a moment to lock on after a start
                     let warm = session_start.elapsed() > Duration::from_secs(1);
                     let started = Instant::now();
-                    let out =
-                        pipeline.process(&mut block, wet, warm, in_voice, input_voice.voiced());
+                    let out = pipeline.process(&mut block, wet, warm, in_voice);
                     if out.cold_reset {
                         crate::log::info(&format!(
                             "cold start: VoxLock reset while the model was closed (in {:.0} dB)",
                             20.0 * raw_rms.max(1e-9).log10()
+                        ));
+                    }
+                    if out.leak_reset {
+                        crate::log::info(&format!(
+                            "leak guard: VoxLock reset, the model was passing the room (in {:.0} dB, atten {:.0} dB)",
+                            20.0 * out.in_rms.max(1e-9).log10(),
+                            out.atten_db
                         ));
                     }
                     if let Some((in_db, out_db, resets)) = out.guard_reset {
@@ -660,8 +671,8 @@ impl Engine {
                     }
                     // a block the model cut hard is not the target speaker: do
                     // not lift its level, unless the cap keeps the speaker
-                    // audible anyway
-                    chain.set_target_present(out.target_model);
+                    // audible anyway. This is decided further down, once the
+                    // output detector has had its say.
                     // After a knock, or when speech starts, the model needs a
                     // moment to lock onto the enrolled voice and outputs almost
                     // nothing. Keep a little of the dry signal for that second,
@@ -702,16 +713,13 @@ impl Engine {
                     // gain lift was tried here and **reverted**: it raised the
                     // residual noise and other voices along with the quiet
                     // syllables. The level stays as the model produced it.
-                    // the detector knows better than the attenuation whether
-                    // this block is the target speaker: with a profile the model
-                    // cuts even the enrolled voice by 10-14 dB, and refusing to
-                    // lift those blocks made phrase levels differ by 5 dB or more
-                    if let Some(speech) = out.target_vad {
-                        // during a capped cut the model may be cutting the
-                        // speaker itself; keep the level control working so the
-                        // first words are audible as soon as it passes them
-                        chain.set_target_present(speech || cap_active);
-                    }
+                    // Whose block is this? The output detector says "speech" for
+                    // an audiobook as readily as for the speaker, so the AGC
+                    // used to lift the background to the target. Both sides have
+                    // to agree: the mic heard a level jump (the user is
+                    // talking) and the detector did not call the block silent.
+                    let vad_ok = out.target_vad.unwrap_or(out.target_model);
+                    chain.set_target_present((in_voice && vad_ok) || cap_active);
 
                     let produced = up.process(out.wet, &mut up_buf);
 
@@ -722,6 +730,20 @@ impl Engine {
                         }
                     }
                     chain.process(&mut up_buf[..produced]);
+
+                    if trace {
+                        eprintln!(
+                            "blk in {:.0} out {:.0} atten {:.0} cap {} voice {} vad {} agc {:.1} level {:.1}",
+                            20.0 * out.in_rms.max(1e-9).log10(),
+                            20.0 * out.out_rms.max(1e-9).log10(),
+                            out.atten_db,
+                            u8::from(cap_active),
+                            u8::from(in_voice),
+                            u8::from(out.target_vad.unwrap_or(false)),
+                            chain.agc_gain_db(),
+                            leveler.gain_db(),
+                        );
+                    }
 
                     // the model needs about a second to lock onto the speaker;
                     // lift its output for that second so the first words are
@@ -1141,7 +1163,7 @@ mod tests {
         // -40 dBFS input, 60 ms blocks, one second of signal
         for _ in 0..60 {
             let mut block = tone(0.01, 960, &mut phase);
-            leveler.process(&mut block, true, true);
+            leveler.process(&mut block, true, true, true);
             last = block;
         }
 
@@ -1157,7 +1179,7 @@ mod tests {
         let mut leveler = Leveler::new(0.0);
         let mut phase = 0.0f32;
         let mut block = tone(0.01, 960, &mut phase);
-        leveler.process(&mut block, false, true);
+        leveler.process(&mut block, false, true, true);
         let out_db = 20.0 * rms_of(&block).log10();
         assert!(
             (out_db - -40.0).abs() < 1.0,
@@ -1180,14 +1202,14 @@ mod tests {
         // the speaker, about -36 dBFS rms: this sets the peak
         for _ in 0..40 {
             let mut block = tone(0.022, 960, &mut phase);
-            leveler.process(&mut block, true, true);
+            leveler.process(&mut block, true, true, true);
         }
         let settled = leveler.gain_db;
 
         // the television, 17 dB quieter, for five seconds
         for _ in 0..80 {
             let mut block = tone(0.0031, 960, &mut phase);
-            leveler.process(&mut block, true, true);
+            leveler.process(&mut block, true, true, true);
         }
         let moved = leveler.gain_db - settled;
         assert!(
@@ -1204,14 +1226,14 @@ mod tests {
         // settle on quiet speech first
         for _ in 0..30 {
             let mut block = tone(0.01, 960, &mut phase);
-            leveler.process(&mut block, true, true);
+            leveler.process(&mut block, true, true, true);
         }
         let before = leveler.gain_db;
 
         // a knock: one loud sample in an otherwise silent block
         let mut knock = vec![0.0f32; 960];
         knock[0] = 0.9;
-        leveler.process(&mut knock, true, true);
+        leveler.process(&mut knock, true, true, true);
 
         let moved = (leveler.gain_db - before).abs();
         assert!(moved < 0.1, "a knock moved the level by {moved:.2} dB");
@@ -1366,6 +1388,28 @@ mod tests {
         assert!(voice.update(&quiet));
         assert!(!voice.voiced());
         assert!(voice.speech());
+    }
+
+    #[test]
+    fn input_voice_keeps_a_long_phrase_alive() {
+        // after a few seconds the average catches up with the voice. A phrase
+        // must not end there: the cap and the level control would switch off in
+        // the middle of a sentence, which is heard as the level galloping.
+        let mut voice = InputVoice::new();
+        let quiet = vec![0.004f32; 960]; // about -48 dBFS room
+        for _ in 0..40 {
+            voice.update(&quiet);
+        }
+        let speech = vec![0.02f32; 960]; // about -34 dBFS voice
+        voice.update(&speech);
+        assert!(voice.update(&speech));
+        for _ in 0..300 {
+            assert!(voice.update(&speech), "the phrase ended in the middle");
+        }
+        for _ in 0..20 {
+            voice.update(&quiet);
+        }
+        assert!(!voice.speech(), "the phrase never ended after the pause");
     }
 
     #[test]

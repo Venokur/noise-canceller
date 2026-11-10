@@ -143,9 +143,9 @@ pub struct Agc {
     target_lin: f64,
     smooth_coef: f64,
     smooth_rate: f64,
-    /// a new phrase started: the first detector window may set the gain
-    /// straight to the measured value instead of ramping up from zero
-    fresh: bool,
+    /// detector windows left in which the gain may travel fast: at start-up the
+    /// gain has to reach the target inside the first phrase
+    warmup: u32,
     pub target_db: f64,
     pub max_gain_db: f64,
     pub min_gain_db: f64,
@@ -168,15 +168,24 @@ impl Default for Agc {
             target_lin: 1.0,
             smooth_coef: 0.0,
             smooth_rate: 0.0,
-            fresh: true,
+            warmup: Self::WARMUP_WINDOWS,
             target_db: -24.0,
             max_gain_db: 12.0,
-            min_gain_db: 0.0,
+            // symmetric: a loud phrase has to be pulled down too, otherwise a
+            // loud sentence stays 10 dB above the next one
+            min_gain_db: -6.0,
         }
     }
 }
 
 impl Agc {
+    /// gain step per 100 ms detector window once settled: 8 dB/s
+    const STEP_DB: f64 = 0.8;
+    /// start-up may travel 4 dB per window (40 dB/s)
+    const WARMUP_DB: f64 = 4.0;
+    /// ...for the first two seconds
+    const WARMUP_WINDOWS: u32 = 20;
+
     #[inline]
     pub fn process(&mut self, x: f64, sample_rate: f64) -> f64 {
         self.block_sum += x * x;
@@ -212,20 +221,18 @@ impl Agc {
                 };
                 let rms_db = 20.0 * self.rms.log10();
                 let wanted = (self.target_db - rms_db).clamp(self.min_gain_db, self.max_gain_db);
-                if self.fresh {
-                    // first window of a new phrase: the previous gain says
-                    // nothing about this level, so start at the measured value
-                    // (the per-sample smoother still ramps it over 30 ms)
-                    self.gain_db = wanted;
-                    self.fresh = false;
+                // Rate-limited in both directions. Snapping to a single 100 ms
+                // window at the start of every phrase (the old `fresh`) is what
+                // made one sentence 7 dB louder than the next: a soft first
+                // window asked for +18 dB, and the whole phrase got it. 0.8 dB
+                // per window is 8 dB/s — it follows the room, not the syllable.
+                let limit = if self.warmup > 0 {
+                    self.warmup -= 1;
+                    Self::WARMUP_DB
                 } else {
-                    // drop fast, lift slowly: a loud syllable must be caught at once,
-                    // but raising the level over a couple of seconds is what keeps
-                    // the loudness even instead of jumping between words
-                    let step = wanted - self.gain_db;
-                    let coef = if step < 0.0 { 0.5 } else { 0.25 };
-                    self.gain_db += step.clamp(-5.0, 5.0) * coef;
-                }
+                    Self::STEP_DB
+                };
+                self.gain_db += (wanted - self.gain_db).clamp(-limit, limit);
                 self.target_lin = 10f64.powf(self.gain_db / 20.0);
             }
         }
@@ -235,20 +242,13 @@ impl Agc {
         x * self.gain_lin
     }
 
-    /// A new phrase started: the held gain and average belong to the previous
-    /// one, so the first detector window may set the gain straight away.
-    pub fn start_phrase(&mut self) {
-        self.rms = 0.0;
-        self.fresh = true;
-    }
-
     pub fn reset(&mut self) {
         self.block_sum = 0.0;
         self.block_count = 0;
         self.rms = 0.0;
         self.gain_db = 0.0;
         self.gain_lin = 1.0;
-        self.fresh = true;
+        self.warmup = Self::WARMUP_WINDOWS;
     }
 }
 
@@ -378,10 +378,6 @@ impl Chain {
     /// is in the current block; the AGC only lifts the level for that speaker,
     /// so residual noise and other voices are not amplified.
     pub fn set_target_present(&mut self, present: bool) {
-        if present && !self.agc.target_present {
-            // a new phrase: do not ramp up from the previous phrase's gain
-            self.agc.start_phrase();
-        }
         self.agc.target_present = present;
     }
 
@@ -552,20 +548,49 @@ mod tests {
         );
     }
 
-    #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn agc_starts_a_new_phrase_at_the_measured_gain() {
-        // a phrase after a pause must not fade in over seconds: the first
-        // detector window after `start_phrase` sets the gain directly
-        let mut agc = Agc::default();
-        agc.target_db = -24.0;
-        agc.max_gain_db = 12.0;
-        agc.start_phrase();
-        agc.target_present = true;
-        for n in 0..14_400 {
-            let x = (2.0 * std::f64::consts::PI * 220.0 * n as f64 / 48_000.0).sin() * 0.02;
+    /// Feeds `seconds` of a 220 Hz tone whose RMS is `rms` through the AGC.
+    fn run_agc(agc: &mut Agc, rms: f64, seconds: f64) {
+        let n = (48_000.0 * seconds) as usize;
+        for i in 0..n {
+            let x = (2.0 * std::f64::consts::PI * 220.0 * i as f64 / 48_000.0).sin()
+                * rms
+                * std::f64::consts::SQRT_2;
             let _ = agc.process(x, 48_000.0);
         }
-        assert!(agc.gain_db > 10.0, "agc stayed at {:.1} dB", agc.gain_db);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn agc_pulls_a_loud_block_down() {
+        // the level control used to be lift-only, so a phrase already above the
+        // target kept whatever gain the quiet phrase before it had learned
+        let mut agc = Agc::default();
+        agc.target_db = -24.0;
+        agc.max_gain_db = 18.0;
+        agc.target_present = true;
+
+        run_agc(&mut agc, 0.316, 3.0); // about -10 dBFS rms, 14 dB above target
+        assert!(agc.gain_db < -3.0, "agc stayed at {:.1} dB", agc.gain_db);
+        assert!(agc.gain_db >= agc.min_gain_db);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn agc_does_not_snap_on_a_new_phrase() {
+        // a soft first window used to set the whole phrase's gain in one go;
+        // that is what made one sentence 7 dB louder than the next
+        let mut agc = Agc::default();
+        agc.target_db = -24.0;
+        agc.max_gain_db = 18.0;
+        agc.target_present = true;
+
+        run_agc(&mut agc, 0.016, 2.0);
+        let after_quiet = agc.gain_db;
+        run_agc(&mut agc, 0.2, 0.1); // one detector window of a loud phrase
+        assert!(
+            after_quiet - agc.gain_db < 1.5,
+            "the gain jumped {:.1} dB at a phrase start",
+            after_quiet - agc.gain_db
+        );
     }
 }

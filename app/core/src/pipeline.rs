@@ -11,13 +11,21 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::engine::{cap_dry_mix, rms_of, DropoutGuard, FixedStage};
+use crate::engine::{cap_dry_mix, rms_of, DropoutGuard, FixedStage, LeakGuard};
 use crate::model::{Denoiser, StreamDenoiser, Vad};
 use crate::paths;
 use crate::settings::Settings;
 
 /// Pre-roll replayed into the model after a guard reset, samples at 16 kHz.
 const PREROLL: usize = 3200; // 200 ms
+
+/// Output gate floor: pauses are 60 dB down instead of digital silence. A hard
+/// zero reads as an abrupt cut, and the close ramp hides the tail of the last
+/// word when the detector lets go a block early.
+const VAD_FLOOR: f32 = 0.001;
+
+/// How long the gate stays open after the detector releases, seconds.
+const VAD_HOLD_SEC: f32 = 0.2;
 
 pub struct Pipeline {
     isolated: Option<Denoiser>,
@@ -26,6 +34,7 @@ pub struct Pipeline {
     vad: Option<Vad>,
     input_vad: Option<Vad>,
     dropout: DropoutGuard,
+    leak: LeakGuard,
     isolate_stage: FixedStage,
     before_stage: FixedStage,
     after_stage: FixedStage,
@@ -43,6 +52,11 @@ pub struct Pipeline {
     vad_gain: f32,
     vad_attack: f32,
     vad_release: f32,
+    /// samples left before the gate may close again
+    vad_hold: u32,
+    /// attenuation and input level of the previous block, for the leak guard
+    last_atten_db: f32,
+    last_in_db: f32,
 }
 
 /// What one block produced, for the caller's meters, logs and DSP.
@@ -68,6 +82,9 @@ pub struct BlockOut<'a> {
     pub target_vad: Option<bool>,
     /// The model was started over before its first word after a silence.
     pub cold_reset: bool,
+    /// The model had stopped isolating and was started over while the user was
+    /// silent (an audiobook or a television leaked through).
+    pub leak_reset: bool,
     /// `(input dB, output dB, resets so far)` when the dropout guard fired.
     pub guard_reset: Option<(f32, f32, u32)>,
 }
@@ -119,6 +136,7 @@ impl Pipeline {
             vad,
             input_vad,
             dropout: DropoutGuard::new(),
+            leak: LeakGuard::new(),
             isolate_stage: FixedStage::new(),
             before_stage: FixedStage::new(),
             after_stage: FixedStage::new(),
@@ -136,6 +154,9 @@ impl Pipeline {
             vad_gain: 1.0,
             vad_attack: 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp(),
             vad_release: 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp(),
+            vad_hold: 0,
+            last_atten_db: 0.0,
+            last_in_db: -120.0,
         })
     }
 
@@ -155,21 +176,24 @@ impl Pipeline {
         }
         self.dropout.skipped();
         self.vad_gain = 1.0;
+        self.vad_hold = 0;
+        // the model did not see this block, so the leak guard must not judge it
+        self.last_atten_db = 0.0;
+        self.last_in_db = -120.0;
     }
 
     /// Runs the chain on one 16 kHz block (already leveled and peak-limited).
     ///
     /// `wet` is the isolation strength, `warm` says the session is older than
     /// one second (the dropout guard stays out until the model has loaded),
-    /// `speech_hint`/`voiced` come from the caller's `InputVoice`, which must be
-    /// fed the *raw* microphone block before the leveler.
+    /// `speech_hint` comes from the caller's `InputVoice`, which must be fed the
+    /// *raw* microphone block before the leveler.
     pub fn process(
         &mut self,
         block: &mut [f32],
         wet: f32,
         warm: bool,
         speech_hint: bool,
-        voiced: bool,
     ) -> BlockOut<'_> {
         let Self {
             isolated,
@@ -178,6 +202,7 @@ impl Pipeline {
             vad,
             input_vad,
             dropout,
+            leak,
             isolate_stage,
             before_stage,
             after_stage,
@@ -195,6 +220,9 @@ impl Pipeline {
             vad_gain,
             vad_attack,
             vad_release,
+            vad_hold,
+            last_atten_db,
+            last_in_db,
         } = self;
 
         // "before" mode: clean the input so VoxLock extracts the voice from a
@@ -206,13 +234,25 @@ impl Pipeline {
             block.copy_from_slice(before_out);
         }
 
+        // The cap exists to keep the *speaker* audible when VoxLock mistakes
+        // them for noise. Silero alone calls music, a television and an
+        // audiobook speech, and then the cap mixes the very noise the model has
+        // just removed straight back into the output: at a 10 dB limit the
+        // audiobook sat 10 dB below the voice and was clearly audible. The
+        // mic-side speaker detector (a level jump over the room) is what tells
+        // the two apart, so it has the last word and Silero may only agree.
         let vad_in = input_vad.as_mut().map(|v| v.push(block));
-        let cap_voice = vad_in.unwrap_or(speech_hint) || speech_hint;
+        let cap_voice = speech_hint && vad_in.unwrap_or(true);
 
         // after a long stretch of the model suppressing everything, its speaker
-        // state is stale: start it over before it sees the first word
-        let cold_reset = dropout.cold_onset(voiced);
-        if cold_reset && isolated.is_some() {
+        // state is stale: start it over before it sees the first word. The
+        // verdict comes from the mic, and only for a phrase: a drum beat is one
+        // block, a sentence is not, so the model no longer restarts on music.
+        let cold_reset = dropout.cold_onset(speech_hint);
+        // the opposite failure: the model stopped isolating and is passing the
+        // room through (an audiobook in the background) while the user is silent
+        let leak_reset = leak.observe(*last_atten_db, *last_in_db, speech_hint);
+        if (cold_reset || leak_reset) && isolated.is_some() {
             if let Some(model) = isolated.as_mut() {
                 model.reset();
             }
@@ -225,6 +265,12 @@ impl Pipeline {
                 model.reset();
             }
             before_stage.reset();
+            if leak_reset {
+                // the pre-roll holds the audio that leaked, so replaying it
+                // would feed the model the same thing again
+                preroll.clear();
+                dropout.restart();
+            }
         }
 
         let mut model_out_rms = None;
@@ -308,8 +354,11 @@ impl Pipeline {
         } else {
             0.0
         };
-        // attack fast (the hole starts now), release slow
-        let coef = if need > *cap_mix { 0.5 } else { 0.15 };
+        // attack fast (the hole starts now) and let go quickly as well: a cap
+        // that lingers after the phrase keeps mixing the room back in, and a
+        // phone playing an audiobook was audible for half a second after every
+        // sentence
+        let coef = if need > *cap_mix { 0.5 } else { 0.35 };
         *cap_mix += (need - *cap_mix) * coef;
         let cap_active = *cap_mix > 0.01;
         // `cap_mix` is the fraction of the model input to mix back, so it puts
@@ -331,7 +380,16 @@ impl Pipeline {
         if let Some(detector) = vad.as_mut() {
             let speech = detector.push(mix);
             target_vad = Some(speech);
-            let target = if speech { 1.0f32 } else { 0.0f32 };
+            // Do not shut on the exact block where the detector lets go: the
+            // close ramp used to trim the last syllable, which is heard as a
+            // swallowed ending. Hold the gate open for a moment instead.
+            if speech {
+                *vad_hold = (VAD_HOLD_SEC * 16_000.0) as u32;
+            } else {
+                *vad_hold = vad_hold.saturating_sub(mix.len() as u32);
+            }
+            let open = speech || *vad_hold > 0;
+            let target = if open { 1.0f32 } else { VAD_FLOOR };
             let coef = if target > *vad_gain {
                 *vad_attack
             } else {
@@ -354,6 +412,10 @@ impl Pipeline {
             None => wet_out.copy_from_slice(mix),
         }
 
+        // what the next block's leak guard has to judge
+        *last_in_db = 20.0 * in_rms.max(1e-9).log10();
+        *last_atten_db = atten_db;
+
         BlockOut {
             wet: wet_out,
             model_out_rms,
@@ -368,6 +430,7 @@ impl Pipeline {
             target_model: atten_db < 8.0 || cap_active,
             target_vad,
             cold_reset,
+            leak_reset,
             guard_reset,
         }
     }

@@ -107,10 +107,13 @@ impl FixedStage {
 /// Where the *microphone* is in the conversation, independent of VoxLock.
 ///
 /// The output-side VAD follows the model, so while the model is cold it reports
-/// silence exactly when the speaker is talking. The cold-start reset and the
-/// suppression cap need a verdict on the input instead. This is a level jump
-/// over the room's long-term average: cheap, and it does not mistake a steady
-/// fan for speech the way Silero can in a very quiet room.
+/// silence exactly when the speaker is talking. The cold-start reset, the
+/// suppression cap and the level control need a verdict on the input instead.
+/// A phrase starts on a level jump over the room's average, and it *continues*
+/// while the mic stays well above the room it started from: after a couple of
+/// seconds the average catches up with the voice, so a pure jump-over-average
+/// would end the phrase in the middle of a sentence and the gain would fall
+/// back to zero there (heard as the level galloping inside one phrase).
 pub struct InputVoice {
     /// this block is speech (with a short hold through word gaps)
     speech: bool,
@@ -118,6 +121,8 @@ pub struct InputVoice {
     voiced: bool,
     run: u32,
     avg_db: Option<f32>,
+    /// room level captured when the current phrase was confirmed
+    base_db: f32,
     last_db: f32,
     hold: u32,
 }
@@ -125,6 +130,8 @@ pub struct InputVoice {
 impl InputVoice {
     /// speech sits at least this far above the room's average
     const JUMP_DB: f32 = 8.0;
+    /// ...and this far above the room the phrase started from, to continue
+    const SUSTAIN_DB: f32 = 6.0;
     /// two blocks is enough: a click or a knock is not a phrase
     const CONFIRM_BLOCKS: u32 = 2;
     /// ~0.5 s of hold, so a word gap does not switch the cap off
@@ -136,6 +143,7 @@ impl InputVoice {
             voiced: false,
             run: 0,
             avg_db: None,
+            base_db: -120.0,
             last_db: -120.0,
             hold: 0,
         }
@@ -155,19 +163,28 @@ impl InputVoice {
         };
         self.avg_db = Some(avg);
 
-        self.voiced = (db - avg > Self::JUMP_DB && db > -45.0) || (db - avg > 15.0 && db > -55.0);
-        if self.voiced {
+        let jumped = (db - avg > Self::JUMP_DB && db > -45.0) || (db - avg > 15.0 && db > -55.0);
+        self.voiced = jumped;
+        if jumped {
+            if self.run == 0 {
+                // the room the phrase started from, not the running average
+                self.base_db = avg;
+            }
             self.run = self.run.saturating_add(1);
         } else {
             self.run = 0;
         }
-        let confirmed = self.run >= Self::CONFIRM_BLOCKS;
-        if confirmed {
+
+        if self.run >= Self::CONFIRM_BLOCKS {
+            self.hold = Self::HOLD_BLOCKS;
+        } else if self.hold > 0 && db > self.base_db + Self::SUSTAIN_DB {
+            // still well above the room: the phrase continues even though the
+            // average now sits at the voice level
             self.hold = Self::HOLD_BLOCKS;
         } else {
             self.hold = self.hold.saturating_sub(1);
         }
-        self.speech = confirmed || self.hold > 0;
+        self.speech = self.hold > 0;
         self.speech
     }
 
@@ -303,9 +320,102 @@ impl DropoutGuard {
     pub fn skipped(&mut self) {
         self.closed = self.closed.saturating_add(1);
     }
+
+    /// The model was just restarted from outside (a leak reset): forget the
+    /// runs, keep the counters.
+    pub fn restart(&mut self) {
+        self.cut = 0;
+        self.open = 0;
+        self.closed = 0;
+        self.retries = 0;
+        self.armed = false;
+    }
 }
 
 impl Default for DropoutGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The opposite failure of [`DropoutGuard`]: VoxLock stops isolating and starts
+/// passing whatever is in the room — a television, a phone playing an audiobook.
+/// The over-suppression guard cannot see this, and A/B takes showed the leak in
+/// 100–400 ms bursts right at phrase boundaries.
+///
+/// It only acts while the caller says the user is silent *and* the model had
+/// been holding the room down a moment before, so a quiet phrase of the user
+/// (which has no level jump) is not mistaken for a leak, and a model that never
+/// suppressed anything is left alone.
+pub struct LeakGuard {
+    /// consecutive blocks the model has been suppressing hard
+    closed: u32,
+    /// blocks left in which a "was closed" run still arms the guard
+    armed: u32,
+    /// consecutive blocks the model passes while the user is silent
+    passing: u32,
+    cool: u32,
+    pub resets: u32,
+}
+
+impl LeakGuard {
+    /// attenuation that counts as "the model is holding the room down"
+    const CLOSED_DB: f32 = 20.0;
+    /// attenuation below this means the model is passing the room through
+    const PASSING_DB: f32 = 10.0;
+    /// the input has to be audible at all, dBFS
+    const AUDIBLE_DB: f32 = -52.0;
+    /// ~0.3 s of leaking at 64 ms blocks before the model is restarted
+    const CONFIRM_BLOCKS: u32 = 5;
+    /// blocks of memory for "it was closed just now" (~2 s at 64 ms)
+    const ARM_BLOCKS: u32 = 32;
+    /// ~2 s between resets
+    const COOL_BLOCKS: u32 = 30;
+
+    pub fn new() -> Self {
+        Self {
+            closed: 0,
+            armed: 0,
+            passing: 0,
+            cool: 0,
+            resets: 0,
+        }
+    }
+
+    /// Called at the top of a block with what the model did to the *previous*
+    /// one. `speaker` is the mic-side verdict from [`InputVoice`].
+    pub fn observe(&mut self, atten_db: f32, in_db: f32, speaker: bool) -> bool {
+        self.cool = self.cool.saturating_sub(1);
+        self.armed = self.armed.saturating_sub(1);
+
+        if atten_db > Self::CLOSED_DB {
+            self.closed = self.closed.saturating_add(1);
+            if self.closed >= 8 {
+                self.armed = Self::ARM_BLOCKS;
+            }
+        } else {
+            self.closed = 0;
+        }
+
+        let passing = !speaker && in_db > Self::AUDIBLE_DB && atten_db < Self::PASSING_DB;
+        if passing {
+            self.passing = self.passing.saturating_add(1);
+        } else {
+            self.passing = 0;
+        }
+
+        if self.passing >= Self::CONFIRM_BLOCKS && self.cool == 0 && self.armed > 0 {
+            self.passing = 0;
+            self.armed = 0;
+            self.cool = Self::COOL_BLOCKS;
+            self.resets += 1;
+            return true;
+        }
+        false
+    }
+}
+
+impl Default for LeakGuard {
     fn default() -> Self {
         Self::new()
     }
@@ -360,7 +470,7 @@ impl Leveler {
         self.gain_db
     }
 
-    pub fn process(&mut self, block: &mut [f32], enabled: bool, allow_up: bool) {
+    pub fn process(&mut self, block: &mut [f32], enabled: bool, allow_up: bool, speaker: bool) {
         if block.is_empty() {
             return;
         }
@@ -393,7 +503,11 @@ impl Leveler {
         }
         let above_floor = rms_db - self.floor_db;
 
-        if enabled && !transient && above_floor > 8.0 && rms_db > -58.0 {
+        // a steady bed (music, a television) is not the speaker even when the
+        // microphones sees a lot of it: only blocks that jumped over the room
+        // may move the gain, otherwise the level follows the background and the
+        // voice "catches up" for a second after it stops
+        if enabled && speaker && !transient && above_floor > 8.0 && rms_db > -58.0 {
             self.voice_blocks = self.voice_blocks.saturating_add(1);
 
             // the level is the loudest speech of the last seconds, not the
@@ -419,15 +533,18 @@ impl Leveler {
                 if self.voice_blocks < 4 && wanted < self.gain_db - 3.0 {
                     self.gain_db = wanted;
                 } else {
-                    // normal move is slow; start-up and a stale remembered gain
-                    // that is far too high are corrected in a couple of blocks
-                    let catch_up = self.voice_blocks < 12 || wanted < self.gain_db - 6.0;
+                    // normal move is slow; only the start of a session may
+                    // catch up quickly, when the remembered gain has not been
+                    // confirmed by this room yet. A limit per block of 1.2 dB
+                    // is ~19 dB/s: fast enough to follow a mic, slow enough
+                    // not to be heard as the level "galloping" between words.
+                    let catch_up = self.voice_blocks < 12;
                     let (coef, limit) = if catch_up {
-                        (0.6, 6.0)
+                        (0.6, 4.0)
                     } else if wanted < self.gain_db {
-                        (0.3, 2.5)
+                        (0.3, 1.2)
                     } else {
-                        (0.12, 1.5)
+                        (0.12, 1.0)
                     };
                     // for the first 1.5 s of a session only lower the gain: a
                     // television in the room must not push it up before the

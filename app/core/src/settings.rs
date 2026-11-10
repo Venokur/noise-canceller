@@ -10,7 +10,7 @@ pub enum Theme {
 
 /// Version of the shipped defaults. Bumped when a default changes so that a
 /// stored settings file that still has the old, untouched values is migrated.
-pub const DEFAULTS_REV: u32 = 10;
+pub const DEFAULTS_REV: u32 = 11;
 
 /// Range of the output ring buffer, ms. The floor is also the auto buffer's
 /// floor: below 40 ms a single 200 ms cable callback drains the ring.
@@ -141,7 +141,7 @@ impl Default for Settings {
             mode: "profile".into(),
             profile_path: None,
             isolation_strength: 1.0,
-            max_suppression_db: 24.0,
+            max_suppression_db: 15.0,
 
             input_device: String::new(),
             output_device: String::new(),
@@ -244,7 +244,10 @@ impl Settings {
     pub fn load(path: &std::path::Path) -> Self {
         let mut settings: Self = std::fs::read_to_string(path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            // Notepad and PowerShell write a BOM; serde rejects it and the whole
+            // file silently loads as defaults, which looks like "my settings
+            // were reset" and also drops the learned-gain migration
+            .and_then(|text| serde_json::from_str(text.trim_start_matches('\u{feff}')).ok())
             .unwrap_or_default();
 
         // a settings file written before the tuning pass still holds the old
@@ -324,6 +327,14 @@ impl Settings {
                 settings.gate_ratio = 3.0;
             }
 
+            // rev 11: the cap is now applied only to blocks that look like the
+            // speaker, so it no longer brings the background back; 15 dB keeps
+            // a word audible while the room stays clearly below the voice, and
+            // the old 24 dB let a phone playing music sit only 24 dB down
+            if settings.defaults_rev < 11 && (settings.max_suppression_db - 24.0).abs() < 0.1 {
+                settings.max_suppression_db = 15.0;
+            }
+
             settings.defaults_rev = DEFAULTS_REV;
         }
 
@@ -394,6 +405,26 @@ mod tests {
 
         settings.auto_threads = true;
         assert_eq!(settings.effective_threads(60.0), recommended_threads(60.0));
+    }
+
+    #[test]
+    fn a_settings_file_with_a_bom_is_not_silently_dropped() {
+        // Notepad and Windows PowerShell write a BOM; serde used to reject the
+        // file and every value fell back to defaults
+        let dir = std::env::temp_dir().join(format!("nc-bom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "\u{feff}{\"theme\":\"light\",\"chunkMs\":80.0}").unwrap();
+
+        let settings = Settings::load(&path);
+        assert_eq!(settings.theme, Theme::Light);
+        assert!(
+            (settings.chunk_ms - 80.0).abs() < 0.1,
+            "{}",
+            settings.chunk_ms
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
