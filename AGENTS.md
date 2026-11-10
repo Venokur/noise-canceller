@@ -56,8 +56,10 @@ app/
     paths.rs       каталоги, 8.3-путь для нативных вызовов
   cli/         headless-проверки (бинарник `nc`)
   src-tauri/   Tauri: команды, трей, автозапуск, один экземпляр
-  src/         Vue: App.vue, components/{TitleBar,AppSelect,AppSwitch,AppSlider},
-               composables/useToasts.ts, types.ts (формы DTO для invoke)
+  src/         Vue: App.vue (оболочка: заголовок, вкладки, тосты, мастер),
+               views/{SoundView,SettingsView}.vue, components/{TitleBar,AppSelect,AppSwitch,AppSlider,AppLabel,AppIcon,AppToast},
+               composables/{useToasts,useSettingsSearch,useSystemInfo}.ts,
+               appContext.ts (что оболочка отдаёт экранам), types.ts (формы DTO)
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
   models/denoise/  gtcrn.onnx (0,5 МБ), silero_vad.onnx
   native/      sherpa-onnx-c-api.dll + onnxruntime.dll

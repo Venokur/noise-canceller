@@ -1,0 +1,380 @@
+<script setup lang="ts">
+import { inject } from "vue";
+import AppIcon from "../components/AppIcon.vue";
+import AppSelect from "../components/AppSelect.vue";
+import AppSlider from "../components/AppSlider.vue";
+import AppSwitch from "../components/AppSwitch.vue";
+import { APP_CONTEXT } from "../appContext";
+
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileMeta, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, testMode, testOutput, toggleAb, togglePower, toggleTest } = inject(APP_CONTEXT)!;
+</script>
+
+<template>
+  <div class="pt-4">
+        <section class="overflow-hidden rounded-[14px] border border-[var(--stroke)] bg-[var(--surface)]">
+          <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-6 px-[22px] pt-4">
+            <div class="flex flex-col items-center">
+              <button
+                class="power"
+                :data-on="running"
+                :disabled="busy || starting || (!micReady && !running)"
+                :title="
+                  running
+                    ? 'Выключить обработку'
+                    : micReady
+                      ? 'Включить обработку'
+                      : 'Микрофон не найден — выберите его в разделе «Устройства»'
+                "
+                @click="togglePower"
+              >
+                <AppIcon v-if="starting" name="spinner" :size="26" :stroke="2" class="spin" />
+                <AppIcon v-else name="power" :size="26" :stroke="2" />
+              </button>
+              <span class="mt-2 text-[11.5px] text-[var(--muted)]">
+                {{ running ? "Выключить" : starting ? "Запуск…" : micReady ? "Включить" : "Нет микрофона" }}
+              </span>
+            </div>
+
+            <div
+              class="flex min-w-0 items-center justify-between gap-6"
+            >
+              <div class="min-w-0">
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Микрофон</div>
+                <div class="truncate text-[13px]" :title="selectedInput">
+                  {{ shortName(selectedInput) || "Не выбран" }}
+                </div>
+                <div class="mt-[7px] flex items-center gap-2">
+                  <span class="meter"><i :style="{ width: inputLevel * 100 + '%' }"></i></span>
+                  <span class="flex w-[54px] shrink-0 justify-end font-mono text-[10.5px] tabular-nums">
+                    <span v-if="stats.inputPeakDb > -1" class="text-[var(--danger)]">перегруз</span>
+                    <span v-else class="text-[var(--muted)]">{{ inputDb }}</span>
+                  </span>
+                </div>
+              </div>
+
+              <div class="min-w-0">
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Обработка</div>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[var(--muted)]">
+                  <span class="flex items-center gap-1.5">
+                    <span class="dot" :data-off="!settings.voiceIsolation"></span>VoxLock
+                  </span>
+                  <span class="flex items-center gap-1.5">
+                    <span class="dot" :data-off="settings.residualDenoise === 'off'"></span>GTCRN
+                  </span>
+                  <span class="flex items-center gap-1.5">
+                    <span class="dot" :data-off="!settings.vadGate"></span>VAD
+                  </span>
+                </div>
+              </div>
+
+              <div class="min-w-0">
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Выход</div>
+                <div class="truncate text-[13px]" :title="testMode ? testOutput : 'CABLE Input'">
+                  {{ testMode ? shortName(testOutput) || "Устройство вывода" : "CABLE Input" }}
+                </div>
+                <div class="mt-[7px] flex items-center gap-2">
+                  <span class="meter"><i :style="{ width: outputLevel * 100 + '%' }"></i></span>
+                  <span class="w-[54px] shrink-0 text-right font-mono text-[10.5px] tabular-nums text-[var(--muted)]">{{ outputDb }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-stretch border-t border-[var(--stroke)]">
+            <div class="flex flex-none items-stretch border-r border-[var(--stroke)] px-[22px] py-2.5">
+              <div
+                v-for="item in readouts"
+                :key="item.label"
+                class="border-l border-[var(--stroke)] px-4 first:border-l-0 first:pl-0 last:pr-0"
+              >
+                <div class="font-mono text-[20px] leading-none tabular-nums">
+                  {{ item.value
+                  }}<span v-if="item.unit" class="ml-[3px] text-[10.5px] text-[var(--muted)]">{{ item.unit }}</span>
+                </div>
+                <div class="mt-1.5 text-[11px] text-[var(--muted)]">{{ item.label }}</div>
+              </div>
+            </div>
+
+            <div class="relative flex min-w-0 flex-1 items-end gap-[3px] px-[22px] py-2.5">
+              <span class="pointer-events-none absolute inset-x-[22px] bottom-8 h-px bg-[var(--stroke)] opacity-70"></span>
+              <span class="pointer-events-none absolute inset-x-[22px] bottom-12 h-px bg-[var(--stroke)] opacity-70"></span>
+              <div
+                v-for="(value, index) in shownSpectrum"
+                :key="index"
+                class="min-h-[2px] flex-1 rounded-t-[1px] bg-[var(--accent)] transition-[height] duration-150"
+                :style="{
+                  height: spectrumLive ? Math.max(3, value * 100) + '%' : '6%',
+                  opacity: spectrumLive ? 0.8 : 0.18,
+                }"
+              ></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- cable -->
+        <section
+          v-if="!cableOk"
+          class="mt-5 rounded-[14px] border border-[var(--danger)] bg-[var(--surface)] px-[18px] py-4"
+        >
+          <div class="text-[14px] font-semibold text-[var(--danger)]">Нужен виртуальный микрофон</div>
+          <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
+            Zoom, Meet и Discord не увидят очищенный звук без VB-CABLE. Установка одной кнопкой, права
+            администратора один раз.
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-2.5">
+            <button :class="btnPrimary" :disabled="installingCable" @click="installCable">
+              <AppIcon v-if="installingCable" name="spinner" :size="14" class="spin" />
+              {{ installingCable ? "Установка…" : "Установить виртуальный микрофон" }}
+            </button>
+            <span class="text-[11.5px] text-[var(--muted)]">{{ cableMessage }}</span>
+          </div>
+        </section>
+
+        <!-- devices -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Устройства</h2>
+            <span class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">48 кГц · моно</span>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="min-w-0">
+              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">Микрофон</span>
+              <AppSelect
+                :model-value="selectedInput"
+                :options="inputOptions"
+                :disabled="reconnecting || starting"
+                placeholder="Нет устройств"
+                @update:model-value="pickInput"
+              />
+            </div>
+            <div class="min-w-0">
+              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">Наушники</span>
+              <AppSelect
+                :model-value="selectedOutput"
+                :options="outputOptions"
+                :disabled="reconnecting || starting"
+                placeholder="Нет устройств"
+                @update:model-value="pickOutput"
+              />
+            </div>
+          </div>
+          <p v-if="inputIsCable" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
+            Выбран виртуальный кабель как микрофон: приложение будет слышать собственный выход и звук
+            других программ. Выберите настоящий микрофон.
+          </p>
+          <div class="mt-2 flex flex-wrap items-center gap-1">
+            <button :class="btnGhost" :disabled="refreshing" @click="refreshDevicesManually">
+              <AppIcon name="refresh" :size="14" :class="{ spin: refreshing }" />
+              {{ refreshing ? "Обновляю…" : "Обновить" }}
+            </button>
+            <button :class="btnGhost" :disabled="probing" @click="probeMic">
+              <AppIcon name="mic" :size="14" />
+              {{
+                probing ? (probeLeft > 0 ? `Слушаю… ${probeLeft} с` : "Слушаю…") : "Проверить микрофон"
+              }}
+            </button>
+            <span v-if="reconnecting" class="ml-2 flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
+              <AppIcon name="spinner" :size="12" class="spin" />
+              Переподключаю устройства…
+            </span>
+            <span v-else-if="probeResult" class="ml-2 font-mono text-[11px] tabular-nums text-[var(--muted)]">
+              {{ probeResult.peakDb.toFixed(0) }} дБ · речь
+              {{ (probeResult.speechPercent * 100).toFixed(0) }}% · SNR
+              {{ probeResult.snrDb.toFixed(0) }} дБ
+            </span>
+          </div>
+          <p v-if="probeResult" class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">{{ probeHint }}</p>
+          <div class="mt-3 flex items-center gap-3">
+            <span class="shrink-0 text-[11.5px] whitespace-nowrap text-[var(--muted)]">Громкость выхода</span>
+            <div class="w-[220px] shrink-0">
+              <AppSlider
+                v-model="settings.outputGainDb"
+                :min="-18"
+                :max="18"
+                :step="0.5"
+                :format="(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} дБ`"
+              />
+            </div>
+            <span class="min-w-0 truncate text-[11px] text-[var(--muted)]">
+              после всей обработки, шумодав не трогает
+            </span>
+          </div>
+        </section>
+
+        <!-- profile -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Профиль голоса</h2>
+            <span v-if="profileMeta" class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">
+              {{ profileMeta }}
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="min-w-0 flex-1">
+              <AppSelect v-model="selectedProfile" :options="profileOptions" @update:model-value="pickProfile" />
+            </div>
+            <button
+              :class="btnPrimary"
+              :disabled="recording || !micReady"
+              :title="micReady ? 'Записать профиль голоса' : 'Сначала выберите микрофон в разделе «Устройства»'"
+              @click="recordProfile"
+            >
+              <span v-if="recording" class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
+              <AppIcon v-else name="mic" :size="14" />
+              {{ recording ? `Запись… ${recordLeft} с` : "Записать 15 с" }}
+            </button>
+            <button
+              class="iconbtn"
+              :disabled="!selectedProfile"
+              :title="playingKey === 'profile' ? 'Остановить' : 'Прослушать профиль'"
+              @click="playProfile"
+            >
+              <AppIcon :name="playingKey === 'profile' ? 'stop' : 'play'" :size="14" />
+            </button>
+            <button class="iconbtn danger" :disabled="!selectedProfile" title="Удалить профиль" @click="deleteProfile">
+              <AppIcon name="trash" :size="14" />
+            </button>
+          </div>
+          <p v-if="profileWeak" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
+            Профиль слабый: модель будет хуже узнавать голос. Запишите новый — 15 секунд в тишине.
+          </p>
+          <div class="mt-2.5 flex items-center gap-2.5 text-[12.5px] text-[var(--muted)]">
+            <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />
+            <span>Выбирать лучший профиль автоматически</span>
+          </div>
+        </section>
+
+        <!-- A/B -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Проверка A/B</h2>
+            <div class="seg ml-auto">
+              <button
+                v-for="sec in [10, 30, 60]"
+                :key="sec"
+                class="segbtn"
+                :data-on="settings.abSeconds === sec"
+                @click="settings.abSeconds = sec"
+              >
+                {{ sec }} с
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button :class="btnPrimary" :disabled="!running && !abRunning" @click="toggleAb">
+              <span class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
+              {{
+                abRunning
+                  ? `Запись… ${Math.round(abProgress * (settings?.abSeconds ?? 30))} с`
+                  : `Записать A/B (${settings?.abSeconds ?? 30} с)`
+              }}
+            </button>
+            <button
+              :class="testMode ? btn : btnPrimary"
+              :disabled="busy || starting || (!micReady && !testMode)"
+              :title="micReady || testMode ? '' : 'Микрофон не найден'"
+              @click="toggleTest"
+            >
+              <AppIcon
+                :name="busy || starting ? 'spinner' : 'headphones'"
+                :size="14"
+                :class="{ spin: busy || starting }"
+              />
+              {{
+                busy || starting
+                  ? "Переключаю…"
+                  : testMode
+                    ? "Остановить проверку"
+                    : "Проверить в наушниках"
+              }}
+            </button>
+            <span class="text-[11.5px] text-[var(--muted)]">Сырой и обработанный звук рядом, слушайте в наушниках.</span>
+          </div>
+          <div v-if="abRunning" class="mt-2 h-0.5 overflow-hidden rounded-full bg-[var(--stroke)]">
+            <div class="h-full rounded-full bg-[var(--danger)]" :style="{ width: abProgress * 100 + '%' }"></div>
+          </div>
+          <p v-if="!running" class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
+            Запись идёт через обработку: подключите виртуальный кабель или включите проверку в наушниках.
+          </p>
+
+          <div
+            v-if="abRaw && abClean"
+            class="mt-3 flex flex-wrap items-center gap-3 rounded-[11px] border border-[var(--stroke)] bg-[var(--surface)] px-3 py-2"
+            :title="abFolder || undefined"
+          >
+            <div class="flex gap-1.5">
+              <button class="playbtn" :data-on="playingKey === 'raw'" @click="playFile(abRaw, 'raw')">
+                <AppIcon :name="playingKey === 'raw' ? 'stop' : 'play'" :size="12" />
+                Сырой
+              </button>
+              <button class="playbtn" :data-on="playingKey === 'clean'" @click="playFile(abClean, 'clean')">
+                <AppIcon :name="playingKey === 'clean' ? 'stop' : 'play'" :size="12" />
+                Обработанный
+              </button>
+            </div>
+
+            <div class="ml-auto flex items-center gap-4">
+              <div class="flex items-start gap-4 font-mono tabular-nums">
+                <span class="block w-[76px]">
+                  <b class="block text-[12.5px] font-normal">
+                    {{ abMetrics ? abMetrics.speechLevelDb.toFixed(0) + " дБ" : "—" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">речь</span>
+                </span>
+                <span class="block w-[76px]">
+                  <b class="block text-[12.5px] font-normal">
+                    {{ abMetrics ? Math.max(0, abMetrics.pauseContrastDb).toFixed(0) + " дБ" : "—" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">паузы</span>
+                </span>
+                <span class="block w-[76px]">
+                  <b class="block text-[12.5px] font-normal">
+                    {{ abDelta === null ? "—" : Math.abs(abDelta).toFixed(1) + " дБ" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">к оригиналу</span>
+                </span>
+                <span class="block w-[76px]">
+                  <b
+                    class="block text-[12.5px] font-normal"
+                    :class="abMetrics && abMetrics.longestDropoutS > 0.4 ? 'text-[var(--danger)]' : ''"
+                  >
+                    {{ abMetrics ? abMetrics.longestDropoutS.toFixed(2) + " с" : "—" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">провал</span>
+                </span>
+              </div>
+
+              <label class="flex items-center gap-2 text-[11.5px] whitespace-nowrap text-[var(--muted)]">
+                <AppSwitch v-model="abNormalize" />
+                выравнивать громкость
+              </label>
+              <button class="iconbtn" title="Сравнять громкость с оригиналом" @click="matchLevel">
+                <AppIcon name="sliders" :size="14" />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="history.length" class="mt-3 flex flex-wrap items-center gap-1.5">
+            <span class="mr-0.5 text-[11.5px] text-[var(--muted)]">История</span>
+            <div
+              v-for="entry in history"
+              :key="entry.stamp"
+              class="stamp group"
+              :data-on="abRaw === entry.raw"
+              :title="entry.raw"
+            >
+              <button class="h-full cursor-pointer px-2" @click="selectRecording(entry)">
+                {{ formatStamp(entry.stamp) }}
+              </button>
+              <button
+                class="mr-0.5 grid h-4 w-4 cursor-pointer place-items-center rounded text-[var(--muted)] opacity-0 transition hover:text-[var(--danger)] group-hover:opacity-100"
+                title="Удалить запись"
+                @click="removeRecording(entry)"
+              >
+                <AppIcon name="close" :size="10" />
+              </button>
+            </div>
+          </div>
+        </section>
+  </div>
+</template>
