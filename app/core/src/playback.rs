@@ -200,10 +200,21 @@ pub fn speech_rms_db(path: &std::path::Path) -> Result<f32> {
     Ok(20.0 * (rms as f32 + 1e-9).log10())
 }
 
+/// Limits the regression run treats as a broken take. They live next to the
+/// metric so the number the A/B card shows and the verdict `nc metrics --check`
+/// prints are the same code: this used to be a second implementation in
+/// `scripts/ab_metrics.py`, and the two disagreed (26.7 vs 27.4 dB of pause
+/// contrast on a real take, 123 vs 63 dB on a silent one).
+pub const MAX_DROPOUT_S: f32 = 0.4;
+pub const MIN_PAUSE_CONTRAST_DB: f32 = 12.0;
+pub const MAX_LEVEL_DELTA_DB: f32 = 20.0;
+pub const MIN_SPEECH_DB: f32 = -55.0;
+pub const MAX_SPEECH_DB: f32 = -10.0;
+
 /// Numbers for a finished A/B pair, so a take can be judged without listening.
 /// All levels are medians over 20 ms frames; contrast does not depend on the
 /// output volume, so raising the gain cannot make a take look cleaner.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, serde::Serialize)]
 pub struct AbMetrics {
     /// speech level of the processed take, dBFS
     pub speech_level_db: f32,
@@ -212,6 +223,39 @@ pub struct AbMetrics {
     /// how far pauses sit below speech in the processed take
     pub pause_contrast_db: f32,
     pub longest_dropout_s: f32,
+}
+
+impl AbMetrics {
+    /// Why this take looks broken, in the words `nc metrics --check` prints.
+    /// Empty means it passed.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.longest_dropout_s > MAX_DROPOUT_S {
+            problems.push(format!(
+                "dropout {:.2}s > {MAX_DROPOUT_S}s",
+                self.longest_dropout_s
+            ));
+        }
+        if self.pause_contrast_db < MIN_PAUSE_CONTRAST_DB {
+            problems.push(format!(
+                "pauses only {:.1} dB below speech < {MIN_PAUSE_CONTRAST_DB} dB",
+                self.pause_contrast_db
+            ));
+        }
+        if self.level_delta_db.abs() > MAX_LEVEL_DELTA_DB {
+            problems.push(format!(
+                "level moved {:.1} dB from the raw take",
+                self.level_delta_db
+            ));
+        }
+        if !(MIN_SPEECH_DB..=MAX_SPEECH_DB).contains(&self.speech_level_db) {
+            problems.push(format!(
+                "speech level {:.1} dBFS out of range",
+                self.speech_level_db
+            ));
+        }
+        problems
+    }
 }
 
 fn median(values: &mut [f32]) -> f32 {
@@ -371,5 +415,51 @@ mod tests {
             "speech level {:.1} dB",
             m.speech_level_db
         );
+    }
+
+    #[test]
+    fn a_healthy_take_has_no_problems() {
+        let m = AbMetrics {
+            speech_level_db: -30.0,
+            level_delta_db: 2.0,
+            pause_contrast_db: 30.0,
+            longest_dropout_s: 0.1,
+        };
+        assert!(m.problems().is_empty(), "{:?}", m.problems());
+    }
+
+    #[test]
+    fn every_limit_reports_its_own_problem() {
+        let base = AbMetrics {
+            speech_level_db: -30.0,
+            level_delta_db: 2.0,
+            pause_contrast_db: 30.0,
+            longest_dropout_s: 0.1,
+        };
+
+        let dropout = AbMetrics {
+            longest_dropout_s: 0.5,
+            ..base
+        };
+        assert_eq!(dropout.problems().len(), 1);
+        assert!(dropout.problems()[0].starts_with("dropout"));
+
+        let quiet_pauses = AbMetrics {
+            pause_contrast_db: 8.0,
+            ..base
+        };
+        assert!(quiet_pauses.problems()[0].contains("pauses only"));
+
+        let loud = AbMetrics {
+            level_delta_db: -21.0,
+            ..base
+        };
+        assert!(loud.problems()[0].contains("level moved"));
+
+        let silent = AbMetrics {
+            speech_level_db: -60.0,
+            ..base
+        };
+        assert!(silent.problems()[0].contains("out of range"));
     }
 }

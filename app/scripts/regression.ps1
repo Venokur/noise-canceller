@@ -1,7 +1,8 @@
 # Regression check for the audio pipeline.
 #
 # Runs the newest A/B pairs through `nc replay` (same chain as the live engine)
-# and checks the metrics from scripts/ab_metrics.py. Needs Python with numpy.
+# and checks the result with `nc metrics --check` — the same thresholds the A/B
+# card uses, so the gate and the UI cannot disagree.
 #
 #   powershell -File scripts\regression.ps1 [-Count 3] [-Seconds 30]
 
@@ -50,7 +51,7 @@ foreach ($pair in $pairs) {
     & $nc replay $pair.FullName $out $profile $settings | Out-Null
     Write-Host ("{0}" -f $pair.BaseName)
 
-    python (Join-Path $PSScriptRoot "ab_metrics.py") $pair.FullName $out
+    & $nc metrics $pair.FullName $out --check
     if ($LASTEXITCODE -ne 0) { $failed++ }
 }
 

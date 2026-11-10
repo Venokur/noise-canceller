@@ -37,21 +37,49 @@ fn main() -> Result<()> {
     }
 }
 
+/// Metrics for one A/B pair, and the regression verdict.
+///
+/// `--check` turns the same numbers into a pass/fail with the thresholds from
+/// `playback`: this replaced a second implementation in Python, and the two had
+/// drifted (26.7 vs 27.4 dB on a real take).
 fn metrics_file() -> Result<()> {
-    let raw = std::env::args()
-        .nth(2)
-        .ok_or_else(|| anyhow!("usage: nc metrics <raw.wav> <clean.wav>"))?;
-    let clean = std::env::args()
-        .nth(3)
-        .ok_or_else(|| anyhow!("usage: nc metrics <raw.wav> <clean.wav>"))?;
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let json = args.iter().any(|a| a == "--json");
+    let check = args.iter().any(|a| a == "--check");
+    let files: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(String::as_str)
+        .collect();
+    if files.len() != 2 {
+        return Err(anyhow!(
+            "usage: nc metrics <raw.wav> <clean.wav> [--json] [--check]"
+        ));
+    }
+
     let m = noise_canceller_core::playback::ab_metrics(
-        std::path::Path::new(&raw),
-        std::path::Path::new(&clean),
+        std::path::Path::new(files[0]),
+        std::path::Path::new(files[1]),
     )?;
-    println!(
-        "speech {:.1} dB, level {:+.1} dB, contrast {:.1} dB, dropout {:.2} s",
-        m.speech_level_db, m.level_delta_db, m.pause_contrast_db, m.longest_dropout_s
-    );
+
+    if json {
+        println!("{}", serde_json::to_string(&m)?);
+    } else {
+        println!(
+            "speech {:.1} dB, level {:+.1} dB, contrast {:.1} dB, dropout {:.2} s",
+            m.speech_level_db, m.level_delta_db, m.pause_contrast_db, m.longest_dropout_s
+        );
+    }
+
+    if check {
+        let problems = m.problems();
+        for problem in &problems {
+            eprintln!("FAIL: {problem}");
+        }
+        if !problems.is_empty() {
+            std::process::exit(1);
+        }
+    }
     Ok(())
 }
 

@@ -681,8 +681,9 @@ struct AbMetricsDto {
 }
 
 /// Numbers for one take: speech level, how far pauses dropped and the longest
-/// stretch where the model muted a word. The same checks `scripts/ab_metrics.py`
-/// applies in the regression run, so the UI and CI agree.
+/// stretch where the model muted a word. The verdict comes from
+/// `AbMetrics::problems()`, the same code `nc metrics --check` runs, so the card
+/// and the regression cannot disagree.
 #[tauri::command(async)]
 fn ab_metrics(stamp: u64) -> Result<AbMetricsDto, String> {
     let m = noise_canceller_core::playback::ab_metrics(
