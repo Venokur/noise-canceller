@@ -1,6 +1,7 @@
 # Downloads everything the app needs at runtime.
 #   native/          sherpa-onnx C API + ONNX Runtime DLLs
 #   models/voxlock/  VoxLock int8 model, metadata, test wavs
+#   models/denoise/  GTCRN residual denoiser + Silero VAD
 param(
     [string]$Root = (Split-Path $PSScriptRoot -Parent)
 )
@@ -10,9 +11,10 @@ $ProgressPreference = "SilentlyContinue"
 
 $native = Join-Path $Root "native"
 $models = Join-Path $Root "models\voxlock"
+$denoise = Join-Path $Root "models\denoise"
 $tmp = Join-Path $Root ".download"
 
-New-Item -ItemType Directory -Force $native, $models, $tmp | Out-Null
+New-Item -ItemType Directory -Force $native, $models, $denoise, $tmp | Out-Null
 
 function Get-File([string]$Url, [string]$Destination) {
     if (Test-Path $Destination) {
@@ -33,7 +35,11 @@ if (-not (Test-Path (Join-Path $models "chunk_int8.onnx"))) {
     Copy-Item (Join-Path $tmp "sherpa-onnx-voxlock-int8\*") $models -Recurse -Force
 }
 
-# 2. sherpa-onnx native libraries (C API + ONNX Runtime)
+# 2. Denoiser stages: GTCRN after VoxLock and the Silero VAD gate
+Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx" (Join-Path $denoise "gtcrn.onnx")
+Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" (Join-Path $denoise "silero_vad.onnx")
+
+# 3. sherpa-onnx native libraries (C API + ONNX Runtime)
 $libsTar = Join-Path $tmp "sherpa-onnx-libs.tar.bz2"
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release-lib.tar.bz2" $libsTar
 
@@ -53,3 +59,5 @@ Write-Host "native:"
 Get-ChildItem $native -File | ForEach-Object { "  {0,-28} {1,8:0.0} MB" -f $_.Name, ($_.Length / 1MB) }
 Write-Host "models:"
 Get-ChildItem $models -File | ForEach-Object { "  {0,-28} {1,8:0.0} MB" -f $_.Name, ($_.Length / 1MB) }
+Write-Host "denoise:"
+Get-ChildItem $denoise -File | ForEach-Object { "  {0,-28} {1,8:0.0} MB" -f $_.Name, ($_.Length / 1MB) }
