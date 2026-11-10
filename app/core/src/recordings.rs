@@ -171,6 +171,19 @@ fn prune_in(dir: &Path, keep: usize) -> usize {
             }
         }
     }
+
+    // a take interrupted by a quit leaves the half-written temp file behind
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("ab-")
+                && name.ends_with(".wav.tmp")
+                && std::fs::remove_file(entry.path()).is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
     removed
 }
 
@@ -253,11 +266,15 @@ mod tests {
         }
         // pair deleted by hand: the snapshot has no wav left
         std::fs::write(snapshot_in(scratch.path(), 9), b"{}").expect("write snapshot");
+        // a take interrupted by a quit: only the half-written temp file is left
+        std::fs::write(scratch.path().join("ab-8-raw.wav.tmp"), b"half").expect("write tmp");
 
-        // three old takes (pair + snapshot each) plus the orphan snapshot
-        assert_eq!(prune_in(scratch.path(), 2), 7);
+        // three old takes (pair + snapshot each), the orphan snapshot and the
+        // interrupted temp file
+        assert_eq!(prune_in(scratch.path(), 2), 8);
         assert_eq!(pairs_in(scratch.path()), vec![4, 3]);
         assert!(!snapshot_in(scratch.path(), 9).exists());
+        assert!(!scratch.path().join("ab-8-raw.wav.tmp").exists());
     }
 
     #[test]

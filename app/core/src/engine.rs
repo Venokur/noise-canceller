@@ -15,7 +15,7 @@ use crate::model::{Denoiser, Vad};
 use crate::paths;
 use crate::recordings;
 use crate::resample::Resampler;
-use crate::settings::Settings;
+use crate::settings::{self, Settings};
 use crate::wav;
 
 pub const MODEL_RATE: u32 = 16_000;
@@ -671,6 +671,42 @@ impl PeakGuard {
     }
 }
 
+/// Writes the small state files (`leveler.txt`, `auto-buffer.txt`) off the
+/// processing thread.
+///
+/// `data/` sits next to the exe, and on a user's machine that is often a
+/// OneDrive folder: a `fs::write` there can block for tens of milliseconds
+/// while the output ring holds about 120 ms. The processing thread used to do
+/// these writes itself, so a sync hiccup was audible as a hole.
+struct Persist {
+    tx: std::sync::mpsc::Sender<(std::path::PathBuf, String)>,
+}
+
+impl Persist {
+    fn spawn() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<(std::path::PathBuf, String)>();
+        let _ = thread::Builder::new()
+            .name("nc-persist".into())
+            .spawn(move || {
+                while let Ok((path, text)) = rx.recv() {
+                    if let Err(err) = std::fs::write(&path, text) {
+                        crate::log::info(&format!(
+                            "cannot write {}: {err}",
+                            path.display()
+                        ));
+                    }
+                }
+            });
+        Self { tx }
+    }
+
+    fn write(&self, path: &std::path::Path, text: String) {
+        // the receiver only goes away when the engine stops; losing a state
+        // file is not worth blocking the audio path
+        let _ = self.tx.send((path.to_path_buf(), text));
+    }
+}
+
 pub struct Engine {
     shared: Shared,
     input: Option<cpal::Stream>,
@@ -755,16 +791,23 @@ impl Engine {
         // the auto buffer is learned between sessions: start from the stored
         // value, otherwise from the manual one; the ring is prefilled to it
         let auto_buffer_path = paths::data_dir().join("auto-buffer.txt");
-        let mut buffer_ms = settings.buffer_ms;
-        if settings.buffer_auto {
-            if let Ok(text) = std::fs::read_to_string(&auto_buffer_path) {
-                if let Ok(value) = text.trim().parse::<f32>() {
-                    buffer_ms = value;
-                }
-            }
-        }
-        let buffer_ms = buffer_ms.clamp(40.0, 250.0);
+        // read once, here, before the streams run: the processing thread must
+        // not read or write this folder
+        let mut learned_buffer_ms = std::fs::read_to_string(&auto_buffer_path)
+            .ok()
+            .and_then(|text| text.trim().parse::<f32>().ok())
+            .unwrap_or(settings.buffer_ms)
+            .clamp(settings::BUFFER_MS_MIN, settings::BUFFER_MS_MAX);
+        let buffer_ms = if settings.buffer_auto {
+            learned_buffer_ms
+        } else {
+            settings.buffer_ms.clamp(settings::BUFFER_MS_MIN, settings::BUFFER_MS_MAX)
+        };
         shared.buffer_ms.store(buffer_ms.to_bits(), Ordering::Relaxed);
+
+        // state files are written by a helper thread: `data/` may be a synced
+        // folder and a blocking write on the audio path is audible
+        let persist = Persist::spawn();
 
         // rings ------------------------------------------------------------
         let (mut in_prod, mut in_cons) = rtrb::RingBuffer::<f32>::new(MODEL_RATE as usize * 2);
@@ -888,15 +931,9 @@ impl Engine {
                             max_suppression = current.max_suppression_db.clamp(0.0, 48.0);
                             if current.buffer_auto {
                                 if !auto_enabled {
-                                    auto_ms = std::fs::read_to_string(&auto_buffer_path)
-                                        .ok()
-                                        .and_then(|text| text.trim().parse::<f32>().ok())
-                                        .unwrap_or_else(|| {
-                                            f32::from_bits(
-                                                proc_shared.buffer_ms.load(Ordering::Relaxed),
-                                            )
-                                        })
-                                        .clamp(40.0, 250.0);
+                                    // the learned value, kept in memory: this
+                                    // thread does not touch `data/`
+                                    auto_ms = learned_buffer_ms;
                                     proc_shared
                                         .buffer_ms
                                         .store(auto_ms.to_bits(), Ordering::Relaxed);
@@ -950,23 +987,25 @@ impl Engine {
                             if events > auto_events {
                                 let delta = events - auto_events;
                                 auto_events = events;
-                                auto_ms = (auto_ms + 20.0).min(250.0);
+                                auto_ms = (auto_ms + 20.0).min(settings::BUFFER_MS_MAX);
+                                learned_buffer_ms = auto_ms;
                                 proc_shared
                                     .buffer_ms
                                     .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                let _ = std::fs::write(&auto_buffer_path, format!("{auto_ms:.0}"));
+                                persist.write(&auto_buffer_path, format!("{auto_ms:.0}"));
                                 auto_changed = Instant::now();
                                 crate::log::info(&format!(
                                     "auto buffer: {auto_ms:.0} ms (+{delta} buffer miss)"
                                 ));
                             } else if auto_changed.elapsed() > Duration::from_secs(90)
-                                && auto_ms > 40.0
+                                && auto_ms > settings::BUFFER_MS_MIN
                             {
-                                auto_ms = (auto_ms - 10.0).max(40.0);
+                                auto_ms = (auto_ms - 10.0).max(settings::BUFFER_MS_MIN);
+                                learned_buffer_ms = auto_ms;
                                 proc_shared
                                     .buffer_ms
                                     .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                let _ = std::fs::write(&auto_buffer_path, format!("{auto_ms:.0}"));
+                                persist.write(&auto_buffer_path, format!("{auto_ms:.0}"));
                                 auto_changed = Instant::now();
                                 crate::log::info(&format!(
                                     "auto buffer: {auto_ms:.0} ms (90 s without misses)"
@@ -1091,19 +1130,7 @@ impl Engine {
                         slew_out.clear();
                         slew.step = slew_step;
                         slew.process(&up_buf[..produced], &mut slew_out);
-                        let mut written = 0usize;
-                        for sample in &slew_out {
-                            if out_prod.push(*sample).is_err() {
-                                break;
-                            }
-                            written += 1;
-                        }
-                        if written < slew_out.len() {
-                            proc_shared.overflows.fetch_add(1, Ordering::Relaxed);
-                        }
-                        // count what we produced, not what fitted: a full ring
-                        // must not look like a slow producer
-                        proc_shared.pushed.fetch_add(slew_out.len() as u64, Ordering::Relaxed);
+                        push_block(&mut out_prod, &slew_out, &proc_shared);
                         continue;
                     }
 
@@ -1130,7 +1157,7 @@ impl Engine {
                         let gain = leveler.gain_db();
                         if (gain - saved_level).abs() > 2.0 {
                             saved_level = gain;
-                            let _ = std::fs::write(&level_path, format!("{gain:.1}"));
+                            persist.write(&level_path, format!("{gain:.1}"));
                         }
                     }
 
@@ -1413,23 +1440,7 @@ impl Engine {
                     slew_out.clear();
                     slew.step = slew_step;
                     slew.process(&up_buf[..produced], &mut slew_out);
-
-                    let mut written = 0usize;
-                    for sample in &slew_out {
-                        if out_prod.push(*sample).is_err() {
-                            break;
-                        }
-                        written += 1;
-                    }
-                    if written < slew_out.len() {
-                        // the ring was full: these samples never reached the device
-                        proc_shared.overflows.fetch_add(1, Ordering::Relaxed);
-                    }
-                    // count what actually landed in the ring: `pushed` used to add
-                    // the whole block even when it was dropped, which made
-                    // pushed/pulled look 2 % off and dragged the old rate
-                    // controller with it
-                    proc_shared.pushed.fetch_add(written as u64, Ordering::Relaxed);
+                    push_block(&mut out_prod, &slew_out, &proc_shared);
 
                     let elapsed = started.elapsed();
                     rtf_window.0 += count;
@@ -1754,6 +1765,25 @@ impl Drop for Engine {
     }
 }
 
+/// Pushes a rendered block into the output ring, counting what actually landed.
+///
+/// The silence path used to count the whole block even when the ring was full,
+/// so `pushed`/`pulled` disagreed exactly when the machine was struggling.
+fn push_block(out: &mut rtrb::Producer<f32>, samples: &[f32], shared: &Shared) {
+    let mut written = 0usize;
+    for sample in samples {
+        if out.push(*sample).is_err() {
+            break;
+        }
+        written += 1;
+    }
+    if written < samples.len() {
+        // the ring was full: these samples never reached the device
+        shared.overflows.fetch_add(1, Ordering::Relaxed);
+    }
+    shared.pushed.fetch_add(written as u64, Ordering::Relaxed);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn capture_f32(
     data: &[f32],
@@ -2008,6 +2038,23 @@ fn write_ab(buf: &AbBuffer) -> anyhow::Result<(String, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pushes_count_what_landed_and_flag_an_overflow() {
+        let shared = Shared::new(Settings::default());
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(4);
+
+        push_block(&mut producer, &[1.0, 2.0, 3.0, 4.0], &shared);
+        assert_eq!(shared.overflows.load(Ordering::Relaxed), 0);
+        assert_eq!(shared.pushed.load(Ordering::Relaxed), 4);
+
+        // a full ring takes nothing: it must be an overflow, and `pushed` must
+        // not claim the samples that were dropped
+        push_block(&mut producer, &[5.0, 6.0, 7.0], &shared);
+        assert_eq!(shared.overflows.load(Ordering::Relaxed), 1);
+        assert_eq!(shared.pushed.load(Ordering::Relaxed), 4);
+        assert_eq!(consumer.pop(), Ok(1.0));
+    }
 
     #[test]
     fn block_is_rounded_to_the_models_hop() {

@@ -12,6 +12,11 @@ pub enum Theme {
 /// stored settings file that still has the old, untouched values is migrated.
 pub const DEFAULTS_REV: u32 = 10;
 
+/// Range of the output ring buffer, ms. The floor is also the auto buffer's
+/// floor: below 40 ms a single 200 ms cable callback drains the ring.
+pub const BUFFER_MS_MIN: f32 = 40.0;
+pub const BUFFER_MS_MAX: f32 = 250.0;
+
 fn default_threads() -> u16 {
     std::thread::available_parallelism()
         .map(|n| (n.get() / 2).clamp(2, 4) as u16)
@@ -204,7 +209,7 @@ impl Settings {
     pub fn sanitize(&mut self) {
         self.isolation_strength = self.isolation_strength.clamp(0.0, 1.0);
         self.max_suppression_db = self.max_suppression_db.clamp(0.0, 48.0);
-        self.buffer_ms = self.buffer_ms.clamp(20.0, 250.0);
+        self.buffer_ms = self.buffer_ms.clamp(BUFFER_MS_MIN, BUFFER_MS_MAX);
         self.chunk_ms = self.chunk_ms.clamp(20.0, 200.0);
         self.denoiser_threads = self.denoiser_threads.clamp(1, 16);
         self.agc_target_db = self.agc_target_db.clamp(-40.0, -6.0);
@@ -410,7 +415,7 @@ mod tests {
             ..Settings::default()
         };
         settings.sanitize();
-        assert_eq!(settings.buffer_ms, 20.0);
+        assert_eq!(settings.buffer_ms, 40.0);
         assert_eq!(settings.chunk_ms, 20.0);
         assert_eq!(settings.denoiser_threads, 1);
         assert_eq!(settings.agc_max_gain_db, 30.0);

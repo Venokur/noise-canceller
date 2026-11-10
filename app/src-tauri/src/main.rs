@@ -573,10 +573,18 @@ struct AbEntry {
 }
 
 #[tauri::command(async)]
-fn list_recordings() -> Vec<AbEntry> {
+fn list_recordings(state: State<'_, AppState>) -> Vec<AbEntry> {
+    // history depth follows `keep_recordings`: the list used to stop at 20
+    // while pruning happily kept 100
+    let keep = state
+        .settings
+        .lock()
+        .map(|s| s.keep_recordings as usize)
+        .unwrap_or(20)
+        .max(1);
     recordings::pairs()
         .into_iter()
-        .take(20)
+        .take(keep)
         .map(|stamp| {
             let (raw, clean) = recordings::pair(stamp);
             AbEntry {
