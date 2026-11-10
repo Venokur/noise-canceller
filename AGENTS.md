@@ -298,6 +298,11 @@ npm.cmd run tauri build -- --no-bundle
 
 Модели и DLL берутся из `app/models/` и `app/native/` (в portable копируются рядом с exe).
 
+`tauri-build` проверяет `bundle.resources` на **каждой** сборке Cargo, поэтому на
+чистом клоне `cargo clippy`/`cargo test`/`cargo build` падает на
+«resource path ... doesn't exist», пока не выполнен `fetch-models.ps1`. CI кеширует
+`app/models` и `app/native` тем же ключом, что и релиз.
+
 Установщик собирает сам Tauri из `bundle.resources` в `src-tauri/tauri.conf.json`
 (map-форма: источник → путь внутри папки установки). Раскладка после установки
 обязана совпадать с portable — это проверяет `package-release.ps1`, который

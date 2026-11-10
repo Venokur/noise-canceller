@@ -28,6 +28,20 @@ jobs:
         working-directory: app
         run: npm ci
 
+      # tauri-build checks bundle.resources on every cargo build, and the models
+      # are 100 MB of runtime data that is not in git. Cache them, otherwise each
+      # run downloads the same files.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            app/models
+            app/native
+          key: models-sherpa-2.0.1-voxlock-int8-gtcrn
+
+      - name: Fetch models
+        working-directory: app
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-models.ps1
+
       - name: Format
         working-directory: app
         run: cargo fmt --all --check
