@@ -103,6 +103,10 @@ $npmRows = New-Rows ($npm |
 
 # --- rewrite the blocks -------------------------------------------------------
 $text = [System.IO.File]::ReadAllText($notices, [System.Text.Encoding]::UTF8)
+# A git checkout on Windows gets CRLF, a local tree may keep LF. Compare and
+# write one form, otherwise "out of date" depends on the machine's git settings
+# while the generated rows themselves are always joined with LF.
+$text = $text -replace "`r`n", "`n"
 $before = $text
 $text = [regex]::Replace(
     $text,
