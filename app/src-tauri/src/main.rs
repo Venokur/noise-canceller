@@ -364,7 +364,7 @@ $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:TEMP 'NoiseCancellerCable'
 New-Item -ItemType Directory -Force $dir | Out-Null
 $zip = Join-Path $dir 'vb-cable.zip'
-Invoke-WebRequest 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip' -OutFile $zip
+Invoke-WebRequest 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip' -OutFile $zip
 $out = Join-Path $dir 'setup'
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 Expand-Archive $zip $out -Force
