@@ -329,7 +329,9 @@ impl Settings {
 
         // the cable's capture side is not a microphone: a saved selection of it
         // turns the app into a feedback loop, so drop it once and pick a real one
-        if !settings.input_device.is_empty() && crate::devices::is_cable_name(&settings.input_device) {
+        if !settings.input_device.is_empty()
+            && crate::devices::is_cable_name(&settings.input_device)
+        {
             settings.input_device.clear();
         }
 
@@ -391,10 +393,7 @@ mod tests {
         assert_eq!(settings.effective_threads(60.0), 7);
 
         settings.auto_threads = true;
-        assert_eq!(
-            settings.effective_threads(60.0),
-            recommended_threads(60.0)
-        );
+        assert_eq!(settings.effective_threads(60.0), recommended_threads(60.0));
     }
 
     #[test]

@@ -198,10 +198,7 @@ impl Persist {
             .spawn(move || {
                 while let Ok((path, text)) = rx.recv() {
                     if let Err(err) = std::fs::write(&path, text) {
-                        crate::log::info(&format!(
-                            "cannot write {}: {err}",
-                            path.display()
-                        ));
+                        crate::log::info(&format!("cannot write {}: {err}", path.display()));
                     }
                 }
             });
@@ -292,9 +289,10 @@ impl Engine {
         };
 
         let shared = Shared::new(settings.clone());
-        shared
-            .wet
-            .store(settings.isolation_strength.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        shared.wet.store(
+            settings.isolation_strength.clamp(0.0, 1.0).to_bits(),
+            Ordering::Relaxed,
+        );
 
         // the auto buffer is learned between sessions: start from the stored
         // value, otherwise from the manual one; the ring is prefilled to it
@@ -309,9 +307,13 @@ impl Engine {
         let buffer_ms = if settings.buffer_auto {
             learned_buffer_ms
         } else {
-            settings.buffer_ms.clamp(settings::BUFFER_MS_MIN, settings::BUFFER_MS_MAX)
+            settings
+                .buffer_ms
+                .clamp(settings::BUFFER_MS_MIN, settings::BUFFER_MS_MAX)
         };
-        shared.buffer_ms.store(buffer_ms.to_bits(), Ordering::Relaxed);
+        shared
+            .buffer_ms
+            .store(buffer_ms.to_bits(), Ordering::Relaxed);
 
         // state files are written by a helper thread: `data/` may be a synced
         // folder and a blocking write on the audio path is audible
@@ -973,15 +975,24 @@ impl Engine {
         let in_format = in_cfg.sample_format();
 
         fn err_fn(err: cpal::Error) {
-        eprintln!("input stream error: {err}");
-        crate::log::info(&format!("input stream error: {err}"));
-    }
+            eprintln!("input stream error: {err}");
+            crate::log::info(&format!("input stream error: {err}"));
+        }
 
         let input_stream = match in_format {
             SampleFormat::F32 => input.build_input_stream(
                 in_config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    capture_f32(data, channels, &mut mono, &mut down, &mut down_buf, &mut in_prod, &in_shared, &in_ab);
+                    capture_f32(
+                        data,
+                        channels,
+                        &mut mono,
+                        &mut down,
+                        &mut down_buf,
+                        &mut in_prod,
+                        &in_shared,
+                        &in_ab,
+                    );
                 },
                 err_fn,
                 None,
@@ -1018,9 +1029,9 @@ impl Engine {
         let out_channels = out_config.channels as usize;
         let out_format = out_cfg.sample_format();
         fn out_err(err: cpal::Error) {
-        eprintln!("output stream error: {err}");
-        crate::log::info(&format!("output stream error: {err}"));
-    }
+            eprintln!("output stream error: {err}");
+            crate::log::info(&format!("output stream error: {err}"));
+        }
 
         let shared_for_out = shared.clone();
         let mut smoothed_fill = 0.0f32;
@@ -1102,9 +1113,10 @@ impl Engine {
         if let Ok(mut guard) = self.shared.settings.lock() {
             *guard = settings.clone();
         }
-        self.shared
-            .wet
-            .store(settings.isolation_strength.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        self.shared.wet.store(
+            settings.isolation_strength.clamp(0.0, 1.0).to_bits(),
+            Ordering::Relaxed,
+        );
         // in auto mode the processor owns the buffer; do not overwrite the
         // learned value with the manual slider
         if !settings.buffer_auto {
@@ -1127,7 +1139,8 @@ impl Engine {
         )
     }
 
-    pub fn stats(&self) -> Stats {        Stats {
+    pub fn stats(&self) -> Stats {
+        Stats {
             input_rms: f32::from_bits(self.shared.input_rms.load(Ordering::Relaxed)),
             output_rms: f32::from_bits(self.shared.output_rms.load(Ordering::Relaxed)),
             rtf: f32::from_bits(self.shared.rtf.load(Ordering::Relaxed)),
@@ -1147,7 +1160,9 @@ impl Engine {
             suppression_db: f32::from_bits(self.shared.suppression.load(Ordering::Relaxed)),
             speech: self.shared.speech.load(Ordering::Relaxed),
             input_peak_db: 20.0
-                * f32::from_bits(self.shared.input_peak.load(Ordering::Relaxed)).max(1e-6).log10(),
+                * f32::from_bits(self.shared.input_peak.load(Ordering::Relaxed))
+                    .max(1e-6)
+                    .log10(),
             muted: self.shared.muted.load(Ordering::Relaxed),
             guard_resets: self.shared.guard_resets.load(Ordering::Relaxed),
             leveler_gain_db: f32::from_bits(self.shared.leveler_gain.load(Ordering::Relaxed)),
@@ -1343,7 +1358,10 @@ mod tests {
         let mut block = tone(0.01, 960, &mut phase);
         leveler.process(&mut block, false, true);
         let out_db = 20.0 * rms_of(&block).log10();
-        assert!((out_db - -40.0).abs() < 1.0, "expected untouched level, got {out_db:.1}");
+        assert!(
+            (out_db - -40.0).abs() < 1.0,
+            "expected untouched level, got {out_db:.1}"
+        );
     }
 
     #[test]
@@ -1371,7 +1389,10 @@ mod tests {
             leveler.process(&mut block, true, true);
         }
         let moved = leveler.gain_db - settled;
-        assert!(moved < 1.0, "the television moved the leveler by {moved:.1} dB");
+        assert!(
+            moved < 1.0,
+            "the television moved the leveler by {moved:.1} dB"
+        );
     }
 
     #[test]
@@ -1462,7 +1483,11 @@ mod tests {
 
         let mut speech = vec![0.1f32; 960];
         guard.process(&mut speech);
-        assert!((speech[959] - 0.1).abs() < 1e-3, "speech was changed to {}", speech[959]);
+        assert!(
+            (speech[959] - 0.1).abs() < 1e-3,
+            "speech was changed to {}",
+            speech[959]
+        );
 
         let mut knock = vec![0.02f32; 960];
         knock[10] = 0.95;
@@ -1490,7 +1515,10 @@ mod tests {
         for _ in 0..8 {
             assert!(!guard.observe(-55.0, -90.0, false, 26.0));
         }
-        assert!(guard.cold_onset(true), "the first word must restart the model");
+        assert!(
+            guard.cold_onset(true),
+            "the first word must restart the model"
+        );
         assert!(guard.cold());
         // a cold onset while the model was open is not a cold start
         let mut open = DropoutGuard::new();
@@ -1514,7 +1542,10 @@ mod tests {
             }
         }
         assert!(resets >= 2, "the guard gave up after {resets} reset(s)");
-        assert!(resets <= 4, "the guard reset {resets} times: it should be bounded");
+        assert!(
+            resets <= 4,
+            "the guard reset {resets} times: it should be bounded"
+        );
     }
 
     #[test]

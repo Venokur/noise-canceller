@@ -5,10 +5,10 @@ use noise_canceller_core::dsp::Chain;
 use noise_canceller_core::paths;
 use noise_canceller_core::resample::Resampler;
 use noise_canceller_core::settings::Settings;
-use noise_canceller_core::{devices, wav, Denoiser};
 use noise_canceller_core::{
     cap_dry_mix, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard, SILENCE_SKIP_BLOCKS,
 };
+use noise_canceller_core::{devices, wav, Denoiser};
 
 fn main() -> Result<()> {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "selftest".into());
@@ -36,7 +36,6 @@ fn main() -> Result<()> {
         other => Err(anyhow!("unknown mode: {other} (use selftest|devices)")),
     }
 }
-
 
 fn metrics_file() -> Result<()> {
     let raw = std::env::args()
@@ -125,7 +124,6 @@ fn run_engine() -> Result<()> {
     Ok(())
 }
 
-
 fn record_profile() -> Result<()> {
     let seconds: f32 = std::env::args()
         .nth(2)
@@ -145,7 +143,6 @@ fn record_profile() -> Result<()> {
     );
     Ok(())
 }
-
 
 fn record_ab() -> Result<()> {
     use std::time::Duration;
@@ -405,9 +402,14 @@ fn replay_file() -> Result<()> {
                 model_out_rms = if produced.is_empty() {
                     None
                 } else {
-                    Some((produced.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>()
-                        / produced.len() as f64)
-                        .sqrt() as f32)
+                    Some(
+                        (produced
+                            .iter()
+                            .map(|v| (*v as f64) * (*v as f64))
+                            .sum::<f64>()
+                            / produced.len() as f64)
+                            .sqrt() as f32,
+                    )
                 };
                 isolate_stage.take(&produced, &mut isolate_out, None);
             }
@@ -435,9 +437,14 @@ fn replay_file() -> Result<()> {
                     model_out_rms = if produced.is_empty() {
                         None
                     } else {
-                        Some((produced.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>()
-                            / produced.len() as f64)
-                            .sqrt() as f32)
+                        Some(
+                            (produced
+                                .iter()
+                                .map(|v| (*v as f64) * (*v as f64))
+                                .sum::<f64>()
+                                / produced.len() as f64)
+                                .sqrt() as f32,
+                        )
                     };
                     isolate_stage.take(&produced, &mut isolate_out, None);
                 }
@@ -484,7 +491,11 @@ fn replay_file() -> Result<()> {
             let speech = detector.push(&clean16);
             voiced = Some(speech);
             let target = if speech { 1.0f32 } else { 0.0f32 };
-            let coef = if target > vad_gain { vad_attack } else { vad_release };
+            let coef = if target > vad_gain {
+                vad_attack
+            } else {
+                vad_release
+            };
             for sample in clean16.iter_mut() {
                 vad_gain += (target - vad_gain) * coef;
                 *sample *= vad_gain;
@@ -518,7 +529,11 @@ fn replay_file() -> Result<()> {
             let t = written_total as f32 / rate as f32;
             if (t * 4.0) as i32 > last_trace {
                 last_trace = (t * 4.0) as i32;
-                eprintln!("t {t:.2} level {:.1} agc {:.1}", leveler.gain_db(), chain.agc_gain_db());
+                eprintln!(
+                    "t {t:.2} level {:.1} agc {:.1}",
+                    leveler.gain_db(),
+                    chain.agc_gain_db()
+                );
             }
         }
         chain.process(&mut up_buf[..produced]);
@@ -582,7 +597,10 @@ fn denoise_file() -> Result<()> {
     let output = std::env::args()
         .nth(3)
         .ok_or_else(|| anyhow!("usage: nc denoise <in.wav> <out.wav> [hp_hz]"))?;
-    let hp_hz: f32 = std::env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let hp_hz: f32 = std::env::args()
+        .nth(4)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
     let profile = std::env::args().nth(5).map(std::path::PathBuf::from);
 
     let (samples, rate) = wav::read_mono(std::path::Path::new(&input))?;
@@ -649,9 +667,9 @@ fn show_settings() -> Result<()> {
         .unwrap_or_else(|| paths::data_dir().join("settings.json"));
 
     let s = Settings::load(&path);
-    let block_ms = noise_canceller_core::engine::block_ms(noise_canceller_core::engine::block_samples(
-        s.chunk_ms,
-    ));
+    let block_ms = noise_canceller_core::engine::block_ms(
+        noise_canceller_core::engine::block_samples(s.chunk_ms),
+    );
     println!("file      {}", path.display());
     println!("rev       {}", s.defaults_rev);
     println!(
@@ -680,14 +698,19 @@ fn show_settings() -> Result<()> {
     Ok(())
 }
 
-fn selftest() -> Result<()> {    let dir = paths::models_dir();
+fn selftest() -> Result<()> {
+    let dir = paths::models_dir();
     let combined = dir.join("test_wavs").join("en-combined.wav");
     let voice = dir.join("test_wavs").join("en-voice-sample-f.wav");
 
     println!("models: {}", dir.display());
 
     let (samples16, rate) = wav::read_mono(&combined)?;
-    println!("input: {} samples @ {rate} Hz ({:.2}s)", samples16.len(), samples16.len() as f32 / rate as f32);
+    println!(
+        "input: {} samples @ {rate} Hz ({:.2}s)",
+        samples16.len(),
+        samples16.len() as f32 / rate as f32
+    );
 
     // simulate a 48 kHz microphone
     let mut up_mic = Resampler::new(rate, 48_000);
@@ -696,7 +719,10 @@ fn selftest() -> Result<()> {    let dir = paths::models_dir();
     let mic = &mic[..mic_len];
 
     // optional input attenuation, to imitate a very quiet microphone
-    let atten_db: f32 = std::env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let atten_db: f32 = std::env::args()
+        .nth(4)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
     let atten = 10f32.powf(atten_db / 20.0);
     let mic: Vec<f32> = mic.iter().map(|v| v * atten).collect();
     let mic = &mic[..];
@@ -706,7 +732,10 @@ fn selftest() -> Result<()> {    let dir = paths::models_dir();
     let mut at16 = vec![0.0f32; down.max_output(mic_len) + 8];
     let at16_len = down.process(mic, &mut at16);
 
-    let threads: u16 = std::env::args().nth(3).and_then(|v| v.parse().ok()).unwrap_or(4);
+    let threads: u16 = std::env::args()
+        .nth(3)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
     let mut denoiser = Denoiser::new(&enroll_path(), &chunk_path(), Some(&voice), threads)?;
     println!(
         "denoiser: sr={} shift={}",
@@ -714,7 +743,10 @@ fn selftest() -> Result<()> {    let dir = paths::models_dir();
         denoiser.frame_shift()
     );
 
-    let chunk_ms: usize = std::env::args().nth(2).and_then(|v| v.parse().ok()).unwrap_or(40);
+    let chunk_ms: usize = std::env::args()
+        .nth(2)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
     // same rounding as the engine: 60 ms is 1024 samples, not 960
     let chunk = ((16000 * chunk_ms / 1000).max(128) + 64) / 128 * 128;
     let mut isolated = Vec::with_capacity(at16_len);
@@ -756,13 +788,20 @@ fn selftest() -> Result<()> {    let dir = paths::models_dir();
 
     println!("mic   rms={:.4}", rms(mic));
     println!("level {:.1} dB", leveler.gain_db());
-    println!("model rms={:.4} peak={:.3}", rms(&isolated), peak(&isolated));
+    println!(
+        "model rms={:.4} peak={:.3}",
+        rms(&isolated),
+        peak(&isolated)
+    );
     println!("dsp   rms={:.4} peak={:.3}", rms(&dsp), peak(&dsp));
 
     // the model must hand back what it was given: a short or long stream is what
     // made speech speed up and slow down
     let delta = isolated.len() as i64 - at16_len as i64;
-    println!("length in={at16_len} out={} delta={delta} samples", isolated.len());
+    println!(
+        "length in={at16_len} out={} delta={delta} samples",
+        isolated.len()
+    );
     println!("mismatched blocks: {mismatched}");
 
     let finite = isolated.iter().all(|s| s.is_finite()) && dsp.iter().all(|s| s.is_finite());

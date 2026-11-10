@@ -155,8 +155,7 @@ impl InputVoice {
         };
         self.avg_db = Some(avg);
 
-        self.voiced = (db - avg > Self::JUMP_DB && db > -45.0)
-            || (db - avg > 15.0 && db > -55.0);
+        self.voiced = (db - avg > Self::JUMP_DB && db > -45.0) || (db - avg > 15.0 && db > -55.0);
         if self.voiced {
             self.run = self.run.saturating_add(1);
         } else {
@@ -442,7 +441,11 @@ impl Leveler {
             }
         }
 
-        let target = if enabled { 10f32.powf(self.gain_db / 20.0) } else { 1.0 };
+        let target = if enabled {
+            10f32.powf(self.gain_db / 20.0)
+        } else {
+            1.0
+        };
         let step = (target - self.applied) / block.len() as f32;
         let mut gain = self.applied;
         for sample in block.iter_mut() {
@@ -511,4 +514,3 @@ pub(super) fn rms_of(samples: &[f32]) -> f32 {
     }
     (sum / samples.len() as f64).sqrt() as f32
 }
-

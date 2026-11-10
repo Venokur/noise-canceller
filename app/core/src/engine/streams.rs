@@ -104,7 +104,9 @@ pub(super) fn render_f32(
     // the raw value is a sawtooth and a controller fed with it hunts
     let fill = ring.slots() as f32;
     shared.out_raw.store(fill as u32, Ordering::Relaxed);
-    shared.callback_frames.store(frames as u32, Ordering::Relaxed);
+    shared
+        .callback_frames
+        .store(frames as u32, Ordering::Relaxed);
     if *smoothed <= 0.0 {
         *smoothed = fill;
     }
@@ -155,7 +157,9 @@ pub(super) fn render_f32(
 
     // real buffer fill seen by the consumer, plus VoxLock's own 24 ms of latency
     let fill_ms = ring.slots() as f32 / out_rate.max(1) as f32 * 1000.0;
-    shared.latency.store((fill_ms + 24.0).to_bits(), Ordering::Relaxed);
+    shared
+        .latency
+        .store((fill_ms + 24.0).to_bits(), Ordering::Relaxed);
 }
 
 static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
@@ -171,4 +175,3 @@ pub(super) fn install_panic_hook() {
         }));
     });
 }
-

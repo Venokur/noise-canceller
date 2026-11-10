@@ -181,11 +181,7 @@ fn stats(state: State<'_, AppState>) -> StatsDto {
 
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Settings {
-    state
-        .settings
-        .lock()
-        .map(|s| s.clone())
-        .unwrap_or_default()
+    state.settings.lock().map(|s| s.clone()).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -236,9 +232,11 @@ fn apply_settings(
     }
 }
 
-
 #[tauri::command]
-async fn probe_mic(input: Option<String>, seconds: f32) -> Result<noise_canceller_core::profile::Quality, String> {
+async fn probe_mic(
+    input: Option<String>,
+    seconds: f32,
+) -> Result<noise_canceller_core::profile::Quality, String> {
     tauri::async_runtime::spawn_blocking(move || {
         noise_canceller_core::profile::probe(input.as_deref(), seconds)
     })
@@ -253,7 +251,10 @@ fn probe_spectrum() -> Vec<f32> {
 }
 
 #[tauri::command]
-async fn record_profile(input: Option<String>, seconds: f32) -> Result<noise_canceller_core::profile::Profile, String> {
+async fn record_profile(
+    input: Option<String>,
+    seconds: f32,
+) -> Result<noise_canceller_core::profile::Profile, String> {
     tauri::async_runtime::spawn_blocking(move || {
         noise_canceller_core::profile::record(input.as_deref(), seconds)
     })
@@ -345,7 +346,13 @@ async fn play_profile(
 /// `CREATE_NO_WINDOW` flag was easy to forget in a new one.
 fn powershell(script: &str) -> std::io::Result<std::process::Output> {
     std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
 }
@@ -381,10 +388,10 @@ Start-Process -FilePath $exe.FullName -Verb RunAs -WorkingDirectory $exe.Directo
     }
 }
 
-
 #[tauri::command]
 async fn check_model_update() -> Result<String, String> {
-    const SCRIPT: &str = "$m = Invoke-RestMethod 'https://huggingface.co/api/models/arbazsiddiqui/voxlock'; $m.sha";
+    const SCRIPT: &str =
+        "$m = Invoke-RestMethod 'https://huggingface.co/api/models/arbazsiddiqui/voxlock'; $m.sha";
 
     let output = tauri::async_runtime::spawn_blocking(move || powershell(SCRIPT))
         .await
@@ -404,7 +411,12 @@ async fn check_model_update() -> Result<String, String> {
     let known = std::fs::read_to_string(&state_path)
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value.get("sha").and_then(|s| s.as_str()).map(str::to_string));
+        .and_then(|value| {
+            value
+                .get("sha")
+                .and_then(|s| s.as_str())
+                .map(str::to_string)
+        });
 
     let short = &sha[..sha.len().min(8)];
     let write = |value: &str| {
@@ -414,7 +426,9 @@ async fn check_model_update() -> Result<String, String> {
     match known {
         None => {
             write(&sha);
-            Ok(format!("Модель VoxLock · ревизия {short} · отслеживание включено"))
+            Ok(format!(
+                "Модель VoxLock · ревизия {short} · отслеживание включено"
+            ))
         }
         Some(previous) if previous == sha => Ok(format!("Модель актуальна · ревизия {short}")),
         Some(_) => {
@@ -425,7 +439,6 @@ async fn check_model_update() -> Result<String, String> {
         }
     }
 }
-
 
 #[tauri::command]
 fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
@@ -444,7 +457,6 @@ fn autostart_enabled(app: tauri::AppHandle) -> bool {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().unwrap_or(false)
 }
-
 
 #[tauri::command]
 fn window_minimize(window: tauri::Window) {
@@ -510,7 +522,6 @@ fn window_close(window: tauri::Window) {
 fn window_drag(window: tauri::Window) {
     let _ = window.start_dragging();
 }
-
 
 #[tauri::command]
 fn set_muted(state: State<'_, AppState>, muted: bool) {
@@ -600,7 +611,6 @@ fn list_recordings(state: State<'_, AppState>) -> Vec<AbEntry> {
 fn delete_recording(stamp: u64) -> Result<(), String> {
     recordings::delete(stamp).map_err(|e| e.to_string())
 }
-
 
 #[tauri::command(async)]
 fn default_devices() -> (Option<String>, Option<String>) {
@@ -698,7 +708,6 @@ fn prune_recordings(state: State<'_, AppState>) -> usize {
     recordings::prune(keep)
 }
 
-
 /// Tray menu kept in state: showing it ourselves places it at the cursor,
 /// going down. The icon's built-in menu is bottom-aligned, which puts it
 /// off-screen when the taskbar sits at the top of the screen.
@@ -761,10 +770,8 @@ fn register_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Option<String> {
 }
 
 fn refresh_tray(app: &tauri::AppHandle) {
-    let (Some(tray), Some(state)) = (
-        app.try_state::<TrayState>(),
-        app.try_state::<AppState>(),
-    ) else {
+    let (Some(tray), Some(state)) = (app.try_state::<TrayState>(), app.try_state::<AppState>())
+    else {
         return;
     };
     let (running, muted) = {
@@ -781,9 +788,11 @@ fn refresh_tray(app: &tauri::AppHandle) {
         .and_then(|s| s.profile_path.clone())
         .map(|p| p.rsplit(['\\', '/']).next().unwrap_or(&p).to_string())
         .unwrap_or_else(|| "авто".to_string());
-    let _ = tray
-        .status
-        .set_text(if running { "Обработка включена" } else { "Выключено" });
+    let _ = tray.status.set_text(if running {
+        "Обработка включена"
+    } else {
+        "Выключено"
+    });
     let _ = tray.profile.set_text(format!("Профиль: {profile}"));
     let _ = tray.mute.set_checked(muted);
 }
@@ -841,10 +850,7 @@ fn save_window(app: &tauri::AppHandle) {
     };
     // a minimized window reports (-32000, -32000); saving that made the next
     // start invisible
-    if window.is_minimized().unwrap_or(false)
-        || position.x <= -30000
-        || position.y <= -30000
-    {
+    if window.is_minimized().unwrap_or(false) || position.x <= -30000 || position.y <= -30000 {
         return;
     }
     let state = WindowState {
@@ -1001,7 +1007,8 @@ fn main() {
                             refresh_tray(app);
                             if let Some(state) = app.try_state::<TrayState>() {
                                 if let Some(webview) = app.get_webview_window("main") {
-                                    let _ = state.menu.popup(tauri::Webview::window(webview.as_ref()));
+                                    let _ =
+                                        state.menu.popup(tauri::Webview::window(webview.as_ref()));
                                 }
                             }
                         }

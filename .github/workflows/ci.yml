@@ -28,6 +28,10 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Format
+        working-directory: app
+        run: cargo fmt --all --check
+
       - name: Clippy
         working-directory: app
         run: cargo clippy --workspace --all-targets -- -D warnings

@@ -171,7 +171,8 @@ fn api() -> Result<&'static Api> {
         let _ = API.set(api);
     }
 
-    API.get().ok_or_else(|| anyhow!("sherpa-onnx API not initialised"))
+    API.get()
+        .ok_or_else(|| anyhow!("sherpa-onnx API not initialised"))
 }
 
 pub struct Denoiser {
@@ -248,11 +249,24 @@ impl StreamDenoiser {
 unsafe impl Send for Denoiser {}
 
 impl Denoiser {
-    pub fn new(enroll: &Path, chunk: &Path, voice_sample: Option<&Path>, threads: u16) -> Result<Self> {
+    pub fn new(
+        enroll: &Path,
+        chunk: &Path,
+        voice_sample: Option<&Path>,
+        threads: u16,
+    ) -> Result<Self> {
         let api = api()?;
 
-        let enroll_c = CString::new(crate::paths::native_safe(enroll).to_string_lossy().as_bytes())?;
-        let chunk_c = CString::new(crate::paths::native_safe(chunk).to_string_lossy().as_bytes())?;
+        let enroll_c = CString::new(
+            crate::paths::native_safe(enroll)
+                .to_string_lossy()
+                .as_bytes(),
+        )?;
+        let chunk_c = CString::new(
+            crate::paths::native_safe(chunk)
+                .to_string_lossy()
+                .as_bytes(),
+        )?;
         let voice_c = voice_sample
             .filter(|p| p.exists())
             .map(|p| CString::new(crate::paths::native_safe(p).to_string_lossy().as_bytes()))
@@ -282,11 +296,17 @@ impl Denoiser {
     /// GTCRN: a very light speech enhancer (about 0.5 MB, 16 kHz).
     pub fn new_gtcrn(model: &Path, threads: u16) -> Result<Self> {
         let api = api()?;
-        let model_c = CString::new(crate::paths::native_safe(model).to_string_lossy().as_bytes())?;
+        let model_c = CString::new(
+            crate::paths::native_safe(model)
+                .to_string_lossy()
+                .as_bytes(),
+        )?;
 
         let config = OnlineConfig {
             model: ModelConfig {
-                gtcrn: GtcrnConfig { model: model_c.as_ptr() },
+                gtcrn: GtcrnConfig {
+                    model: model_c.as_ptr(),
+                },
                 num_threads: threads.max(1) as i32,
                 debug: 0,
                 provider: ptr::null(),
@@ -419,7 +439,11 @@ unsafe impl Send for Vad {}
 impl Vad {
     pub fn new(model: &Path, threshold: f32) -> Result<Self> {
         let api = api()?;
-        let model_c = CString::new(crate::paths::native_safe(model).to_string_lossy().as_bytes())?;
+        let model_c = CString::new(
+            crate::paths::native_safe(model)
+                .to_string_lossy()
+                .as_bytes(),
+        )?;
 
         let config = VadModelConfig {
             silero_vad: SileroVadConfig {

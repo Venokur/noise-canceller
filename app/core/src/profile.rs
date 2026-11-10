@@ -159,10 +159,7 @@ pub fn record(input_name: Option<&str>, seconds: f32) -> Result<Profile> {
         })
         .collect();
     levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let loud = levels
-        .get(levels.len() * 9 / 10)
-        .copied()
-        .unwrap_or(-60.0);
+    let loud = levels.get(levels.len() * 9 / 10).copied().unwrap_or(-60.0);
     let gain = 10f32.powf((-20.0 - loud) / 20.0).clamp(0.25, 16.0);
     for sample in at16.iter_mut() {
         *sample = (*sample * gain).clamp(-0.99, 0.99);

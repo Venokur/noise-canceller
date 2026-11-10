@@ -104,4 +104,3 @@ fn write_ab(buf: &AbBuffer) -> anyhow::Result<(String, String, String)> {
         clean.to_string_lossy().to_string(),
     ))
 }
-

@@ -32,7 +32,9 @@ impl Biquad {
 
     #[inline]
     pub fn process(&mut self, x: f64) -> f64 {
-        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2;
+        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = x;
         self.y2 = self.y1;
@@ -104,7 +106,11 @@ impl Gate {
             (self.env / thr).powf((self.ratio - 1.0).max(0.1)).min(1.0)
         };
 
-        let time = if target > self.gain { self.attack_ms } else { self.release_ms };
+        let time = if target > self.gain {
+            self.attack_ms
+        } else {
+            self.release_ms
+        };
         let coef = 1.0 - (-1000.0 / time.max(1.0) / sample_rate).exp();
         self.gain += (target - self.gain) * coef;
         x * self.gain
@@ -199,7 +205,11 @@ impl Agc {
             let crest = 20.0 * ((block_peak + 1e-9) / (block_rms + 1e-9)).log10();
 
             if block_rms > 1.8e-3 && crest < 14.0 && self.target_present {
-                self.rms = if self.rms <= 0.0 { block_rms } else { self.rms * 0.9 + block_rms * 0.1 };
+                self.rms = if self.rms <= 0.0 {
+                    block_rms
+                } else {
+                    self.rms * 0.9 + block_rms * 0.1
+                };
                 let rms_db = 20.0 * self.rms.log10();
                 let wanted = (self.target_db - rms_db).clamp(self.min_gain_db, self.max_gain_db);
                 if self.fresh {
@@ -250,7 +260,11 @@ pub struct Limiter {
 
 impl Default for Limiter {
     fn default() -> Self {
-        Self { gain: 1.0, ceiling: 10f64.powf(-1.0 / 20.0), ceiling_db: -1.0 }
+        Self {
+            gain: 1.0,
+            ceiling: 10f64.powf(-1.0 / 20.0),
+            ceiling_db: -1.0,
+        }
     }
 }
 
@@ -352,8 +366,10 @@ impl Chain {
         self.limiter.prepare();
 
         // 4th order Butterworth: one biquad alone lets 40-60 Hz rumble through
-        self.high_pass.high_pass(sample_rate as f32, self.high_pass_hz, 0.5412);
-        self.high_pass2.high_pass(sample_rate as f32, self.high_pass_hz, 1.3066);
+        self.high_pass
+            .high_pass(sample_rate as f32, self.high_pass_hz, 0.5412);
+        self.high_pass2
+            .high_pass(sample_rate as f32, self.high_pass_hz, 1.3066);
         // 30 ms crossfade between "no level change" and the AGC output
         self.agc_mix_coef = 1.0 - (-1000.0 / 30.0 / sample_rate as f64).exp();
     }
@@ -393,7 +409,8 @@ impl Chain {
         for sample in buffer.iter_mut() {
             let dry = *sample as f64;
             let abs = dry.abs();
-            self.silence_env += (abs - self.silence_env) * if abs > self.silence_env { 0.01 } else { 0.0002 };
+            self.silence_env +=
+                (abs - self.silence_env) * if abs > self.silence_env { 0.01 } else { 0.0002 };
 
             let mut x = dry;
             if self.high_pass_enabled {
@@ -450,7 +467,8 @@ impl Default for Chain {
 mod tests {
     use super::*;
 
-    fn run(gate_threshold_db: f64, rms: f32) -> f64 {        let mut gate = Gate {
+    fn run(gate_threshold_db: f64, rms: f32) -> f64 {
+        let mut gate = Gate {
             threshold_db: gate_threshold_db,
             ratio: 2.0,
             attack_ms: 10.0,
@@ -482,7 +500,10 @@ mod tests {
     fn gate_keeps_quiet_speech() {
         // -50 dBFS is quiet but still speech; it must pass almost untouched
         let out_db = 20.0 * run(-60.0, 0.0032).log10();
-        assert!(out_db > -53.0, "quiet speech was cut down to {out_db:.1} dBFS");
+        assert!(
+            out_db > -53.0,
+            "quiet speech was cut down to {out_db:.1} dBFS"
+        );
     }
 
     #[test]
@@ -525,7 +546,10 @@ mod tests {
             previous = agc.gain_lin;
         }
 
-        assert!(biggest < 0.005, "gain stepped by {biggest:.4} in one sample");
+        assert!(
+            biggest < 0.005,
+            "gain stepped by {biggest:.4} in one sample"
+        );
     }
 
     #[test]
