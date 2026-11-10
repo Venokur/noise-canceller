@@ -798,11 +798,13 @@ fn refresh_tray(app: &tauri::AppHandle) {
     let _ = tray.mute.set_checked(muted);
 }
 
+/// Only the size is remembered: the window always opens in the middle of the
+/// screen, so a saved position would just make it jump after creation.
 #[derive(Serialize, Deserialize)]
 struct WindowState {
-    x: i32,
-    y: i32,
+    #[serde(default)]
     w: u32,
+    #[serde(default)]
     h: u32,
 }
 
@@ -846,17 +848,15 @@ fn save_window(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+    let Ok(size) = window.inner_size() else {
         return;
     };
-    // a minimized window reports (-32000, -32000); saving that made the next
-    // start invisible
-    if window.is_minimized().unwrap_or(false) || position.x <= -30000 || position.y <= -30000 {
+    // a minimized window reports (-32000, -32000) and a bogus size; saving that
+    // made the next start look broken
+    if window.is_minimized().unwrap_or(false) {
         return;
     }
     let state = WindowState {
-        x: position.x,
-        y: position.y,
         w: size.width,
         h: size.height,
     };
@@ -865,44 +865,22 @@ fn save_window(app: &tauri::AppHandle) {
     }
 }
 
-/// True when at least a corner of the window is on a real monitor.
-fn monitor_contains(app: &tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> bool {
-    let Some(window) = app.get_webview_window("main") else {
-        return false;
-    };
-    let Ok(monitors) = window.available_monitors() else {
-        return true;
-    };
-    monitors.iter().any(|monitor| {
-        let area = monitor.work_area();
-        let left = area.position.x;
-        let top = area.position.y;
-        let right = left + area.size.width as i32;
-        let bottom = top + area.size.height as i32;
-        x < right && x + w as i32 > left && y < bottom && y + h as i32 > top
-    })
-}
-
+/// Restores the remembered size only. The position is never restored: the window
+/// is created hidden (`visible: false` in `tauri.conf.json`) and centered here, so
+/// it appears once, already in the middle of the screen, instead of first showing
+/// up at the OS default spot and then jumping to the saved rectangle.
 fn restore_window(app: &tauri::AppHandle) {
-    let Ok(text) = std::fs::read_to_string(window_state_path()) else {
-        return;
-    };
-    let Ok(state) = serde_json::from_str::<WindowState>(&text) else {
-        return;
-    };
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let w = state.w.max(640);
-    let h = state.h.max(480);
-    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
-    // -32000 is the minimized sentinel, and a monitor may have been unplugged:
-    // either way putting the window there leaves no window at all
-    if state.x > -30000 && state.y > -30000 && monitor_contains(app, state.x, state.y, w, h) {
-        let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
-    } else {
-        let _ = window.center();
+    if let Ok(text) = std::fs::read_to_string(window_state_path()) {
+        if let Ok(state) = serde_json::from_str::<WindowState>(&text) {
+            let w = state.w.max(640);
+            let h = state.h.max(480);
+            let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+        }
     }
+    let _ = window.center();
 }
 
 fn main() {
@@ -1023,11 +1001,13 @@ fn main() {
             builder.build(app)?;
 
             register_hotkey(app.handle(), &start_hotkey);
+            // the window is created hidden: restore its size, center it, and only
+            // then show it, so the first frame the user sees is the final one
             restore_window(app.handle());
-
-            if start_minimized {
+            if !start_minimized {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
             }
             Ok(())
