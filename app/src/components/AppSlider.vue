@@ -29,7 +29,7 @@ function onInput(event: Event) {
 </script>
 
 <template>
-  <div class="flex items-center gap-3">
+  <div class="flex w-full items-center gap-2.5">
     <input
       class="slider"
       type="range"
@@ -38,10 +38,10 @@ function onInput(event: Event) {
       :step="step"
       :value="modelValue"
       :style="{
-        background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, var(--stroke) ${percent}%, var(--stroke) 100%)`,
+        background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, var(--track) ${percent}%, var(--track) 100%)`,
       }"
       @input="onInput"
     />
-    <span class="w-[62px] shrink-0 text-right font-mono text-[11.5px] text-[var(--muted)]">{{ text }}</span>
+    <span class="w-[58px] shrink-0 text-right font-mono text-[11px] tabular-nums text-[var(--muted)]">{{ text }}</span>
   </div>
 </template>

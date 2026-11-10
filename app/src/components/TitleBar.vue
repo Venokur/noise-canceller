@@ -22,22 +22,31 @@ function startDrag(event: MouseEvent) {
 
 <template>
   <div
-    class="flex h-9 shrink-0 select-none items-center gap-1 pr-1.5 pl-3"
+    class="grid h-10 shrink-0 select-none items-center gap-4 border-b border-[var(--stroke)] pr-1.5 pl-3"
+    style="grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)"
     @mousedown="startDrag"
   >
-    <div class="flex flex-1 items-center gap-2">
-      <span class="h-2 w-2 rounded-full bg-[var(--accent)]"></span>
-      <span class="text-[12px] tracking-wide text-[var(--muted)]">Noise Canceller</span>
+    <div class="flex min-w-0 items-center gap-2.5">
+      <AppIcon name="audio" :size="18" :stroke="1.9" class="text-[var(--accent)]" />
+      <slot name="status" />
     </div>
 
-    <button class="winbtn" title="Свернуть" @mousedown.stop @click.stop="minimize">
-      <AppIcon name="minus" :size="13" :stroke="1.5" />
-    </button>
-    <button class="winbtn" title="Развернуть" @mousedown.stop @click.stop="maximize">
-      <AppIcon name="maximize" :size="12" :stroke="1.5" />
-    </button>
-    <button class="winbtn close" title="Закрыть" @mousedown.stop @click.stop="close">
-      <AppIcon name="close" :size="13" :stroke="1.5" />
-    </button>
+    <div class="flex h-full items-center gap-5">
+      <slot name="nav" />
+    </div>
+
+    <div class="flex items-center justify-end gap-1">
+      <slot name="actions" />
+      <span class="mx-1 h-4 w-px bg-[var(--stroke)]"></span>
+      <button class="winbtn" title="Свернуть" @mousedown.stop @click.stop="minimize">
+        <AppIcon name="minus" :size="12" :stroke="1.6" />
+      </button>
+      <button class="winbtn" title="Развернуть" @mousedown.stop @click.stop="maximize">
+        <AppIcon name="maximize" :size="10" :stroke="1.6" />
+      </button>
+      <button class="winbtn close" title="Закрыть" @mousedown.stop @click.stop="close">
+        <AppIcon name="close" :size="12" :stroke="1.6" />
+      </button>
+    </div>
   </div>
 </template>

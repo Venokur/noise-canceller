@@ -133,7 +133,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             enabled: true,
-            theme: Theme::System,
+            theme: Theme::Dark,
             mode: "profile".into(),
             profile_path: None,
             isolation_strength: 1.0,

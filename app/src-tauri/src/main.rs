@@ -906,6 +906,38 @@ fn window_state_path() -> std::path::PathBuf {
     paths::data_dir().join("window.json")
 }
 
+/// Set while "Выход" is running: from that moment the window must be allowed to
+/// close instead of hiding to the tray, and the process has to end for real.
+static EXITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Quit from the tray: release the audio streams, save the window, and make sure
+/// the process is gone. `AppHandle::exit` sends a request to the event loop, but
+/// the tray menu runs a modal loop on Windows, so the request can sit unprocessed
+/// and leave a windowless process behind (the tray icon stayed after "Выход").
+fn quit_app(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+
+    EXITING.store(true, Ordering::SeqCst);
+    save_window(app);
+    noise_canceller_core::log::info("app quit from tray");
+
+    // watchdog first: `engine.stop()` joins the processing thread and must not be
+    // able to keep the process alive
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::process::exit(0);
+    });
+
+    if let Some(state) = app.try_state::<AppState>() {
+        let engine = state.engine.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(mut engine) = engine {
+            engine.stop();
+        }
+    }
+
+    app.exit(0);
+}
+
 fn save_window(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -1100,10 +1132,7 @@ fn main() {
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
-            "quit" => {
-                save_window(app);
-                app.exit(0);
-            }
+            "quit" => quit_app(app),
             "mute" => toggle_mute(app),
             _ => {}
         })
@@ -1116,6 +1145,9 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 save_window(window.app_handle());
                 let close_to_tray = window
                     .app_handle()

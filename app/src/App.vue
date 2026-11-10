@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import TitleBar from "./components/TitleBar.vue";
 import AppSwitch from "./components/AppSwitch.vue";
@@ -222,6 +222,10 @@ let cableTimer: number | undefined;
 let spectrumTimer: number | undefined;
 let abMisses = 0;
 const deviceLost = ref(false);
+/// Whether processing *should* be running. The three-second device poll uses
+/// this instead of `!running`, otherwise auto-start fought the off button and
+/// started the engine again a moment after the user stopped it.
+const engineWanted = ref(true);
 
 /// With no audio flowing the spectrum is a still, dim baseline: it marks the
 /// block as "waiting" instead of faking a signal.
@@ -241,15 +245,12 @@ let recordTimer: number | undefined;
 let restartTimer: number | undefined;
 let media: MediaQueryList | undefined;
 
-const card =
-  "rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.06)]";
-const btn =
-  "inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-[var(--stroke)] bg-[var(--surface-alt)] px-3 py-2 text-[13px] text-[var(--text)] transition duration-150 hover:border-[var(--accent)] active:scale-[0.98] disabled:cursor-default disabled:opacity-45";
-const btnPrimary =
-  "inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-[var(--accent)] px-3 py-2 text-[13px] font-medium text-[var(--on-accent)] transition duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-default disabled:opacity-45";
-const muted = "text-[12px] leading-relaxed text-[var(--muted)]";
-const labelText = "text-[13px] text-[var(--text)]";
-const settingRow = "srow grid grid-cols-[210px_1fr] items-center gap-3 py-[7px]";
+// Actions are monochrome on purpose: colour in this window means "audio is
+// flowing", so only the record dot and the signal states are allowed to use it.
+const btn = "btn";
+const btnPrimary = "btn btn-primary";
+const btnGhost = "btn btn-ghost";
+const settingRow = "srow";
 
 const running = computed(() => stats.value.running);
 const isDark = computed(() => theme.value === "dark");
@@ -267,16 +268,7 @@ const inputLevel = computed(() => toLevel(stats.value.inputRms));
 const outputLevel = computed(() => toLevel(stats.value.outputRms));
 const inputDb = computed(() => (stats.value.inputRms > 1e-5 ? `${(20 * Math.log10(stats.value.inputRms)).toFixed(0)} дБ` : "—"));
 const outputDb = computed(() => (stats.value.outputRms > 1e-5 ? `${(20 * Math.log10(stats.value.outputRms)).toFixed(0)} дБ` : "—"));
-const abInfo = computed(() => {
-  const path = abClean.value;
-  if (!path) return "";
-  const match = /ab-(\d+)-clean/.exec(path);
-  if (!match) return "Последняя запись";
-  const at = new Date(Number(match[1]) * 1000);
-  return `Последняя запись · ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-});
-const cpuText = computed(() => (stats.value.rtf > 0 ? `${(stats.value.rtf * 100).toFixed(0)}%` : "—"));
-const latencyText = computed(() => (stats.value.latencyMs > 0 ? `${stats.value.latencyMs.toFixed(0)}` : "—"));
+
 
 const presets = [
   { id: "home", label: "Дом", patch: { gateThresholdDb: -60, gateRatio: 2, gateReleaseMs: 300, agcTargetDb: -24, agcMaxGainDb: 12, highPassHz: 85, comfortNoiseEnabled: false } },
@@ -403,6 +395,70 @@ const profileWeak = computed(() => !!activeProfileScore.value && activeProfileSc
 
 const inputIsCable = computed(() => !!selectedInput.value && isCableInput(selectedInput.value));
 
+/// Recording a profile needs a real microphone: the cable's capture side is our
+/// own output, so it cannot teach the model a voice.
+const micReady = computed(() => !!selectedInput.value && !inputIsCable.value);
+
+/// The three numbers on the console. Kept together so the strip reads as one
+/// instrument row and an empty value always shows a dash, never "0".
+const readouts = computed(() => {
+  const latency = stats.value.latencyMs > 0 ? stats.value.latencyMs.toFixed(0) : "—";
+  const load = stats.value.rtf > 0 ? (stats.value.rtf * 100).toFixed(0) : "—";
+  const suppressed = stats.value.suppressionDb > 0.5;
+  const cap = settings.value?.maxSuppressionDb ?? 0;
+  return [
+    { label: "Задержка", value: latency, unit: latency === "—" ? "" : "мс" },
+    { label: "Нагрузка", value: load, unit: load === "—" ? "" : "%" },
+    {
+      label: "Подавление",
+      value: suppressed ? `−${stats.value.suppressionDb.toFixed(0)}` : "—",
+      unit: suppressed ? (cap > 0 ? `дБ / ${cap.toFixed(0)}` : "дБ") : "",
+    },
+  ];
+});
+
+/// Where the sound actually goes, spelled out next to the status dot.
+const routeText = computed(() => {
+  const input = shortName(selectedInput.value) || "микрофон не выбран";
+  const output = testMode.value
+    ? shortName(testOutput.value) || "устройство вывода"
+    : "CABLE Input";
+  return `${input} → ${output}`;
+});
+
+/// Score and SNR of the profile in use, shown next to the section title.
+/// The score already sits in the picker label, so only the SNR is repeated here
+/// unless the profile was recorded seconds ago.
+const profileMeta = computed(() => {
+  if (profileQuality.value) {
+    const q = profileQuality.value;
+    return `${q.score} / 100 · речь ${(q.speechPercent * 100).toFixed(0)}% · SNR ${q.snrDb.toFixed(0)} дБ`;
+  }
+  const score = activeProfileScore.value;
+  if (score) return `SNR ${score.snrDb.toFixed(0)} дБ`;
+  return "";
+});
+
+const settingsSections = [
+  { id: "voice", label: "Голос" },
+  { id: "clean", label: "Чистка сигнала" },
+  { id: "latency", label: "Задержка и нагрузка" },
+  { id: "control", label: "Управление" },
+  { id: "diag", label: "Диагностика" },
+  { id: "app", label: "Приложение" },
+];
+const settingsSection = ref("voice");
+const scrollEl = ref<HTMLElement | null>(null);
+/// While a query is typed every section is shown, so a match is never hidden
+/// behind the selected tab.
+const searching = computed(() => settingsQuery.value.trim().length > 0);
+
+function switchSection(id: string) {
+  settingsSection.value = id;
+  filterSettings("");
+  scrollEl.value?.scrollTo({ top: 0 });
+}
+
 interface SystemInfo {
   logicalCores: number;
   physicalCores: number;
@@ -523,12 +579,33 @@ function onHotkeyKey(event: KeyboardEvent) {
   capturingHotkey.value = false;
 }
 
-function filterSettings(value: string) {
+async function filterSettings(value: string) {
   settingsQuery.value = value;
-  const query = value.trim().toLowerCase();
+  // the sections are rendered by `v-if="searching || …"`, so Vue has to patch
+  // them in before the filter can walk the fresh rows
+  await nextTick();
+  applyFilter();
+}
+
+function applyFilter() {
+  const query = settingsQuery.value.trim().toLowerCase();
   document.querySelectorAll<HTMLElement>(".srow").forEach((row) => {
     row.style.display =
       !query || (row.textContent ?? "").toLowerCase().includes(query) ? "" : "none";
+  });
+  // a section whose rows all fell out of the query should disappear instead of
+  // leaving an empty heading behind; the diagnostics table has no rows at all,
+  // so it is matched by its own text
+  document.querySelectorAll<HTMLElement>(".sblock").forEach((block) => {
+    if (!query) {
+      block.style.display = "";
+      return;
+    }
+    const rows = Array.from(block.querySelectorAll<HTMLElement>(".srow"));
+    const hit = rows.length
+      ? rows.some((row) => row.style.display !== "none")
+      : (block.textContent ?? "").toLowerCase().includes(query);
+    block.style.display = hit ? "" : "none";
   });
 }
 
@@ -543,6 +620,7 @@ async function startEngine(test: boolean) {
     return;
   }
   starting.value = true;
+  engineWanted.value = true;
   error.value = "";
   try {
     const voice = settings.value?.mode === "profile" ? settings.value?.profilePath ?? null : null;
@@ -565,6 +643,7 @@ async function startEngine(test: boolean) {
 }
 
 async function stopEngine() {
+  engineWanted.value = false;
   try {
     await invoke("stop");
   } catch (e) {
@@ -675,7 +754,7 @@ const probeHint = computed(() => {
 });
 
 async function recordProfile() {
-  if (recording.value || !settings.value) return;
+  if (recording.value || !settings.value || !micReady.value) return;
   await stopPreview();
   recording.value = true;
   error.value = "";
@@ -1151,6 +1230,7 @@ onMounted(async () => {
       if (
         settings.value?.autoStart &&
         cableOk.value &&
+        engineWanted.value &&
         !running.value &&
         !starting.value &&
         !testMode.value &&
@@ -1233,171 +1313,185 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
 
 <template>
   <div class="flex h-full flex-col">
-    <TitleBar />
-
-    <div class="app-scroll mx-auto w-full max-w-[1040px] flex-1 overflow-y-auto px-6 pb-8">
-      <header class="flex items-end gap-3 pb-4">
-        <div>
-          <h1 class="text-[26px] font-semibold tracking-tight">Noise Canceller</h1>
-          <div class="mt-1 flex items-center gap-2 text-[12px] text-[var(--muted)]">
-            <span class="h-1.5 w-1.5 rounded-full" :class="dotClass"></span>
-            {{ statusText }}
-            <span v-if="stats.backend" class="opacity-70">· {{ stats.backend }}</span>
-          </div>
-        </div>
-        <div class="flex-1"></div>
-        <button :class="btn" @click="toggleTheme">
-          <AppIcon :name="isDark ? 'sun' : 'moon'" />
-          {{ isDark ? "Светлая" : "Тёмная" }}
-        </button>
-      </header>
-
-      <!-- hero -->
-      <!-- hero -->
-      <section
-        class="relative mb-4 overflow-hidden rounded-3xl border border-[var(--stroke)] p-6"
-        style="
-          background:
-            radial-gradient(120% 160% at 0% 0%, var(--accent-soft) 0%, transparent 58%),
-            var(--surface);
-        "
-      >
-        <div class="flex flex-wrap items-center gap-6">
-          <button
-            class="relative grid h-[92px] w-[92px] shrink-0 cursor-pointer place-items-center rounded-full transition-all duration-200 active:scale-95 disabled:cursor-default disabled:opacity-60"
-            :class="
-              running
-                ? 'bg-[var(--accent)] text-[var(--on-accent)] shadow-[0_0_46px_-10px_var(--accent)] pulse-ring'
-                : starting
-                  ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-                  : 'border border-[var(--stroke)] bg-[var(--surface-alt)] text-[var(--muted)]'
-            "
-            :disabled="busy || starting"
-            @click="togglePower"
-          >
-            <AppIcon v-if="starting" name="spinner" :size="32" :stroke="2.2" class="spin" />
-            <AppIcon v-else name="power" :size="34" :stroke="2.2" />
-          </button>
-
-          <div class="min-w-[220px] flex-1">
-            <div class="text-[17px] font-semibold">
-              {{ testMode ? "Проверка в колонках" : "Шумоподавление" }}
-            </div>
-            <p :class="muted" class="mt-1 min-h-[39px]">
-              {{
-                testMode
-                  ? "Говорите — звук идёт в «" + (testOutput || "устройство вывода") + "». Это режим проверки."
-                  : running
-                    ? "Активно · VoxLock 16 кГц · в виртуальный микрофон VB-CABLE"
-                    : "Выключено. Без виртуального кабеля звук в колонки не идёт — используйте проверку."
-              }}
-            </p>
-            <!-- fixed-height slot: the mute chip appears and disappears here, but the
-                 space is always reserved, so the block never re-centers and the text
-                 does not jump when the hotkey is pressed -->
-            <div class="mt-1.5 flex h-[24px] items-center">
-              <button
-                v-if="stats.muted"
-                class="inline-flex h-[24px] cursor-pointer items-center gap-1.5 rounded-lg bg-[var(--danger-soft)] px-2 text-[11.5px] leading-none text-[var(--danger)] transition hover:brightness-105"
-                title="Включить микрофон"
-                @click="setMuted(false)"
-              >
-                <AppIcon name="mic" :size="13" />
-                Микрофон выключен · Ctrl+Alt+M
-              </button>
-            </div>
-          </div>
-
-          <div class="flex gap-7">
-            <div>
-              <div class="text-[11px] uppercase tracking-wide text-[var(--muted)]">Задержка</div>
-              <div class="mt-0.5 text-[22px] font-semibold tabular-nums">
-                {{ latencyText }}<span v-if="stats.latencyMs > 0" class="ml-1 text-[12px] font-normal text-[var(--muted)]">мс</span>
-              </div>
-            </div>
-            <div>
-              <div class="text-[11px] uppercase tracking-wide text-[var(--muted)]">Нагрузка</div>
-              <div class="mt-0.5 text-[22px] font-semibold tabular-nums">{{ cpuText }}</div>
-            </div>
-            <div>
-              <div class="text-[11px] uppercase tracking-wide text-[var(--muted)]">Подавление</div>
-              <div class="mt-0.5 text-[22px] font-semibold tabular-nums">
-                {{ stats.suppressionDb > 0.5 ? "−" + stats.suppressionDb.toFixed(0) : "—"
-                }}<span
-                  v-if="stats.suppressionDb > 0.5"
-                  class="ml-1 text-[12px] font-normal text-[var(--muted)]"
-                  >дБ</span
-                >
-                <span
-                  v-if="stats.suppressionDb > 0.5 && settings && settings.maxSuppressionDb > 0"
-                  class="ml-1 text-[11px] font-normal text-[var(--muted)]"
-                  >/ {{ settings.maxSuppressionDb.toFixed(0) }}</span
-                >
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- cable banner -->
-      <section
-        v-if="!cableOk"
-        :class="card"
-        class="mb-4 !border-[var(--danger)]"
-      >
-        <div class="text-[15px] font-semibold text-[var(--danger)]">Нужен виртуальный микрофон</div>
-        <p :class="muted" class="mt-1">
-          Zoom / Meet / Discord не увидят обработанный звук без VB-CABLE. Установка одной кнопкой,
-          права администратора один раз.
-        </p>
-        <div class="mt-3 flex flex-wrap items-center gap-2">
-          <button :class="btnPrimary" :disabled="installingCable" @click="installCable">
-            <AppIcon v-if="installingCable" name="spinner" class="spin" />
-            {{ installingCable ? "Установка…" : "Установить виртуальный микрофон" }}
-          </button>
-          <span :class="muted">{{ cableMessage }}</span>
-        </div>
-      </section>
-
-      <div class="mb-4 inline-flex rounded-xl border border-[var(--stroke)] bg-[var(--surface-alt)] p-1">
+    <TitleBar>
+      <template #status>
+        <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="dotClass"></span>
+        <span class="shrink-0 text-[12.5px] font-semibold">{{ statusText }}</span>
+        <span class="min-w-0 truncate text-[12px] text-[var(--muted)]">· {{ routeText }}</span>
         <button
-          class="cursor-pointer rounded-lg px-3.5 py-1.5 text-[12.5px] transition"
-          :class="tab === 'sound' ? 'bg-[var(--surface)] text-[var(--text)] shadow-sm' : 'text-[var(--muted)] hover:text-[var(--text)]'"
-          @click="tab = 'sound'"
+          v-if="stats.muted"
+          class="ml-1 flex h-5 shrink-0 cursor-pointer items-center gap-1.5 rounded-md bg-[var(--danger-soft)] px-1.5 text-[10.5px] text-[var(--danger)]"
+          title="Включить микрофон"
+          @mousedown.stop
+          @click.stop="setMuted(false)"
         >
+          <AppIcon name="mic" :size="11" />
+          Микрофон выключен
+        </button>
+      </template>
+
+      <template #nav>
+        <button class="tab" :data-active="tab === 'sound'" @mousedown.stop @click="tab = 'sound'">
           Звук
         </button>
-        <button
-          class="cursor-pointer rounded-lg px-3.5 py-1.5 text-[12.5px] transition"
-          :class="tab === 'settings' ? 'bg-[var(--surface)] text-[var(--text)] shadow-sm' : 'text-[var(--muted)] hover:text-[var(--text)]'"
-          @click="tab = 'settings'"
-        >
+        <button class="tab" :data-active="tab === 'settings'" @mousedown.stop @click="tab = 'settings'">
           Настройки
         </button>
-      </div>
+      </template>
 
-      <transition name="fade" mode="out-in">
-        <!-- sound tab -->
-        <div v-if="tab === 'sound' && settings" key="sound" class="flex flex-col gap-3.5">
-          <div class="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
-          <section :class="card">
-            <div class="mb-3 text-[13px] font-medium text-[var(--muted)]">Устройства</div>
-            <div class="grid grid-cols-[86px_1fr] items-center gap-3">
-              <span :class="labelText">Микрофон</span>
+      <template #actions>
+        <button
+          class="winbtn"
+          :title="isDark ? 'Светлая тема' : 'Тёмная тема'"
+          @mousedown.stop
+          @click.stop="toggleTheme"
+        >
+          <AppIcon :name="isDark ? 'sun' : 'moon'" :size="15" :stroke="1.7" />
+        </button>
+      </template>
+    </TitleBar>
+
+    <div ref="scrollEl" class="app-scroll mx-auto w-full max-w-[940px] flex-1 overflow-y-auto px-7 pb-7">
+      <!-- ---------------- sound ---------------- -->
+      <div v-if="tab === 'sound' && settings" key="sound" class="pt-4">
+        <section class="overflow-hidden rounded-[14px] border border-[var(--stroke)] bg-[var(--surface)]">
+          <div class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-6 px-[22px] pt-4">
+            <div class="flex flex-col items-center">
+              <button
+                class="power"
+                :data-on="running"
+                :disabled="busy || starting || (!micReady && !running)"
+                :title="
+                  running
+                    ? 'Выключить обработку'
+                    : micReady
+                      ? 'Включить обработку'
+                      : 'Микрофон не найден — выберите его в разделе «Устройства»'
+                "
+                @click="togglePower"
+              >
+                <AppIcon v-if="starting" name="spinner" :size="26" :stroke="2" class="spin" />
+                <AppIcon v-else name="power" :size="26" :stroke="2" />
+              </button>
+              <span class="mt-2 text-[11.5px] text-[var(--muted)]">
+                {{ running ? "Выключить" : starting ? "Запуск…" : micReady ? "Включить" : "Нет микрофона" }}
+              </span>
+            </div>
+
+            <div
+              class="flex min-w-0 items-center justify-between gap-6"
+            >
+              <div class="min-w-0">
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Микрофон</div>
+                <div class="truncate text-[13px]" :title="selectedInput">
+                  {{ shortName(selectedInput) || "Не выбран" }}
+                </div>
+                <div class="mt-[7px] flex items-center gap-2">
+                  <span class="meter"><i :style="{ width: inputLevel * 100 + '%' }"></i></span>
+                  <span class="flex w-[54px] shrink-0 justify-end font-mono text-[10.5px] tabular-nums">
+                    <span v-if="stats.inputPeakDb > -1" class="text-[var(--danger)]">перегруз</span>
+                    <span v-else class="text-[var(--muted)]">{{ inputDb }}</span>
+                  </span>
+                </div>
+              </div>
+
+              <div class="min-w-0">
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Обработка</div>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[var(--muted)]">
+                  <span class="flex items-center gap-1.5">
+                    <span class="dot" :data-off="!settings.voiceIsolation"></span>VoxLock
+                  </span>
+                  <span class="flex items-center gap-1.5">
+                    <span class="dot" :data-off="settings.residualDenoise === 'off'"></span>GTCRN
+                  </span>
+                  <span class="flex items-center gap-1.5">
+                    <span class="dot" :data-off="!settings.vadGate"></span>VAD
+                  </span>
+                </div>
+              </div>
+
+              <div class="min-w-0">
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Выход</div>
+                <div class="truncate text-[13px]" :title="testMode ? testOutput : 'CABLE Input'">
+                  {{ testMode ? shortName(testOutput) || "Устройство вывода" : "CABLE Input" }}
+                </div>
+                <div class="mt-[7px] flex items-center gap-2">
+                  <span class="meter"><i :style="{ width: outputLevel * 100 + '%' }"></i></span>
+                  <span class="w-[54px] shrink-0 text-right font-mono text-[10.5px] tabular-nums text-[var(--muted)]">{{ outputDb }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-stretch border-t border-[var(--stroke)]">
+            <div class="flex flex-none items-stretch border-r border-[var(--stroke)] px-[22px] py-2.5">
+              <div
+                v-for="item in readouts"
+                :key="item.label"
+                class="border-l border-[var(--stroke)] px-4 first:border-l-0 first:pl-0 last:pr-0"
+              >
+                <div class="font-mono text-[20px] leading-none tabular-nums">
+                  {{ item.value
+                  }}<span v-if="item.unit" class="ml-[3px] text-[10.5px] text-[var(--muted)]">{{ item.unit }}</span>
+                </div>
+                <div class="mt-1.5 text-[11px] text-[var(--muted)]">{{ item.label }}</div>
+              </div>
+            </div>
+
+            <div class="relative flex min-w-0 flex-1 items-end gap-[3px] px-[22px] py-2.5">
+              <span class="pointer-events-none absolute inset-x-[22px] bottom-8 h-px bg-[var(--stroke)] opacity-70"></span>
+              <span class="pointer-events-none absolute inset-x-[22px] bottom-12 h-px bg-[var(--stroke)] opacity-70"></span>
+              <div
+                v-for="(value, index) in shownSpectrum"
+                :key="index"
+                class="min-h-[2px] flex-1 rounded-t-[1px] bg-[var(--accent)] transition-[height] duration-150"
+                :style="{
+                  height: spectrumLive ? Math.max(3, value * 100) + '%' : '6%',
+                  opacity: spectrumLive ? 0.8 : 0.18,
+                }"
+              ></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- cable -->
+        <section
+          v-if="!cableOk"
+          class="mt-5 rounded-[14px] border border-[var(--danger)] bg-[var(--surface)] px-[18px] py-4"
+        >
+          <div class="text-[14px] font-semibold text-[var(--danger)]">Нужен виртуальный микрофон</div>
+          <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
+            Zoom, Meet и Discord не увидят очищенный звук без VB-CABLE. Установка одной кнопкой, права
+            администратора один раз.
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-2.5">
+            <button :class="btnPrimary" :disabled="installingCable" @click="installCable">
+              <AppIcon v-if="installingCable" name="spinner" :size="14" class="spin" />
+              {{ installingCable ? "Установка…" : "Установить виртуальный микрофон" }}
+            </button>
+            <span class="text-[11.5px] text-[var(--muted)]">{{ cableMessage }}</span>
+          </div>
+        </section>
+
+        <!-- devices -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Устройства</h2>
+            <span class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">48 кГц · моно</span>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="min-w-0">
+              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">Микрофон</span>
               <AppSelect
                 :model-value="selectedInput"
                 :options="inputOptions"
                 :disabled="reconnecting || starting"
-                 placeholder="Нет устройств"
-                 @update:model-value="pickInput"
-               />
-             </div>
-             <p v-if="inputIsCable" class="mt-1.5 text-[12px] text-[var(--danger)]">
-               Выбран виртуальный кабель как микрофон: приложение будет слышать собственный выход и
-               звук других программ. Выберите настоящий микрофон.
-             </p>
-            <div class="mt-2.5 grid grid-cols-[86px_1fr] items-center gap-3">
-              <span :class="labelText">Наушники</span>
+                placeholder="Нет устройств"
+                @update:model-value="pickInput"
+              />
+            </div>
+            <div class="min-w-0">
+              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">Наушники</span>
               <AppSelect
                 :model-value="selectedOutput"
                 :options="outputOptions"
@@ -1406,729 +1500,696 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
                 @update:model-value="pickOutput"
               />
             </div>
-            <p v-if="reconnecting" :class="muted" class="mt-2 flex items-center gap-1.5">
-              <AppIcon name="spinner" :size="13" class="spin" />
+          </div>
+          <p v-if="inputIsCable" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
+            Выбран виртуальный кабель как микрофон: приложение будет слышать собственный выход и звук
+            других программ. Выберите настоящий микрофон.
+          </p>
+          <div class="mt-2 flex flex-wrap items-center gap-1">
+            <button :class="btnGhost" :disabled="refreshing" @click="refreshDevicesManually">
+              <AppIcon name="refresh" :size="14" :class="{ spin: refreshing }" />
+              {{ refreshing ? "Обновляю…" : "Обновить" }}
+            </button>
+            <button :class="btnGhost" :disabled="probing" @click="probeMic">
+              <AppIcon name="mic" :size="14" />
+              {{
+                probing ? (probeLeft > 0 ? `Слушаю… ${probeLeft} с` : "Слушаю…") : "Проверить микрофон"
+              }}
+            </button>
+            <span v-if="reconnecting" class="ml-2 flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
+              <AppIcon name="spinner" :size="12" class="spin" />
               Переподключаю устройства…
-            </p>
-            <p v-else :class="muted" class="mt-2">
-              Куда слушать себя в режиме проверки. Обычная работа всегда идёт в виртуальный микрофон.
-            </p>
-            <div class="mt-3 flex flex-wrap gap-2">
-              <button :class="btn" :disabled="refreshing" @click="refreshDevicesManually">
-                <AppIcon name="refresh" :class="{ spin: refreshing }" />
-                {{ refreshing ? "Обновляю…" : "Обновить" }}
-              </button>
-              <button :class="btn" :disabled="probing" @click="probeMic">
-                <AppIcon name="mic" />
-                {{
-                  probing
-                    ? probeLeft > 0
-                      ? `Слушаю… ${probeLeft} с`
-                      : "Слушаю…"
-                    : "Проверить микрофон"
-                }}
-              </button>
-            </div>
-            <p v-if="probeResult" :class="muted" class="mt-2">
-              Уровень {{ probeResult.peakDb.toFixed(0) }} дБ · речь
-              {{ (probeResult.speechPercent * 100).toFixed(0) }}% · SNR {{ probeResult.snrDb.toFixed(0) }} дБ —
-              {{ probeHint }}
-            </p>
-          </section>
-
-          <section :class="card">
-            <div class="mb-3 text-[13px] font-medium text-[var(--muted)]">Уровень и спектр</div>
-            <div class="flex items-center justify-between text-[11px] uppercase tracking-wide text-[var(--muted)]">
-              <span class="flex items-center gap-2">
-                Вход
-                <span
-                  v-if="stats.inputPeakDb > -1"
-                  class="rounded bg-[var(--danger-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--danger)]"
-                >
-                  ПЕРЕГРУЗ
-                </span>
-              </span>
-              <span class="tabular-nums normal-case tracking-normal">{{ inputDb }}</span>
-            </div>
-            <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--stroke)]">
-              <div
-                class="h-full rounded-full transition-[width] duration-75"
-                style="background: linear-gradient(90deg, var(--accent), var(--accent-2))"
-                :style="{ width: inputLevel * 100 + '%' }"
-              ></div>
-            </div>
-            <div class="mt-4 flex items-center justify-between text-[11px] uppercase tracking-wide text-[var(--muted)]">
-              <span>Выход</span>
-              <span class="tabular-nums normal-case tracking-normal">{{ outputDb }}</span>
-            </div>
-            <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--stroke)]">
-              <div
-                class="h-full rounded-full transition-[width] duration-75"
-                style="background: linear-gradient(90deg, var(--accent), var(--accent-2))"
-                :style="{ width: outputLevel * 100 + '%' }"
-              ></div>
-            </div>
-            <div v-if="settings" class="mt-5">
-              <div class="flex items-center justify-between text-[11px] uppercase tracking-wide text-[var(--muted)]">
-                <span>Громкость выхода</span>
-                <span class="normal-case tracking-normal">в виртуальный микрофон</span>
-              </div>
-              <div class="mt-1">
-                <AppSlider
-                  v-model="settings.outputGainDb"
-                  :min="-18"
-                  :max="18"
-                  :step="0.5"
-                  :format="(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} дБ`"
-                />
-              </div>
-              <p v-if="abMetrics" :class="muted" class="mt-1">
-                В последней записи обработанный звук
-                {{ abMetrics.levelDeltaDb >= 0 ? "громче" : "тише" }} сырого на
-                {{ Math.abs(abMetrics.levelDeltaDb).toFixed(1) }} дБ. Кнопка «Сравнять с
-                оригиналом» подгонит выходную громкость.
-              </p>
-              <p v-else :class="muted" class="mt-1">
-                Громкость выхода меняется после всей обработки: шумодав и изоляцию голоса она
-                не трогает.
-              </p>
-            </div>
-            <div class="mt-4 flex h-[76px] items-end gap-[3px] rounded-lg bg-[var(--surface-alt)] px-2.5 pt-2 pb-2">
-              <div
-                v-for="(value, index) in shownSpectrum"
-                :key="index"
-                class="flex-1 rounded-full transition-[height,background-color] duration-150"
-                :style="{
-                  height: Math.max(spectrumLive ? 3 : 10, value * 100) + '%',
-                  background: spectrumLive
-                    ? 'linear-gradient(180deg, var(--accent-2), var(--accent))'
-                    : 'var(--muted)',
-                  opacity: spectrumLive ? 0.4 + value * 0.6 : 0.3,
-                }"
-              ></div>
-            </div>
-            <p v-if="microphoneLive" :class="muted" class="mt-2 flex items-center gap-1.5">
-              <AppIcon name="mic" :size="13" />
-              Слушаю микрофон…
-            </p>
-            <p v-else-if="!hasAudio" :class="muted" class="mt-2">
-              Обработка не запущена: включите виртуальный микрофон, и здесь появится живой спектр.
-            </p>
-          </section>
-
-          <section :class="card">
-            <div class="mb-3 text-[13px] font-medium text-[var(--muted)]">Профиль голоса</div>
-            <AppSelect v-model="selectedProfile" :options="profileOptions" @update:model-value="pickProfile" />
-            <div class="mt-3 flex flex-wrap gap-2">
-              <button :class="btnPrimary" :disabled="recording" @click="recordProfile">
-                <span v-if="recording" class="h-2.5 w-2.5 shrink-0 rounded-full bg-current" />
-                <AppIcon v-else name="mic" />
-                {{ recording ? `Запись… ${recordLeft} с` : "Записать 15 с" }}
-              </button>
-              <button
-                :class="playingKey === 'profile' ? btnPrimary : btn"
-                :disabled="!selectedProfile"
-                @click="playProfile"
-                :title="playingKey === 'profile' ? 'Остановить' : 'Прослушать профиль'"
-              >
-                <AppIcon :name="playingKey === 'profile' ? 'stop' : 'play'" />
-                {{ playingKey === "profile" ? "Стоп" : "Прослушать" }}
-              </button>
-              <button
-                :class="btn"
-                class="!px-3 hover:!text-[var(--danger)]"
-                :disabled="!selectedProfile"
-                @click="deleteProfile"
-                title="Удалить профиль"
-              >
-                <AppIcon name="trash" />
-              </button>
-            </div>
-            <p :class="muted" class="mt-3">
-              Говорите обычным голосом в тишине: модель запомнит тембр и будет пропускать только его.
-            </p>
-            <p v-if="profileQuality" :class="muted">
-              Оценка <span class="font-medium text-[var(--text)]">{{ profileQuality.score }}/100</span> · речь
-              {{ (profileQuality.speechPercent * 100).toFixed(0) }}% · SNR
-              {{ profileQuality.snrDb.toFixed(0) }} дБ
-            </p>
-            <p v-else-if="activeProfileScore" :class="muted">
-              Оценка профиля
-              <span class="font-medium text-[var(--text)]">{{ activeProfileScore.score }}/100</span>
-              · SNR {{ activeProfileScore.snrDb.toFixed(0) }} дБ
-            </p>
-            <p v-if="profileWeak" class="mt-1 text-[12px] text-[var(--danger)]">
-              Профиль слабый: модель будет хуже узнавать голос. Запишите новый — 15 секунд в тишине.
-            </p>
-            <div class="mt-2 flex items-center gap-2">
-              <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />
-              <span :class="muted">Выбирать лучший профиль автоматически</span>
-            </div>
-          </section>
-
-          <section :class="card">
-            <div class="mb-3 flex items-center justify-between gap-2">
-              <div class="text-[13px] font-medium text-[var(--muted)]">Проверка качества</div>
-              <div v-if="settings" class="inline-flex items-center gap-0.5 rounded-lg bg-[var(--surface-alt)] p-0.5">
-                <button
-                  v-for="sec in [10, 30, 60]"
-                  :key="sec"
-                  class="cursor-pointer rounded-md px-2 py-0.5 text-[11.5px] transition"
-                  :class="
-                    settings.abSeconds === sec
-                      ? 'bg-[var(--surface)] text-[var(--text)] shadow-sm'
-                      : 'text-[var(--muted)] hover:text-[var(--text)]'
-                  "
-                  @click="settings.abSeconds = sec"
-                >
-                  {{ sec }} с
-                </button>
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                :class="abRunning ? btnPrimary : btn"
-                :disabled="!running && !abRunning"
-                @click="toggleAb"
-              >
-                <span v-if="abRunning" class="h-2.5 w-2.5 shrink-0 rounded-full bg-current" />
-                <AppIcon v-else name="record" />
-                {{
-                  abRunning
-                    ? `Запись… ${Math.round(abProgress * (settings?.abSeconds ?? 30))} с`
-                    : `Записать A/B (${settings?.abSeconds ?? 30} с)`
-                }}
-              </button>
-              <button :class="testMode ? btnPrimary : btn" :disabled="busy || starting" @click="toggleTest">
-                <AppIcon
-                  :name="busy || starting ? 'spinner' : 'headphones'"
-                  :class="busy || starting ? 'spin' : ''"
-                />
-                {{
-                  busy || starting
-                    ? "Переключаю…"
-                    : testMode
-                      ? "Остановить проверку"
-                      : "Проверить в наушниках"
-                }}
-              </button>
-            </div>
-            <div v-if="abRunning" class="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--stroke)]">
-              <div class="h-full rounded-full bg-[var(--accent)]" :style="{ width: abProgress * 100 + '%' }"></div>
-            </div>
-            <div v-if="abRaw && abClean" class="mt-3 flex flex-wrap gap-2">
-              <button
-                :class="playingKey === 'raw' ? btnPrimary : btn"
-                @click="playFile(abRaw, 'raw')"
-                :title="playingKey === 'raw' ? 'Остановить' : 'Слушать сырой микрофон'"
-              >
-                <AppIcon :name="playingKey === 'raw' ? 'stop' : 'play'" />
-                {{ playingKey === "raw" ? "Стоп" : "Сырой" }}
-              </button>
-              <button
-                :class="playingKey === 'clean' ? btnPrimary : btn"
-                @click="playFile(abClean, 'clean')"
-                :title="playingKey === 'clean' ? 'Остановить' : 'Слушать обработанный звук'"
-              >
-                <AppIcon :name="playingKey === 'clean' ? 'stop' : 'play'" />
-                {{ playingKey === "clean" ? "Стоп" : "Обработанный" }}
-              </button>
-            </div>
-            <p v-if="abRaw && abClean" :class="muted" class="mt-2" :title="abFolder || ''">
-              {{ abInfo }}
-            </p>
-            <label
-              v-if="abRaw && abClean"
-              class="mt-2 flex cursor-pointer items-center gap-2 text-[12px] text-[var(--muted)]"
-            >
-              <AppSwitch v-model="abNormalize" />
-              Выравнивать громкость при прослушивании
-            </label>
-            <div v-if="abRaw && abClean" class="mt-2 flex flex-wrap items-center gap-2">
-              <button :class="btn" @click="matchLevel" title="Подогнать выходную громкость под сырой микрофон">
-                <AppIcon name="sliders" />
-                Сравнять с оригиналом
-              </button>
-              <span v-if="abDelta !== null" :class="muted">
-                обработанный {{ abDelta >= 0 ? "громче" : "тише" }} на
-                {{ Math.abs(abDelta).toFixed(1) }} дБ
-              </span>
-            </div>
-            <div
-              v-if="abMetrics"
-              class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--muted)]"
-            >
-              <span>
-                речь
-                <span class="tabular-nums text-[var(--text)]"
-                  >{{ abMetrics.speechLevelDb.toFixed(0) }} дБ</span
-                >
-              </span>
-              <span>
-                паузы тише речи на
-                <span class="tabular-nums text-[var(--text)]"
-                  >{{ Math.max(0, abMetrics.pauseContrastDb).toFixed(0) }} дБ</span
-                >
-              </span>
-              <span>
-                {{ abMetrics.levelDeltaDb >= 0 ? "громче" : "тише" }} оригинала на
-                <span class="tabular-nums text-[var(--text)]"
-                  >{{ Math.abs(abMetrics.levelDeltaDb).toFixed(1) }} дБ</span
-                >
-              </span>
-              <span :class="abMetrics.longestDropoutS > 0.4 ? 'text-[var(--danger)]' : ''">
-                провал
-                <span class="tabular-nums">{{ abMetrics.longestDropoutS.toFixed(2) }} с</span>
-              </span>
-            </div>
-            <p :class="muted" class="mt-2">Два файла: сырой микрофон и обработанный. Слушайте в наушниках.</p>
-            <p v-if="!running" :class="muted" class="mt-1">
-              Запись идёт через обработку: подключите виртуальный кабель или включите проверку в
-              наушниках.
-            </p>
-            <p :class="muted" class="mt-1">
-              Говорите текст, включите телевизор и постучите по столу — так слышно, что остаётся от
-              фона и чужих голосов.
-            </p>
-
-            <div v-if="history.length" class="mt-3">
-              <div class="mb-1 text-[11px] uppercase tracking-wide text-[var(--muted)]">
-                История записей
-              </div>
-              <div class="flex flex-col gap-0.5">
-                <div
-                  v-for="entry in history"
-                  :key="entry.stamp"
-                  class="flex items-center gap-2 rounded-lg px-1.5 py-1 transition hover:bg-[var(--surface-alt)]"
-                >
-                  <button
-                    class="flex-1 cursor-pointer text-left text-[12px]"
-                    :class="abRaw === entry.raw ? 'text-[var(--accent)]' : 'text-[var(--text)]'"
-                    :title="entry.raw"
-                    @click="selectRecording(entry)"
-                  >
-                    {{ formatStamp(entry.stamp) }}
-                  </button>
-                  <button
-                    class="cursor-pointer rounded-md p-1 text-[var(--muted)] transition hover:text-[var(--danger)]"
-                    title="Удалить запись"
-                    @click="removeRecording(entry)"
-                  >
-                    <AppIcon name="trash" :size="14" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
+            </span>
+            <span v-else-if="probeResult" class="ml-2 font-mono text-[11px] tabular-nums text-[var(--muted)]">
+              {{ probeResult.peakDb.toFixed(0) }} дБ · речь
+              {{ (probeResult.speechPercent * 100).toFixed(0) }}% · SNR
+              {{ probeResult.snrDb.toFixed(0) }} дБ
+            </span>
           </div>
-        </div>
-
-        <!-- settings tab -->
-        <div v-else-if="settings" key="settings" class="flex flex-col gap-3.5">
-          <div class="flex flex-wrap items-center gap-3">
-            <input
-              :value="settingsQuery"
-              class="min-w-[200px] flex-1 rounded-xl border border-[var(--stroke)] bg-[var(--surface-alt)] px-3 py-[9px] text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-              placeholder="Поиск по настройкам…"
-              @input="filterSettings(($event.target as HTMLInputElement).value)"
-            />
-            <label class="flex cursor-pointer items-center gap-2 text-[12px] whitespace-nowrap text-[var(--muted)]">
-              <AppSwitch
-                :model-value="!settings.basicUi"
-                @update:model-value="(v: boolean) => (settings!.basicUi = !v)"
+          <p v-if="probeResult" class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">{{ probeHint }}</p>
+          <div class="mt-3 flex items-center gap-3">
+            <span class="shrink-0 text-[11.5px] whitespace-nowrap text-[var(--muted)]">Громкость выхода</span>
+            <div class="w-[220px] shrink-0">
+              <AppSlider
+                v-model="settings.outputGainDb"
+                :min="-18"
+                :max="18"
+                :step="0.5"
+                :format="(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} дБ`"
               />
-              Дополнительно
-            </label>
+            </div>
+            <span class="min-w-0 truncate text-[11px] text-[var(--muted)]">
+              после всей обработки, шумодав не трогает
+            </span>
+          </div>
+        </section>
+
+        <!-- profile -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Профиль голоса</h2>
+            <span v-if="profileMeta" class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">
+              {{ profileMeta }}
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="min-w-0 flex-1">
+              <AppSelect v-model="selectedProfile" :options="profileOptions" @update:model-value="pickProfile" />
+            </div>
+            <button
+              :class="btnPrimary"
+              :disabled="recording || !micReady"
+              :title="micReady ? 'Записать профиль голоса' : 'Сначала выберите микрофон в разделе «Устройства»'"
+              @click="recordProfile"
+            >
+              <span v-if="recording" class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
+              <AppIcon v-else name="mic" :size="14" />
+              {{ recording ? `Запись… ${recordLeft} с` : "Записать 15 с" }}
+            </button>
+            <button
+              class="iconbtn"
+              :disabled="!selectedProfile"
+              :title="playingKey === 'profile' ? 'Остановить' : 'Прослушать профиль'"
+              @click="playProfile"
+            >
+              <AppIcon :name="playingKey === 'profile' ? 'stop' : 'play'" :size="14" />
+            </button>
+            <button class="iconbtn danger" :disabled="!selectedProfile" title="Удалить профиль" @click="deleteProfile">
+              <AppIcon name="trash" :size="14" />
+            </button>
+          </div>
+          <p v-if="profileWeak" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
+            Профиль слабый: модель будет хуже узнавать голос. Запишите новый — 15 секунд в тишине.
+          </p>
+          <div class="mt-2.5 flex items-center gap-2.5 text-[12.5px] text-[var(--muted)]">
+            <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />
+            <span>Выбирать лучший профиль автоматически</span>
+          </div>
+        </section>
+
+        <!-- A/B -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Проверка A/B</h2>
+            <div class="seg ml-auto">
+              <button
+                v-for="sec in [10, 30, 60]"
+                :key="sec"
+                class="segbtn"
+                :data-on="settings.abSeconds === sec"
+                @click="settings.abSeconds = sec"
+              >
+                {{ sec }} с
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button :class="btnPrimary" :disabled="!running && !abRunning" @click="toggleAb">
+              <span class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
+              {{
+                abRunning
+                  ? `Запись… ${Math.round(abProgress * (settings?.abSeconds ?? 30))} с`
+                  : `Записать A/B (${settings?.abSeconds ?? 30} с)`
+              }}
+            </button>
+            <button
+              :class="testMode ? btn : btnPrimary"
+              :disabled="busy || starting || (!micReady && !testMode)"
+              :title="micReady || testMode ? '' : 'Микрофон не найден'"
+              @click="toggleTest"
+            >
+              <AppIcon
+                :name="busy || starting ? 'spinner' : 'headphones'"
+                :size="14"
+                :class="{ spin: busy || starting }"
+              />
+              {{
+                busy || starting
+                  ? "Переключаю…"
+                  : testMode
+                    ? "Остановить проверку"
+                    : "Проверить в наушниках"
+              }}
+            </button>
+            <span class="text-[11.5px] text-[var(--muted)]">Сырой и обработанный звук рядом, слушайте в наушниках.</span>
+          </div>
+          <div v-if="abRunning" class="mt-2 h-0.5 overflow-hidden rounded-full bg-[var(--stroke)]">
+            <div class="h-full rounded-full bg-[var(--danger)]" :style="{ width: abProgress * 100 + '%' }"></div>
+          </div>
+          <p v-if="!running" class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
+            Запись идёт через обработку: подключите виртуальный кабель или включите проверку в наушниках.
+          </p>
+
+          <div
+            v-if="abRaw && abClean"
+            class="mt-3 flex flex-wrap items-center gap-3 rounded-[11px] border border-[var(--stroke)] bg-[var(--surface)] px-3 py-2"
+            :title="abFolder || undefined"
+          >
+            <div class="flex gap-1.5">
+              <button class="playbtn" :data-on="playingKey === 'raw'" @click="playFile(abRaw, 'raw')">
+                <AppIcon :name="playingKey === 'raw' ? 'stop' : 'play'" :size="12" />
+                Сырой
+              </button>
+              <button class="playbtn" :data-on="playingKey === 'clean'" @click="playFile(abClean, 'clean')">
+                <AppIcon :name="playingKey === 'clean' ? 'stop' : 'play'" :size="12" />
+                Обработанный
+              </button>
+            </div>
+
+            <div class="ml-auto flex items-center gap-4">
+              <div class="flex items-start gap-4 font-mono tabular-nums">
+                <span class="block w-[76px]">
+                  <b class="block text-[12.5px] font-normal">
+                    {{ abMetrics ? abMetrics.speechLevelDb.toFixed(0) + " дБ" : "—" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">речь</span>
+                </span>
+                <span class="block w-[76px]">
+                  <b class="block text-[12.5px] font-normal">
+                    {{ abMetrics ? Math.max(0, abMetrics.pauseContrastDb).toFixed(0) + " дБ" : "—" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">паузы</span>
+                </span>
+                <span class="block w-[76px]">
+                  <b class="block text-[12.5px] font-normal">
+                    {{ abDelta === null ? "—" : Math.abs(abDelta).toFixed(1) + " дБ" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">к оригиналу</span>
+                </span>
+                <span class="block w-[76px]">
+                  <b
+                    class="block text-[12.5px] font-normal"
+                    :class="abMetrics && abMetrics.longestDropoutS > 0.4 ? 'text-[var(--danger)]' : ''"
+                  >
+                    {{ abMetrics ? abMetrics.longestDropoutS.toFixed(2) + " с" : "—" }}
+                  </b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">провал</span>
+                </span>
+              </div>
+
+              <label class="flex items-center gap-2 text-[11.5px] whitespace-nowrap text-[var(--muted)]">
+                <AppSwitch v-model="abNormalize" />
+                выравнивать громкость
+              </label>
+              <button class="iconbtn" title="Сравнять громкость с оригиналом" @click="matchLevel">
+                <AppIcon name="sliders" :size="14" />
+              </button>
+            </div>
           </div>
 
-          <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Пресеты</div>
-            <div class="flex flex-wrap gap-2">
+          <div v-if="history.length" class="mt-3 flex flex-wrap items-center gap-1.5">
+            <span class="mr-0.5 text-[11.5px] text-[var(--muted)]">История</span>
+            <div
+              v-for="entry in history"
+              :key="entry.stamp"
+              class="stamp group"
+              :data-on="abRaw === entry.raw"
+              :title="entry.raw"
+            >
+              <button class="h-full cursor-pointer px-2" @click="selectRecording(entry)">
+                {{ formatStamp(entry.stamp) }}
+              </button>
+              <button
+                class="mr-0.5 grid h-4 w-4 cursor-pointer place-items-center rounded text-[var(--muted)] opacity-0 transition hover:text-[var(--danger)] group-hover:opacity-100"
+                title="Удалить запись"
+                @click="removeRecording(entry)"
+              >
+                <AppIcon name="close" :size="10" />
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ---------------- settings ---------------- -->
+      <div v-else-if="settings" key="settings" class="pt-4">
+        <div class="grid grid-cols-[178px_minmax(0,1fr)] gap-7">
+          <aside class="flex flex-col gap-0.5">
+            <button
+              v-for="section in settingsSections"
+              :key="section.id"
+              class="nav-item"
+              :data-active="!searching && settingsSection === section.id"
+              @click="switchSection(section.id)"
+            >
+              {{ section.label }}
+            </button>
+          </aside>
+
+          <div class="min-w-0">
+            <div class="flex items-center gap-3.5">
+              <label
+                class="flex h-[34px] flex-1 items-center gap-2 rounded-[9px] border border-[var(--stroke)] bg-[var(--surface)] px-2.5 text-[var(--muted)] transition-colors focus-within:border-[var(--accent)]"
+              >
+                <AppIcon name="search" :size="14" />
+                <input
+                  :value="settingsQuery"
+                  class="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
+                  placeholder="Поиск по настройкам"
+                  @input="filterSettings(($event.target as HTMLInputElement).value)"
+                />
+              </label>
+              <label
+                class="flex shrink-0 cursor-pointer items-center gap-2.5 text-[11.5px] whitespace-nowrap text-[var(--muted)]"
+              >
+                <AppSwitch
+                  :model-value="!settings.basicUi"
+                  @update:model-value="(v: boolean) => (settings!.basicUi = !v)"
+                />
+                Дополнительно
+              </label>
+            </div>
+
+            <div v-if="!searching" class="mt-3 flex flex-wrap items-center gap-1.5">
+              <span class="mr-1 text-[11.5px] text-[var(--muted)]">Пресеты</span>
               <button
                 v-for="preset in presets"
                 :key="preset.id"
-                :class="btn"
+                class="chip"
                 @click="applyPreset(preset.patch)"
               >
                 {{ preset.label }}
               </button>
             </div>
-            <p :class="muted" class="mt-2">
-              Меняют порог гейта, целевой уровень и срез низов. Дальше можно подправить ползунками.
-            </p>
-          </section>
 
-          <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Автоподавление голоса</div>
-            <div :class="settingRow">
-              <AppLabel text="Оставлять только мой голос" hint="VoxLock пропускает только ваш голос. Выключено — остаётся обычный шумодав: легче процессору и профиль не нужен." />
-              <AppSwitch v-model="settings.voiceIsolation" @update:model-value="restartSoon" />
-            </div>
-            <p :class="muted" class="mb-1">
-              VoxLock оставляет только ваш голос. Выключите, если нужен просто шумодав — так
-              заметно легче процессору и не нужен профиль.
-            </p>
-            <div v-if="settings.voiceIsolation" :class="settingRow">
-              <AppLabel text="Сила изоляции" hint="Сколько очищенного моделью сигнала идёт в выход. 1.00 — максимальная изоляция, ниже — естественнее, но слышнее фон." />
-              <AppSlider
-                v-model="settings.isolationStrength"
-                :min="0"
-                :max="1"
-                :step="0.05"
-                :format="(v) => v.toFixed(2)"
-              />
-            </div>
-            <div v-if="settings.voiceIsolation" :class="settingRow">
-              <AppLabel text="Предел подавления" hint="Выход модели никогда не будет тише входа больше чем на эту величину, пока вы говорите. 0 — без предела: максимальная изоляция, но модель может полностью заглушить голос." />
-              <AppSlider
-                v-model="settings.maxSuppressionDb"
-                :min="0"
-                :max="40"
-                :step="1"
-                :format="(v) => (v <= 0 ? 'без предела' : `${v} дБ`)"
-              />
-            </div>
-            <div v-if="settings.voiceIsolation" :class="settingRow">
-              <AppLabel text="Режим" hint="«По профилю» ищет записанный тембр — точнее всего. «Авто» работает без профиля, но чаще пропускает чужие голоса." />
-              <AppSelect
-                v-model="settings.mode"
-                :options="[
-                  { value: 'profile', label: 'По профилю голоса' },
-                  { value: 'auto', label: 'Авто-определение' },
-                ]"
-                @update:model-value="restartSoon"
-              />
-            </div>
-          </section>
-
-          <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Чистка сигнала</div>
-
-            <div :class="settingRow">
-              <AppLabel text="Усиление тихого микрофона" hint="Поднимает тихий микрофон до −26 dBFS перед моделью. Влияет на разборчивость и ровность громкости." />
-              <AppSwitch v-model="settings.inputLeveling" />
-            </div>
-            <p :class="muted" class="mb-1">
-              Поднимает тихий микрофон до нормального уровня до обработки. Выключите, если пишете громко.
-            </p>
-
-            <div class="my-2 h-px bg-[var(--stroke)]"></div>
-
-            <div :class="settingRow">
-              <AppLabel text="Остаточный шум" hint="GTCRN добивает шум после VoxLock: паузы тише примерно на 20 дБ. Выключение немного снижает нагрузку." />
-              <AppSelect
-                v-model="settings.residualDenoise"
-                :options="[
-                  { value: 'off', label: 'Выключено' },
-                  { value: 'gtcrn', label: 'GTCRN · лёгкий' },
-                ]"
-                @update:model-value="restartSoon"
-              />
-            </div>
-            <p :class="muted" class="mb-1">
-              Вторая модель после VoxLock: добивает шум, который остался после выделения вашего голоса.
-              GTCRN почти не нагружает процессор.
-            </p>
-
-            <div :class="settingRow">
-              <AppLabel text="VAD-гейт" hint="Закрывает выход в паузах по детектору речи, а не по уровню. Фон между словами исчезает, тихие слова не режутся." />
-              <AppSwitch v-model="settings.vadGate" />
-            </div>
-            <p :class="muted" class="mb-1">
-              Silero VAD закрывает выход в паузах по детектору речи, а не по уровню — тихие слова
-              не режутся, а фон в паузах уходит.
-            </p>
-
-            <div class="my-2 h-px bg-[var(--stroke)]"></div>
-
-            <div :class="settingRow">
-              <AppLabel text="Срез низов" hint="Фильтр 4-го порядка убирает гул, ветер и низкочастотный стук по столу." />
-              <AppSwitch v-model="settings.highPassEnabled" />
-            </div>
-            <div v-if="!settings.basicUi" :class="settingRow">
-              <AppLabel text="Частота среза" hint="Ниже этой частоты сигнал ослабляется. 80–120 Гц убирают гул, выше — начинает худеть сам голос." />
-              <AppSlider v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} Гц`" />
-            </div>
-
-            <div class="my-2 h-px bg-[var(--stroke)]"></div>
-
-            <div :class="settingRow">
-              <AppLabel text="Гейт" hint="Пороговый шумодав для остатков сигнала: закрывает всё, что тише порога." />
-              <AppSwitch v-model="settings.gateEnabled" />
-            </div>
-            <template v-if="!settings.basicUi">
-            <div :class="settingRow">
-              <AppLabel text="Порог" hint="Уровень закрытия гейта. Выше — чище паузы, но можно срезать тихие слова; ниже — мягче." />
-              <AppSlider v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} дБ`" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Степень" hint="Насколько сильно гейт глушит ниже порога: 1 — мягко, 10 — почти в ноль." />
-              <AppSlider v-model="settings.gateRatio" :min="1" :max="10" :step="0.5" :format="(v) => v.toFixed(1)" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Атака" hint="Как быстро открывается гейт. Больше — плавнее, но начало слова может приглушаться." />
-              <AppSlider v-model="settings.gateAttackMs" :min="1" :max="100" :step="1" :format="(v) => `${v} мс`" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Восстановление" hint="Как быстро гейт закрывается. Больше — не режет концы слов, но дольше тянет фон." />
-              <AppSlider v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} мс`" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Удержание" hint="Сколько гейт остаётся открытым после спада уровня, чтобы не обрубать концы слов." />
-              <AppSlider v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} мс`" />
-            </div>
-            </template>
-
-            <div class="my-2 h-px bg-[var(--stroke)]"></div>
-
-            <div :class="settingRow">
-              <AppLabel text="Автогромкость" hint="AGC возвращает уровень, который срезала модель, и выравнивает громкость фраз. Работает только на речи." />
-              <AppSwitch v-model="settings.agcEnabled" />
-            </div>
-            <template v-if="!settings.basicUi">
-            <div :class="settingRow">
-              <AppLabel text="Целевой уровень" hint="К какому уровню AGC тянет речь. Ниже — тише и безопаснее, выше — громче, но ближе к перегрузу." />
-              <AppSlider v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} дБ`" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Макс. усиление" hint="Предел подъёма AGC. Большой поднимает и остатки шума; для тихого микрофона хватает 12–18 дБ." />
-              <AppSlider v-model="settings.agcMaxGainDb" :min="0" :max="30" :step="1" :format="(v) => `${v} дБ`" />
-            </div>
-            </template>
-            <div :class="settingRow">
-              <AppLabel text="Лимитер" hint="Не даёт сигналу выйти за 0 дБ и срезает пики. Лучше держать включённым." />
-              <AppSwitch v-model="settings.limiterEnabled" />
-            </div>
-
-            <div class="my-2 h-px bg-[var(--stroke)]"></div>
-
-            <div :class="settingRow">
-              <AppLabel text="Комфортный шум" hint="Тихий ровный фон в паузах вместо «звонкой» тишины. По умолчанию выключен." />
-              <AppSwitch v-model="settings.comfortNoiseEnabled" />
-            </div>
-            <div v-if="!settings.basicUi && settings.comfortNoiseEnabled" :class="settingRow">
-              <AppLabel text="Уровень шума" hint="Громкость комфортного шума: −60…−70 дБ почти не слышно." />
-              <AppSlider v-model="settings.comfortNoiseDb" :min="-90" :max="-30" :step="1" :format="(v) => `${v} дБ`" />
-            </div>
-            <div v-if="!settings.basicUi" :class="settingRow">
-              <AppLabel text="Выходная громкость" hint="Общее усиление после всей обработки. Меняет только громкость, шумодав не трогает." />
-              <AppSlider v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
-            </div>
-          </section>
-
-          <section v-if="!settings.basicUi" :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Задержка и нагрузка</div>
-            <div :class="settingRow">
-              <AppLabel text="Буфер автоматически" hint="Подбирает минимальный буфер без пропусков: при пропуске +20 мс, после 90 с без пропусков −10 мс. Значение запоминается между запусками." />
-              <AppSwitch v-model="settings.bufferAuto" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel
-                text="Буфер"
-                :hint="
-                  settings.bufferAuto
-                    ? 'Текущее значение подобрано автоматически. Выключите авто, чтобы задать вручную.'
-                    : 'Запас в кольце вывода. Больше — стабильнее и без пропусков, но выше задержка.'
-                "
-              />
-              <AppSlider
-                v-if="!settings.bufferAuto"
-                v-model="settings.bufferMs"
-                :min="20"
-                :max="250"
-                :step="10"
-                :format="(v) => `${v} мс`"
-              />
-              <span v-else class="tabular-nums text-[13px]">
-                {{ stats.bufferMs ? stats.bufferMs.toFixed(0) + " мс" : "—" }}
-                <span class="text-[var(--muted)]">· авто</span>
-              </span>
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Блок модели" hint="Размер блока VoxLock: меньше — ниже задержка и выше нагрузка. 60 мс — баланс." />
-              <AppSlider v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} мс`" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel
-                text="Потоки модели"
-                hint="Сколько ядер отдаётся VoxLock. До 4 потоков время обработки падает почти вдвое, дальше почти не помогает. «Автоматически» подбирает число по конфигурации машины и размеру блока."
-              />
-              <div class="flex items-center gap-2.5">
-                <AppSwitch v-model="settings.autoThreads" />
-                <span :class="muted">
-                  Автоматически<span v-if="settings.autoThreads"> · {{ autoThreads }}</span>
-                </span>
-                <button
-                  v-if="!settings.autoThreads"
-                  :class="btn"
-                  class="!px-2.5 !py-1.5"
-                  title="Подставить рекомендованное число потоков"
-                  @click="settings.denoiserThreads = autoThreads"
-                >
-                  Рекомендуется {{ autoThreads }}
-                </button>
+            <!-- voice -->
+            <div v-if="searching || settingsSection === 'voice'" class="sblock">
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Голос</h2>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Оставлять только мой голос"
+                  hint="VoxLock пропускает только ваш голос. Выключено — остаётся обычный шумодав: легче процессору и профиль не нужен."
+                />
+                <div class="flex justify-end">
+                  <AppSwitch v-model="settings.voiceIsolation" @update:model-value="() => restartSoon()" />
+                </div>
+              </div>
+              <div v-if="settings.voiceIsolation" :class="settingRow">
+                <AppLabel
+                  text="Сила изоляции"
+                  hint="Сколько очищенного моделью сигнала идёт в выход. 1.00 — максимальная изоляция, ниже — естественнее, но слышнее фон."
+                />
+                <AppSlider
+                  v-model="settings.isolationStrength"
+                  :min="0"
+                  :max="1"
+                  :step="0.05"
+                  :format="(v) => v.toFixed(2)"
+                />
+              </div>
+              <div v-if="settings.voiceIsolation" :class="settingRow">
+                <AppLabel
+                  text="Предел подавления"
+                  hint="Выход модели никогда не будет тише входа больше чем на эту величину, пока вы говорите. 0 — без предела: максимальная изоляция, но модель может полностью заглушить голос."
+                />
+                <AppSlider
+                  v-model="settings.maxSuppressionDb"
+                  :min="0"
+                  :max="40"
+                  :step="1"
+                  :format="(v) => (v <= 0 ? 'без предела' : `${v} дБ`)"
+                />
+              </div>
+              <div v-if="settings.voiceIsolation" :class="settingRow">
+                <AppLabel
+                  text="Режим"
+                  hint="«По профилю» ищет записанный тембр — точнее всего. «Авто» работает без профиля, но чаще пропускает чужие голоса."
+                />
+                <AppSelect
+                  v-model="settings.mode"
+                  :options="[
+                    { value: 'profile', label: 'По профилю голоса' },
+                    { value: 'auto', label: 'Авто-определение' },
+                  ]"
+                  @update:model-value="() => restartSoon()"
+                />
               </div>
             </div>
-            <div v-if="!settings.autoThreads" :class="settingRow">
-              <span :class="labelText" class="pl-[26px]">Сколько потоков</span>
-              <AppSlider
-                v-model="settings.denoiserThreads"
-                :min="1"
-                :max="maxThreads"
-                :step="1"
-                :format="(v) => `${v} из ${maxThreads}`"
-              />
-            </div>
-            <p :class="muted" class="mt-1">
-              Система:
-              <span class="text-[var(--text)]">
-                {{ sysInfo?.logicalCores ?? "—" }} логических ядер
-                <span v-if="sysInfo">({{ sysInfo.physicalCores }} физических)</span>
-              </span>
-              · рекомендуется
-              <span class="text-[var(--text)]">{{ autoThreads }}</span
-              >. До четырёх потоков время обработки падает почти вдвое, выше — почти не
-              помогает, но забирает ядра у игры.
-            </p>
-            <p v-if="slowConfig" class="mt-1 text-[12px] text-[var(--danger)]">
-              На блоке {{ settings.chunkMs }} мс с
-              {{ settings.autoThreads ? autoThreads : settings.denoiserThreads }} поток(ами) модель
-              не успевает за реальным временем — звук будет рваться. Поставьте 60 мс или больше
-              потоков.
-            </p>
-          </section>
 
-          <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Управление</div>
-            <div class="flex flex-wrap items-center gap-3">
-              <button :class="capturingHotkey ? btnPrimary : btn" @click="startHotkeyCapture">
-                <AppIcon name="mic" :size="14" />
-                {{ capturingHotkey ? "Нажмите сочетание…" : settings.muteHotkey }}
-              </button>
-              <AppSelect
-                v-model="settings.hotkeyMode"
-                class="w-[170px]"
-                :options="[
-                  { value: 'toggle', label: 'Переключение' },
-                  { value: 'hold', label: 'Удержание (PTT)' },
-                ]"
-              />
-            </div>
-            <p :class="muted" class="mt-2">
-              Глобальное отключение микрофона. «Удержание» — пока клавиша нажата, микрофон включён
-              (push-to-talk). Escape отменяет запись сочетания.
-            </p>
-          </section>
-
-          <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Диагностика</div>
-            <div class="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1.5 text-[12.5px]">
-              <span class="text-[var(--muted)]">Усиление выравнивания</span>
-              <span class="tabular-nums" :class="stats.levelerGainDb > 16 ? 'text-[var(--danger)]' : ''">
-                {{ stats.levelerGainDb.toFixed(1) }} дБ
-              </span>
-              <span class="text-[var(--muted)]">Потоков модели</span>
-              <span class="tabular-nums">
-                {{ stats.threads || "—" }}<span v-if="settings?.autoThreads && stats.threads" class="text-[var(--muted)]"> · авто</span>
-              </span>
-              <span class="text-[var(--muted)]">Сбросов модели</span>
-              <span class="tabular-nums">{{ stats.guardResets }}</span>
-              <span class="text-[var(--muted)]" title="Сэмплы, которые не успели доехать до вывода; в скобках — примерная длительность. Растёт — обработка не успевает.">
-                Пропущено сэмплов
-              </span>
-              <span class="tabular-nums">
-                {{ stats.underruns
-                }}<span v-if="stats.underruns && stats.outRate" class="text-[var(--muted)]">
-                  · ≈ {{ ((stats.underruns / stats.outRate) * 1000).toFixed(0) }} мс</span
-                >
-              </span>
-              <span class="text-[var(--muted)]" title="Блоки, которые не влезли в кольцо вывода и были потеряны. Ноль — норма.">
-                Переполнений буфера
-              </span>
-              <span class="tabular-nums">{{ stats.overflows }}</span>
-              <span class="text-[var(--muted)]" title="Сэмплы микрофона, потерянные из-за переполнения входного кольца. Ноль — норма.">
-                Потеряно на входе
-              </span>
-              <span class="tabular-nums">{{ stats.captureDrops }}</span>
-              <span class="text-[var(--muted)]">Подавление</span>
-              <span class="tabular-nums">
-                {{ stats.suppressionDb > 0.5 ? "−" + stats.suppressionDb.toFixed(0) + " дБ" : "—" }}
-              </span>
-              <span class="text-[var(--muted)]">Пик входа</span>
-              <span class="tabular-nums">
-                {{ stats.inputPeakDb > -100 ? stats.inputPeakDb.toFixed(0) + " дБ" : "—" }}
-              </span>
-              <span class="text-[var(--muted)]" title="Подстройка под расхождение часов микрофона и вывода. 0 ppm — конвертер работает ровно, темп и тембр не меняются.">
-                Расхождение часов
-              </span>
-              <span class="tabular-nums">
-                {{ Math.abs(stats.slewPpm) < 1 ? "0 ppm" : (stats.slewPpm > 0 ? "+" : "−") + Math.abs(stats.slewPpm).toFixed(0) + " ppm" }}
-              </span>
-            </div>
-            <div class="mt-3 flex flex-wrap gap-2">
-              <button :class="btn" @click="openLog">
-                <AppIcon name="file" />
-                Открыть лог
-              </button>
-              <button :class="btn" @click="showWizard = true">Мастер настройки</button>
-            </div>
-            <p :class="muted" class="mt-2">
-              Лог пишется в data/app.log: старт/стоп движка, ошибки устройств, сбросы модели.
-            </p>
-          </section>
-
-          <section :class="card">
-            <div class="mb-2 text-[13px] font-medium text-[var(--muted)]">Модель и приложение</div>
-            <p :class="muted">{{ modelStatus }}</p>
-            <div class="mt-3 flex flex-wrap items-center gap-2">
-              <button :class="btn" :disabled="checkingModel" @click="checkModel">
-                {{ checkingModel ? "Проверяю…" : "Проверить обновления модели" }}
-              </button>
-            </div>
-            <div class="mt-4" :class="settingRow">
-              <AppLabel text="Запускать с Windows" hint="Автозапуск при входе в систему: приложение стартует свёрнутым в трей." />
-              <AppSwitch v-model="autostart" @update:model-value="applyAutostart" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Свернуть в трей при закрытии" hint="Крестик прячет окно в трей, обработка при этом продолжает работать." />
-              <AppSwitch v-model="settings.closeToTray" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Запускать свёрнутым" hint="При старте окно не показывается: приложение сразу живёт в трее и обрабатывает звук." />
-              <AppSwitch v-model="settings.startMinimized" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Включать обработку сразу" hint="Как только виртуальный кабель доступен — обработка запускается без нажатия кнопки." />
-              <AppSwitch v-model="settings.autoStart" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Следовать системному микрофону" hint="Если в Windows выбран другой микрофон по умолчанию, приложение переключится на него." />
-              <AppSwitch v-model="settings.followDefaultInput" />
-            </div>
-            <div :class="settingRow">
-              <AppLabel text="Хранить записей A/B" hint="Сколько последних пар хранить в data/recordings; старые удаляются." />
-              <AppSlider v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
+            <!-- clean -->
+            <div v-if="searching || settingsSection === 'clean'" class="sblock">
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Чистка сигнала</h2>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Усиление тихого микрофона"
+                  hint="Поднимает тихий микрофон до −26 dBFS перед моделью. Влияет на разборчивость и ровность громкости."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.inputLeveling" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Остаточный шум"
+                  hint="GTCRN добивает шум после VoxLock: паузы тише примерно на 20 дБ. Выключение немного снижает нагрузку."
+                />
+                <AppSelect
+                  v-model="settings.residualDenoise"
+                  :options="[
+                    { value: 'off', label: 'Выключено' },
+                    { value: 'gtcrn', label: 'GTCRN · лёгкий' },
+                  ]"
+                  @update:model-value="() => restartSoon()"
+                />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="VAD-гейт"
+                  hint="Закрывает выход в паузах по детектору речи, а не по уровню. Фон между словами исчезает, тихие слова не режутся."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.vadGate" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Срез низов"
+                  hint="Фильтр 4-го порядка убирает гул, ветер и низкочастотный стук по столу."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.highPassEnabled" /></div>
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Частота среза"
+                  hint="Ниже этой частоты сигнал ослабляется. 80–120 Гц убирают гул, выше — начинает худеть сам голос."
+                />
+                <AppSlider v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} Гц`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Гейт"
+                  hint="Пороговый шумодав для остатков сигнала: закрывает всё, что тише порога."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.gateEnabled" /></div>
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Порог гейта"
+                  hint="Уровень закрытия гейта. Выше — чище паузы, но можно срезать тихие слова; ниже — мягче."
+                />
+                <AppSlider v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} дБ`" />
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Степень"
+                  hint="Насколько сильно гейт глушит ниже порога: 1 — мягко, 10 — почти в ноль."
+                />
+                <AppSlider v-model="settings.gateRatio" :min="1" :max="10" :step="0.5" :format="(v) => v.toFixed(1)" />
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Атака"
+                  hint="Как быстро открывается гейт. Больше — плавнее, но начало слова может приглушаться."
+                />
+                <AppSlider v-model="settings.gateAttackMs" :min="1" :max="100" :step="1" :format="(v) => `${v} мс`" />
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Восстановление"
+                  hint="Как быстро гейт закрывается. Больше — не режет концы слов, но дольше тянет фон."
+                />
+                <AppSlider v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} мс`" />
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Удержание"
+                  hint="Сколько гейт остаётся открытым после спада уровня, чтобы не обрубать концы слов."
+                />
+                <AppSlider v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} мс`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Автогромкость"
+                  hint="AGC возвращает уровень, который срезала модель, и выравнивает громкость фраз. Работает только на речи."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.agcEnabled" /></div>
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Целевой уровень"
+                  hint="К какому уровню AGC тянет речь. Ниже — тише и безопаснее, выше — громче, но ближе к перегрузу."
+                />
+                <AppSlider v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} дБ`" />
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Макс. усиление"
+                  hint="Предел подъёма AGC. Большой поднимает и остатки шума; для тихого микрофона хватает 12–18 дБ."
+                />
+                <AppSlider v-model="settings.agcMaxGainDb" :min="0" :max="30" :step="1" :format="(v) => `${v} дБ`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Лимитер"
+                  hint="Не даёт сигналу выйти за 0 дБ и срезает пики. Лучше держать включённым."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.limiterEnabled" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Комфортный шум"
+                  hint="Тихий ровный фон в паузах вместо «звонкой» тишины. По умолчанию выключен."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.comfortNoiseEnabled" /></div>
+              </div>
+              <div v-if="!settings.basicUi && settings.comfortNoiseEnabled" :class="settingRow">
+                <AppLabel text="Уровень шума" hint="Громкость комфортного шума: −60…−70 дБ почти не слышно." />
+                <AppSlider v-model="settings.comfortNoiseDb" :min="-90" :max="-30" :step="1" :format="(v) => `${v} дБ`" />
+              </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  text="Выходная громкость"
+                  hint="Общее усиление после всей обработки. Меняет только громкость, шумодав не трогает."
+                />
+                <AppSlider v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+              </div>
             </div>
 
-            <div class="my-3 h-px bg-[var(--stroke)]"></div>
-            <div class="flex flex-wrap gap-2">
-              <button :class="btn" @click="exportSettings">Экспорт настроек</button>
-              <button :class="btn" @click="importSettings">Импорт настроек</button>
-              <button :class="btn" class="hover:!text-[var(--danger)]" @click="resetSettings">
-                Сбросить настройки
-              </button>
+            <!-- latency -->
+            <div v-if="searching || settingsSection === 'latency'" class="sblock">
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Задержка и нагрузка</h2>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Буфер автоматически"
+                  hint="Подбирает минимальный буфер без пропусков: при пропуске +20 мс, после 90 с без пропусков −10 мс. Значение запоминается между запусками."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.bufferAuto" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Буфер"
+                  :hint="
+                    settings.bufferAuto
+                      ? 'Текущее значение подобрано автоматически. Выключите авто, чтобы задать вручную.'
+                      : 'Запас в кольце вывода. Больше — стабильнее и без пропусков, но выше задержка.'
+                  "
+                />
+                <AppSlider
+                  v-if="!settings.bufferAuto"
+                  v-model="settings.bufferMs"
+                  :min="20"
+                  :max="250"
+                  :step="10"
+                  :format="(v) => `${v} мс`"
+                />
+                <div v-else class="text-right font-mono text-[12px] tabular-nums">
+                  {{ stats.bufferMs ? stats.bufferMs.toFixed(0) + " мс" : "—" }}
+                  <span class="text-[var(--muted)]">· авто</span>
+                </div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Блок модели"
+                  hint="Размер блока VoxLock: меньше — ниже задержка и выше нагрузка. 60 мс — баланс."
+                />
+                <AppSlider v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} мс`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Потоки модели"
+                  hint="Сколько ядер отдаётся VoxLock. До 4 потоков время обработки падает почти вдвое, дальше почти не помогает. «Автоматически» подбирает число по конфигурации машины и размеру блока."
+                />
+                <div class="flex items-center justify-end gap-2.5">
+                  <AppSwitch v-model="settings.autoThreads" />
+                  <span class="text-[11.5px] text-[var(--muted)]">
+                    Автоматически<span v-if="settings.autoThreads"> · {{ autoThreads }}</span>
+                  </span>
+                  <button
+                    v-if="!settings.autoThreads"
+                    :class="btnGhost"
+                    class="!h-auto !px-2 !py-1"
+                    title="Подставить рекомендованное число потоков"
+                    @click="settings.denoiserThreads = autoThreads"
+                  >
+                    {{ autoThreads }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="!settings.autoThreads" :class="settingRow">
+                <AppLabel text="Сколько потоков" />
+                <AppSlider
+                  v-model="settings.denoiserThreads"
+                  :min="1"
+                  :max="maxThreads"
+                  :step="1"
+                  :format="(v) => `${v} из ${maxThreads}`"
+                />
+              </div>
+              <p class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
+                Система:
+                <span class="text-[var(--text)]">
+                  {{ sysInfo?.logicalCores ?? "—" }} логических ядер<span v-if="sysInfo">
+                    ({{ sysInfo.physicalCores }} физических)</span
+                  >
+                </span>
+                · рекомендуется <span class="text-[var(--text)]">{{ autoThreads }}</span
+                >. До четырёх потоков время обработки падает почти вдвое, выше — почти не помогает, но
+                забирает ядра у игры.
+              </p>
+              <p v-if="slowConfig" class="mt-1 text-[12px] leading-relaxed text-[var(--danger)]">
+                На блоке {{ settings.chunkMs }} мс с
+                {{ settings.autoThreads ? autoThreads : settings.denoiserThreads }} поток(ами) модель не
+                успевает за реальным временем — звук будет рваться. Поставьте 60 мс или больше потоков.
+              </p>
             </div>
-            <p :class="muted" class="mt-2">
-              Экспорт кладёт файл в data/settings-export.json; для импорта положите его туда же.
-            </p>
-          </section>
+
+            <!-- control -->
+            <div v-if="searching || settingsSection === 'control'" class="sblock">
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Управление</h2>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Выключение микрофона"
+                  hint="Глобальное сочетание работает из любой программы. «Удержание» — пока клавиша нажата, микрофон включён (push-to-talk). Escape отменяет запись сочетания."
+                />
+                <div class="flex items-center justify-end gap-2">
+                  <button :class="capturingHotkey ? btnPrimary : btn" @click="startHotkeyCapture">
+                    <AppIcon name="mic" :size="14" />
+                    {{ capturingHotkey ? "Нажмите сочетание…" : settings.muteHotkey }}
+                  </button>
+                </div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Режим клавиши" />
+                <AppSelect
+                  v-model="settings.hotkeyMode"
+                  :options="[
+                    { value: 'toggle', label: 'Переключение' },
+                    { value: 'hold', label: 'Удержание (PTT)' },
+                  ]"
+                />
+              </div>
+            </div>
+
+            <!-- diagnostics -->
+            <div v-if="searching || settingsSection === 'diag'" class="sblock">
+              <h2 class="mt-5 mb-2 text-[15px] font-semibold tracking-[-0.01em]">Диагностика</h2>
+              <div class="kv">
+                <span>Усиление выравнивания</span>
+                <span :class="stats.levelerGainDb > 16 ? 'text-[var(--danger)]' : ''">
+                  {{ stats.levelerGainDb.toFixed(1) }} дБ
+                </span>
+                <span>Потоков модели</span>
+                <span>
+                  {{ stats.threads || "—"
+                  }}<span v-if="settings?.autoThreads && stats.threads" class="text-[var(--muted)]"> · авто</span>
+                </span>
+                <span>Сбросов модели</span>
+                <span>{{ stats.guardResets }}</span>
+                <span title="Сэмплы, которые не успели доехать до вывода; в скобках — примерная длительность. Растёт — обработка не успевает.">
+                  Пропущено сэмплов
+                </span>
+                <span>
+                  {{ stats.underruns
+                  }}<span v-if="stats.underruns && stats.outRate" class="text-[var(--muted)]">
+                    · ≈ {{ ((stats.underruns / stats.outRate) * 1000).toFixed(0) }} мс</span
+                  >
+                </span>
+                <span title="Блоки, которые не влезли в кольцо вывода и были потеряны. Ноль — норма.">
+                  Переполнений буфера
+                </span>
+                <span>{{ stats.overflows }}</span>
+                <span title="Сэмплы микрофона, потерянные из-за переполнения входного кольца. Ноль — норма.">
+                  Потеряно на входе
+                </span>
+                <span>{{ stats.captureDrops }}</span>
+                <span>Подавление</span>
+                <span>
+                  {{ stats.suppressionDb > 0.5 ? "−" + stats.suppressionDb.toFixed(0) + " дБ" : "—" }}
+                </span>
+                <span>Пик входа</span>
+                <span>{{ stats.inputPeakDb > -100 ? stats.inputPeakDb.toFixed(0) + " дБ" : "—" }}</span>
+                <span title="Подстройка под расхождение часов микрофона и вывода. 0 ppm — конвертер работает ровно, темп и тембр не меняются.">
+                  Расхождение часов
+                </span>
+                <span>
+                  {{
+                    Math.abs(stats.slewPpm) < 1
+                      ? "0 ppm"
+                      : (stats.slewPpm > 0 ? "+" : "−") + Math.abs(stats.slewPpm).toFixed(0) + " ppm"
+                  }}
+                </span>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-1">
+                <button :class="btnGhost" @click="openLog">
+                  <AppIcon name="file" :size="14" />
+                  Открыть лог
+                </button>
+                <button :class="btnGhost" @click="showWizard = true">Мастер настройки</button>
+              </div>
+              <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
+                Лог пишется в data/app.log: старт и стоп движка, ошибки устройств, сбросы модели.
+              </p>
+            </div>
+
+            <!-- app -->
+            <div v-if="searching || settingsSection === 'app'" class="sblock">
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Приложение</h2>
+              <div :class="settingRow">
+                <AppLabel text="Модель VoxLock" :hint="modelStatus" />
+                <div class="flex justify-end">
+                  <button :class="btn" :disabled="checkingModel" @click="checkModel">
+                    <AppIcon v-if="checkingModel" name="spinner" :size="14" class="spin" />
+                    {{ checkingModel ? "Проверяю…" : "Проверить обновления" }}
+                  </button>
+                </div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Запускать с Windows" hint="Автозапуск при входе в систему: приложение стартует свёрнутым в трей." />
+                <div class="flex justify-end"><AppSwitch v-model="autostart" @update:model-value="applyAutostart" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Свернуть в трей при закрытии" hint="Крестик прячет окно в трей, обработка при этом продолжает работать." />
+                <div class="flex justify-end"><AppSwitch v-model="settings.closeToTray" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Запускать свёрнутым" hint="При старте окно не показывается: приложение сразу живёт в трее и обрабатывает звук." />
+                <div class="flex justify-end"><AppSwitch v-model="settings.startMinimized" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Включать обработку сразу" hint="Как только виртуальный кабель доступен — обработка запускается без нажатия кнопки." />
+                <div class="flex justify-end"><AppSwitch v-model="settings.autoStart" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Следовать системному микрофону" hint="Если в Windows выбран другой микрофон по умолчанию, приложение переключится на него." />
+                <div class="flex justify-end"><AppSwitch v-model="settings.followDefaultInput" /></div>
+              </div>
+              <div :class="settingRow">
+                <AppLabel text="Хранить записей A/B" hint="Сколько последних пар хранить в data/recordings; старые удаляются." />
+                <AppSlider v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
+              </div>
+              <div class="mt-4 flex flex-wrap items-center gap-1">
+                <button :class="btnGhost" @click="exportSettings">Экспорт настроек</button>
+                <button :class="btnGhost" @click="importSettings">Импорт настроек</button>
+                <button :class="btnGhost" class="hover:!text-[var(--danger)]" @click="resetSettings">
+                  Сбросить настройки
+                </button>
+              </div>
+              <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
+                Экспорт кладёт файл в data/settings-export.json; для импорта положите его туда же.
+              </p>
+            </div>
+          </div>
         </div>
-      </transition>
+      </div>
     </div>
 
-    <div
-      class="pointer-events-none fixed right-4 bottom-4 z-[95] flex w-[330px] max-w-[calc(100vw-32px)] flex-col gap-2"
-    >
+    <div class="pointer-events-none fixed right-4 bottom-4 z-[95] flex w-[330px] max-w-[calc(100vw-32px)] flex-col gap-2">
       <!-- an error stays until dismissed: it is a card, not a toast, but it lives
            in the same fixed column so it never moves the page -->
       <AppToast v-if="error" kind="warn" title="Ошибка" :text="error" @close="error = ''" />
@@ -2145,35 +2206,26 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
     </div>
 
     <!-- first-run wizard -->
-    <div
-      v-if="showWizard && settings"
-      class="fixed inset-0 z-[90] grid place-items-center bg-black/45 p-5"
-    >
-      <div
-        class="w-full max-w-[540px] rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] p-6 shadow-2xl"
-      >
+    <div v-if="showWizard && settings" class="fixed inset-0 z-[90] grid place-items-center bg-black/45 p-5">
+      <div class="w-full max-w-[540px] rounded-[16px] border border-[var(--stroke)] bg-[var(--surface)] p-6 shadow-[0_30px_70px_-30px_rgba(0,0,0,0.7)]">
         <div class="flex items-start justify-between gap-3">
           <div>
-            <div class="text-[18px] font-semibold">Настройка за три шага</div>
-            <p :class="muted" class="mt-1">
+            <h2 class="text-[17px] font-semibold tracking-[-0.01em]">Настройка за три шага</h2>
+            <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
               Можно пропустить и вернуться позже: «Настройки» → «Мастер настройки».
             </p>
           </div>
-          <button :class="btn" class="!px-2.5" title="Закрыть" @click="closeWizard">
+          <button class="iconbtn" title="Закрыть" @click="closeWizard">
             <AppIcon name="close" :size="14" />
           </button>
         </div>
 
-        <ol class="mt-4 flex flex-col gap-4">
-          <li class="flex gap-3">
-            <span
-              class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--accent-soft)] text-[12px] font-semibold text-[var(--accent)]"
-            >
-              1
-            </span>
+        <div class="mt-5 flex flex-col">
+          <div class="flex gap-4 border-t border-[var(--stroke)] py-4">
+            <span class="mt-0.5 font-mono text-[11px] text-[var(--muted)]">1</span>
             <div class="min-w-0 flex-1">
               <div class="text-[13px] font-medium">Виртуальный микрофон</div>
-              <p :class="muted" class="mt-0.5">
+              <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
                 {{
                   cableOk
                     ? "VB-CABLE найден — обработанный звук увидят Zoom, Meet и Discord."
@@ -2187,22 +2239,18 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
                 :disabled="installingCable"
                 @click="installCable"
               >
-                <AppIcon v-if="installingCable" name="spinner" class="spin" />
+                <AppIcon v-if="installingCable" name="spinner" :size="14" class="spin" />
                 {{ installingCable ? "Установка…" : "Установить VB-CABLE" }}
               </button>
-              <p v-if="cableMessage" :class="muted" class="mt-1">{{ cableMessage }}</p>
+              <p v-if="cableMessage" class="mt-1 text-[11.5px] text-[var(--muted)]">{{ cableMessage }}</p>
             </div>
-          </li>
+          </div>
 
-          <li class="flex gap-3">
-            <span
-              class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--accent-soft)] text-[12px] font-semibold text-[var(--accent)]"
-            >
-              2
-            </span>
+          <div class="flex gap-4 border-t border-[var(--stroke)] py-4">
+            <span class="mt-0.5 font-mono text-[11px] text-[var(--muted)]">2</span>
             <div class="min-w-0 flex-1">
               <div class="text-[13px] font-medium">Микрофон</div>
-              <div class="mt-1.5">
+              <div class="mt-2">
                 <AppSelect
                   :model-value="selectedInput"
                   :options="inputOptions"
@@ -2211,46 +2259,44 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
                 />
               </div>
               <button :class="btn" class="mt-2" :disabled="probing" @click="probeMic">
-                <AppIcon name="mic" />
+                <AppIcon name="mic" :size="14" />
                 {{
-                  probing
-                    ? probeLeft > 0
-                      ? `Слушаю… ${probeLeft} с`
-                      : "Слушаю…"
-                    : "Проверить микрофон"
+                  probing ? (probeLeft > 0 ? `Слушаю… ${probeLeft} с` : "Слушаю…") : "Проверить микрофон"
                 }}
               </button>
-              <p v-if="probeResult" :class="muted" class="mt-1">
+              <p v-if="probeResult" class="mt-1 text-[11.5px] text-[var(--muted)]">
                 Уровень {{ probeResult.peakDb.toFixed(0) }} дБ — {{ probeHint }}
               </p>
             </div>
-          </li>
+          </div>
 
-          <li class="flex gap-3">
-            <span
-              class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--accent-soft)] text-[12px] font-semibold text-[var(--accent)]"
-            >
-              3
-            </span>
+          <div class="flex gap-4 border-t border-[var(--stroke)] py-4">
+            <span class="mt-0.5 font-mono text-[11px] text-[var(--muted)]">3</span>
             <div class="min-w-0 flex-1">
               <div class="text-[13px] font-medium">Профиль голоса</div>
-              <p :class="muted" class="mt-0.5">
+              <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
                 Прочитайте любой текст 15 секунд в тишине — модель запомнит тембр.
               </p>
-              <button :class="btnPrimary" class="mt-2" :disabled="recording" @click="recordProfile">
-                <span v-if="recording" class="h-2.5 w-2.5 shrink-0 rounded-full bg-current" />
-                <AppIcon v-else name="mic" />
+              <button
+                :class="btnPrimary"
+                class="mt-2"
+                :disabled="recording || !micReady"
+                :title="micReady ? 'Записать профиль голоса' : 'Сначала выберите микрофон'"
+                @click="recordProfile"
+              >
+                <span v-if="recording" class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
+                <AppIcon v-else name="mic" :size="14" />
                 {{ recording ? `Запись… ${recordLeft} с` : "Записать 15 с" }}
               </button>
-              <p v-if="profileQuality" :class="muted" class="mt-1">
+              <p v-if="profileQuality" class="mt-1 text-[11.5px] text-[var(--muted)]">
                 Оценка {{ profileQuality.score }}/100 · SNR {{ profileQuality.snrDb.toFixed(0) }} дБ
               </p>
             </div>
-          </li>
-        </ol>
+          </div>
+        </div>
 
         <div class="mt-5 flex items-center justify-end gap-2">
-          <button :class="btn" @click="closeWizard">Пропустить</button>
+          <button :class="btnGhost" @click="closeWizard">Пропустить</button>
           <button :class="btnPrimary" @click="closeWizard">Готово</button>
         </div>
       </div>

@@ -14,7 +14,7 @@
       {
         "title": "Noise Canceller",
         "width": 1100,
-        "height": 780,
+        "height": 800,
         "minWidth": 920,
         "minHeight": 620,
         "resizable": true,
