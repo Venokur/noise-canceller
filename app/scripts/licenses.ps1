@@ -123,7 +123,15 @@ Write-Host ("rust crates: {0}, npm packages: {1}" -f $rust.Count, $npm.Count)
 
 if ($Check) {
     if ($text -ne $before) {
+        $old = $before -split "`n"
+        $new = $text -split "`n"
+        $i = 0
+        $limit = [Math]::Min($old.Count, $new.Count)
+        while ($i -lt $limit -and $old[$i] -eq $new[$i]) { $i++ }
         Write-Host "THIRD_PARTY_NOTICES.md is out of date; run scripts\licenses.ps1"
+        Write-Host ("first difference at line {0}" -f ($i + 1))
+        if ($i -lt $old.Count) { Write-Host ("  file: " + $old[$i]) }
+        if ($i -lt $new.Count) { Write-Host ("  now : " + $new[$i]) }
         exit 1
     }
     Write-Host "THIRD_PARTY_NOTICES.md is up to date"
