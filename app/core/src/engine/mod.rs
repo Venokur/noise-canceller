@@ -8,11 +8,13 @@ mod helpers;
 mod streams;
 
 pub use ab::AbStatus;
-pub use helpers::{cap_dry_mix, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard};
+pub use helpers::{cap_dry_mix, rms_of, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard};
 
 use ab::{ab_append_clean, AbBuffer};
 use helpers::*;
 use streams::{capture_f32, install_panic_hook, push_block, render_f32};
+
+use crate::pipeline::Pipeline;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -25,7 +27,6 @@ use cpal::{SampleFormat, StreamConfig};
 
 use crate::devices;
 use crate::dsp::Chain;
-use crate::model::{Denoiser, Vad};
 use crate::paths;
 use crate::recordings;
 use crate::resample::Resampler;
@@ -272,16 +273,15 @@ impl Engine {
         // the automatic pick uses the *rounded* block, not the slider value
         let threads = settings.effective_threads(chunk_ms);
 
-        let denoiser = if settings.voice_isolation {
-            Some(Denoiser::new(
-                &paths::enroll_model(),
-                &paths::chunk_model(),
-                voice.as_deref(),
-                threads,
-            )?)
-        } else {
-            None
-        };
+        // the model chain lives in one place, shared with `nc replay`
+        let mut pipeline = Pipeline::new(
+            &settings,
+            voice.as_deref(),
+            threads,
+            chunk_samples,
+            &paths::enroll_model(),
+            &paths::chunk_model(),
+        )?;
         let backend = if settings.voice_isolation {
             format!("VoxLock · CPU · {} мс блок", chunk_ms.round() as u32)
         } else {
@@ -344,50 +344,16 @@ impl Engine {
         chain.configure(&settings, out_rate);
         let mut up = Resampler::new(MODEL_RATE, out_rate);
         let mut up_buf = vec![0.0f32; up.max_output(chunk_samples) + 64];
-        let mut denoiser = denoiser;
         let mut block = vec![0.0f32; chunk_samples];
-        let mut out_scratch: Vec<f32> = Vec::with_capacity(chunk_samples * 4);
-
-        // optional second denoiser: it cleans what the target-speaker model
-        // lets through. It can run before VoxLock (cleaner input for the
-        // extraction) or after it (cleaner residual), chosen in settings.
-        let residual_kind = settings.residual_denoise.to_lowercase();
-        let order_before = settings.residual_order.eq_ignore_ascii_case("before");
-        let mut gtcrn_before = None;
-        let mut gtcrn_after = None;
-        if residual_kind == "gtcrn" && paths::gtcrn_model().exists() {
-            if let Ok(model) = Denoiser::new_gtcrn(&paths::gtcrn_model(), 2) {
-                let stream = crate::model::StreamDenoiser::new(model);
-                if order_before {
-                    gtcrn_before = Some(stream);
-                } else {
-                    gtcrn_after = Some(stream);
-                }
-            }
-        }
-        let mut res16: Vec<f32> = Vec::with_capacity(chunk_samples * 2);
-        let mut vad = if settings.vad_gate && paths::vad_model().exists() {
-            Vad::new(&paths::vad_model(), 0.5).ok()
-        } else {
-            None
-        };
-        // a second detector on the model input: the output-side one follows
-        // VoxLock, so while the model is cold it reports silence exactly when
-        // the speaker is talking. The cap and the cold reset need the input.
-        let mut input_vad = Vad::new(&paths::vad_model(), 0.5).ok();
         let mut input_voice = InputVoice::new();
-        let mut dropout = DropoutGuard::new();
-        let mut max_suppression = settings.max_suppression_db.clamp(0.0, 48.0);
-        let mut cap_mix = 0.0f32;
         // auto buffer: learn the smallest ring that does not miss
         let mut auto_enabled = settings.buffer_auto;
         let mut auto_ms = buffer_ms;
         let mut auto_events = 0u32;
         let mut auto_at = Instant::now();
         let mut auto_changed = Instant::now();
-        let mut vad_gain = 1.0f32;
-        let vad_attack = 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp();
-        let vad_release = 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp();
+        // kept next to the pipeline only for the suppression readout
+        let mut max_suppression = settings.max_suppression_db.clamp(0.0, 48.0);
 
         let mut analyzer = crate::spectrum::Spectrum::new(1024, out_rate as f32);
         let mut chain_seq = 0u32;
@@ -412,7 +378,6 @@ impl Engine {
         let mut onset_blocks = 0u32;
         let mut speech_hold = 0u32;
         let mut slew = Slew::new();
-        let mut input_ring: Vec<f32> = Vec::with_capacity(4096);
         let mut slew_out: Vec<f32> = Vec::with_capacity(chunk_samples * 4);
         let mut slew_step = 1.0f64;
         // rate control: the ring level is an integral of the clock error, so a
@@ -420,15 +385,6 @@ impl Engine {
         let mut drift_at = Instant::now();
         let mut drift_logs = 0u32;
         let trace = std::env::var("NC_TRACE").is_ok();
-        // every model stage hands back exactly `chunk_samples`, whatever the
-        // model returned: a varying length shifts speech in time
-        let mut isolate_out = vec![0.0f32; chunk_samples];
-        let mut model_out: Vec<f32> = Vec::with_capacity(chunk_samples * 2);
-        let mut isolate_stage = FixedStage::new();
-        let mut gtcrn_out = vec![0.0f32; chunk_samples];
-        let mut gtcrn_stage = FixedStage::new();
-        let mut gtcrn_before_out = vec![0.0f32; chunk_samples];
-        let mut gtcrn_before_stage = FixedStage::new();
 
         let processor = thread::Builder::new()
             .name("voxlock-processor".into())
@@ -439,6 +395,7 @@ impl Engine {
                         if let Ok(current) = proc_shared.settings.lock() {
                             chain.configure(&current, out_rate);
                             max_suppression = current.max_suppression_db.clamp(0.0, 48.0);
+                            pipeline.set_max_suppression(max_suppression);
                             if current.buffer_auto {
                                 if !auto_enabled {
                                     // the learned value, kept in memory: this
@@ -606,20 +563,11 @@ impl Engine {
                     }
 
                     if silent_run > SILENCE_SKIP_BLOCKS {
-                        // keep the pre-roll current: after a long gap it used
-                        // to hold audio from before the silence, so a guard
-                        // reset replayed the wrong thing
-                        input_ring.extend_from_slice(&block);
-                        let keep = 3200; // 200 ms at 16 kHz
-                        if input_ring.len() > keep {
-                            let drop = input_ring.len() - keep;
-                            input_ring.drain(..drop);
-                        }
-                        // the detector has not seen audio for a while: leave the
-                        // gate open, otherwise it needs ~300 ms to notice the
-                        // next word and swallows the first syllable
-                        dropout.skipped();
-                        vad_gain = 1.0;
+                        // keep the pre-roll current (after a long gap it used
+                        // to hold audio from before the silence) and leave the
+                        // gate open: the detector has not seen audio for a while
+                        // and would take ~300 ms to notice the next word
+                        pipeline.skip_silence(&block);
                         let produced = up.process(&zeros, &mut up_buf);
                         for sample in up_buf[..produced].iter_mut() {
                             *sample = 0.0;
@@ -652,15 +600,6 @@ impl Engine {
                         .store(leveler.gain_db().to_bits(), Ordering::Relaxed);
                     guard.process(&mut block);
 
-                    // "before" mode: clean the input so VoxLock extracts the
-                    // voice from a quieter signal
-                    if let Some(model) = gtcrn_before.as_mut() {
-                        res16.clear();
-                        model.process(&block, &mut res16);
-                        gtcrn_before_stage.take(&res16, &mut gtcrn_before_out, Some(&block));
-                        block.copy_from_slice(&gtcrn_before_out);
-                    }
-
                     persist_ticks += 1;
                     if persist_ticks >= 40 {
                         persist_ticks = 0;
@@ -671,146 +610,37 @@ impl Engine {
                         }
                     }
 
-                    // the cap needs to know whether the *model input* is
-                    // speech: the output-side VAD cannot answer while the model
-                    // is cutting the speaker itself
-                    let vad_in = input_vad.as_mut().map(|v| v.push(&block));
-                    let cap_voice = vad_in.unwrap_or(in_voice) || in_voice;
-
-                    // after a long stretch of the model suppressing everything,
-                    // its speaker state is stale. Start it over before it sees
-                    // the first word, otherwise it cuts 40+ dB until it finds
-                    // the speaker again (the "no voice at the start" report).
-                    let cold_onset = dropout.cold_onset(input_voice.voiced());
-                    if cold_onset {
-                        if let Some(model) = denoiser.as_mut() {
-                            model.reset();
-                            isolate_stage.reset();
-                            // the residual stages were sitting on the room too
-                            if let Some(model) = gtcrn_after.as_mut() {
-                                model.reset();
-                                gtcrn_stage.reset();
-                            }
-                            if let Some(model) = gtcrn_before.as_mut() {
-                                model.reset();
-                                gtcrn_before_stage.reset();
-                            }
-                            crate::log::info(&format!(
-                                "cold start: VoxLock reset while the model was closed (in {:.0} dB)",
-                                20.0 * raw_rms.max(1e-9).log10()
-                            ));
-                        }
-                    }
-
+                    let wet = f32::from_bits(proc_shared.wet.load(Ordering::Relaxed));
+                    // VoxLock needs a moment to lock on after a start
+                    let warm = session_start.elapsed() > Duration::from_secs(1);
                     let started = Instant::now();
-                    // every stage below hands back exactly `chunk_samples`
-                    let mut model_out_rms: Option<f32> = None;
-                    match denoiser.as_mut() {
-                        Some(model) => {
-                            model.run_into(&block, &mut model_out);
-                            // measure what the model really returned: the padded
-                            // tail is silence and would look like a 40 dB cut
-                            model_out_rms = if model_out.is_empty() {
-                                None
-                            } else {
-                                Some(rms_of(&model_out))
-                            };
-                            isolate_stage.take(&model_out, &mut isolate_out, None);
-                        }
-                        // isolation off: the leveler output goes straight on to
-                        // the noise stage, no target-speaker model at all
-                        None => {
-                            isolate_stage.reset();
-                            isolate_out.copy_from_slice(&block);
-                        }
+                    let out =
+                        pipeline.process(&mut block, wet, warm, in_voice, input_voice.voiced());
+                    if out.cold_reset {
+                        crate::log::info(&format!(
+                            "cold start: VoxLock reset while the model was closed (in {:.0} dB)",
+                            20.0 * raw_rms.max(1e-9).log10()
+                        ));
                     }
-                    let mut isolated: &[f32] = &isolate_out;
-
-                    // VoxLock loses the speaker now and then and cuts 40+ dB
-                    // for seconds. Reset it and replay the last 200 ms of the
-                    // input so it locks again immediately; the output of the
-                    // replay is thrown away, only the internal state is rebuilt.
-                    if let Some(model) = denoiser.as_mut() {
-                        let in_now = rms_of(&block);
-                        let in_db = 20.0 * in_now.max(1e-9).log10();
-                        // NaN or no output is as dead as a deep cut: the old
-                        // comparison was false for NaN and the guard stayed
-                        // blind for the whole episode
-                        let out_db = match model_out_rms {
-                            Some(v) if v.is_finite() && v > 0.0 => 20.0 * v.log10(),
-                            _ => -120.0,
-                        };
-                        // with a suppression cap a 50 dB cut of the model is
-                        // not visible in the output, so the dropout threshold
-                        // has to stay above the cap
-                        let cut_db = 26.0f32.max(max_suppression + 6.0);
-                        // VoxLock needs a moment to lock on after a start
-                        let warm = session_start.elapsed() > Duration::from_secs(1);
-                        let reset_now = warm && dropout.observe(in_db, out_db, cap_voice, cut_db);
-                        if reset_now {
-                            proc_shared.guard_resets.fetch_add(1, Ordering::Relaxed);
-                            crate::log::info(&format!(
-                                "dropout guard: VoxLock reset + 200 ms pre-roll (in {in_db:.0} dB, out {out_db:.0} dB, reset #{})",
-                                dropout.resets
-                            ));
-                            model.reset();
-                            isolate_stage.reset();
-                            for part in input_ring.chunks(chunk_samples) {
-                                model.run_into(part, &mut model_out);
-                            }
-                            model.run_into(&block, &mut model_out);
-                            model_out_rms = if model_out.is_empty() {
-                                None
-                            } else {
-                                Some(rms_of(&model_out))
-                            };
-                            isolate_stage.take(&model_out, &mut isolate_out, None);
-                            isolated = &isolate_out;
-                        }
-                        input_ring.extend_from_slice(&block);
-                        let keep = 3200; // 200 ms at 16 kHz
-                        if input_ring.len() > keep {
-                            let drop = input_ring.len() - keep;
-                            input_ring.drain(..drop);
-                        }
+                    if let Some((in_db, out_db, resets)) = out.guard_reset {
+                        proc_shared.guard_resets.fetch_add(1, Ordering::Relaxed);
+                        crate::log::info(&format!(
+                            "dropout guard: VoxLock reset + 200 ms pre-roll (in {in_db:.0} dB, out {out_db:.0} dB, reset #{resets})"
+                        ));
                     }
-                    out_scratch.clear();
+                    proc_shared.speech.store(out.speech_in, Ordering::Relaxed);
 
-                    let count = isolated.len().min(block.len());
-
-                    // how much the model cut, measured on the block it just saw
-                    let in_rms = rms_of(&block);
-                    let out_rms = model_out_rms.unwrap_or_else(|| rms_of(&isolated[..count]));
-                    let atten = if in_rms > 1e-6 && out_rms > 1e-8 {
-                        -20.0 * (out_rms / in_rms).log10()
-                    } else {
-                        0.0
-                    };
-                    let speaking = in_rms > 1.8e-3;
-                    proc_shared.speech.store(speaking, Ordering::Relaxed);
-
-                    // Maximum suppression: if the model cut a speech block by
-                    // more than the limit, mix the (leveled, peak-limited) model
-                    // input back until the output is exactly `limit` down. This
-                    // is the only guarantee that the speaker stays audible when
-                    // VoxLock mistakes them for noise.
-                    let need = if max_suppression > 0.0 && cap_voice && in_rms > 2e-3 {
-                        cap_dry_mix(in_rms, out_rms, max_suppression)
-                    } else {
-                        0.0
-                    };
-                    // attack fast (the hole starts now), release slow
-                    let coef = if need > cap_mix { 0.5 } else { 0.15 };
-                    cap_mix += (need - cap_mix) * coef;
-                    let cap_active = cap_mix > 0.01;
+                    let cap_voice = out.cap_voice;
+                    let cap_active = out.cap_active;
+                    let out_rms = out.out_rms;
 
                     // the card shows the model's attenuation of *speech*, and
                     // never more than the cap (a 50 dB number only scares)
                     if (cap_voice || cap_active) && out_rms > 1e-8 {
                         let shown = if max_suppression > 0.0 {
-                            atten.min(max_suppression)
+                            out.atten_db.min(max_suppression)
                         } else {
-                            atten
+                            out.atten_db
                         };
                         let current = f32::from_bits(proc_shared.suppression.load(Ordering::Relaxed));
                         let smoothed = current + (shown - current) * 0.1;
@@ -819,16 +649,7 @@ impl Engine {
                     // a block the model cut hard is not the target speaker: do
                     // not lift its level, unless the cap keeps the speaker
                     // audible anyway
-                    chain.set_target_present(atten < 8.0 || cap_active);
-                    let wet = f32::from_bits(proc_shared.wet.load(Ordering::Relaxed)).clamp(0.0, 1.0);
-                    // `cap_mix` is the fraction of the model input to mix back,
-                    // so it puts a floor under how far `wet` may go
-                    let wet_eff = if cap_mix > 0.0 {
-                        wet.min(1.0 - cap_mix)
-                    } else {
-                        wet
-                    };
-
+                    chain.set_target_present(out.target_model);
                     // After a knock, or when speech starts, the model needs a
                     // moment to lock onto the enrolled voice and outputs almost
                     // nothing. Keep a little of the dry signal for that second,
@@ -865,29 +686,6 @@ impl Engine {
 
                     onset_blocks = onset_blocks.saturating_sub(1);
 
-                    for i in 0..count {
-                        let mixed = block[i] * (1.0 - wet_eff) + isolated[i] * wet_eff;
-                        out_scratch.push(mixed);
-                    }
-                    #[allow(clippy::needless_range_loop)]
-                    for i in count..block.len() {
-                        out_scratch.push(block[i]);
-                    }
-
-                    // Silero VAD gate: close the output in pauses, keep every
-                    // syllable. A level threshold cannot tell a quiet word from
-                    // noise, the detector can.
-                    let mut voiced: Option<bool> = None;
-                    if let Some(detector) = vad.as_mut() {
-                        let speech = detector.push(&out_scratch);
-                        voiced = Some(speech);
-                        let target = if speech { 1.0f32 } else { 0.0f32 };
-                        let coef = if target > vad_gain { vad_attack } else { vad_release };
-                        for sample in out_scratch.iter_mut() {
-                            vad_gain += (target - vad_gain) * coef;
-                            *sample *= vad_gain;
-                        }
-                    }
                     // the model lets the level fall 10-20 dB between syllables; a
                     // gain lift was tried here and **reverted**: it raised the
                     // residual noise and other voices along with the quiet
@@ -896,23 +694,14 @@ impl Engine {
                     // this block is the target speaker: with a profile the model
                     // cuts even the enrolled voice by 10-14 dB, and refusing to
                     // lift those blocks made phrase levels differ by 5 dB or more
-                    if let Some(speech) = voiced {
+                    if let Some(speech) = out.target_vad {
                         // during a capped cut the model may be cutting the
                         // speaker itself; keep the level control working so the
                         // first words are audible as soon as it passes them
                         chain.set_target_present(speech || cap_active);
                     }
 
-                    // GTCRN works at 16 kHz, right after VoxLock
-                    let mut source: &[f32] = &out_scratch;
-                    if let Some(model) = gtcrn_after.as_mut() {
-                        res16.clear();
-                        model.process(&out_scratch, &mut res16);
-                        gtcrn_stage.take(&res16, &mut gtcrn_out, Some(&out_scratch));
-                        source = &gtcrn_out;
-                    }
-
-                    let produced = up.process(source, &mut up_buf);
+                    let produced = up.process(out.wet, &mut up_buf);
 
                     if sanitize(&mut up_buf[..produced]) {
                         let seen = proc_shared.bad_blocks.fetch_add(1, Ordering::Relaxed) + 1;
@@ -953,7 +742,7 @@ impl Engine {
                     push_block(&mut out_prod, &slew_out, &proc_shared);
 
                     let elapsed = started.elapsed();
-                    rtf_window.0 += count;
+                    rtf_window.0 += chunk_samples;
                     rtf_window.1 += elapsed;
                     if rtf_window.0 >= MODEL_RATE as usize {
                         let rtf = rtf_window.1.as_secs_f32() / (rtf_window.0 as f32 / MODEL_RATE as f32);

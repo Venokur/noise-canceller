@@ -5,10 +5,8 @@ use noise_canceller_core::dsp::Chain;
 use noise_canceller_core::paths;
 use noise_canceller_core::resample::Resampler;
 use noise_canceller_core::settings::Settings;
-use noise_canceller_core::{
-    cap_dry_mix, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard, SILENCE_SKIP_BLOCKS,
-};
 use noise_canceller_core::{devices, wav, Denoiser};
+use noise_canceller_core::{InputVoice, Leveler, PeakGuard, Pipeline, SILENCE_SKIP_BLOCKS};
 
 fn main() -> Result<()> {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "selftest".into());
@@ -257,16 +255,15 @@ fn replay_file() -> Result<()> {
     }
     let mut leveler = Leveler::new(start_db);
     let mut guard = PeakGuard::new(16_000.0);
-    let mut denoiser = if settings.voice_isolation {
-        Some(Denoiser::new(
-            &enroll_path(),
-            &chunk_path(),
-            profile.as_deref().filter(|p| p.exists()),
-            settings.denoiser_threads,
-        )?)
-    } else {
-        None
-    };
+    // the same chain as the live engine, built by the same code
+    let mut pipeline = Pipeline::new(
+        &settings,
+        profile.as_deref().filter(|p| p.exists()),
+        settings.effective_threads(noise_canceller_core::engine::block_ms(chunk)),
+        chunk,
+        &enroll_path(),
+        &chunk_path(),
+    )?;
 
     let mut up = Resampler::new(16_000, rate);
     let mut chain = Chain::new();
@@ -274,13 +271,8 @@ fn replay_file() -> Result<()> {
 
     let mut out: Vec<f32> = Vec::with_capacity(at16.len() * 3 + 64);
     let mut up_buf = vec![0.0f32; up.max_output(chunk) + 64];
-    let mut clean16 = Vec::with_capacity(chunk);
-    let mut input_ring: Vec<f32> = Vec::new();
-    let mut dropout = DropoutGuard::new();
     let mut input_voice = InputVoice::new();
     let mut block_index = 0usize;
-    let max_suppression = settings.max_suppression_db.clamp(0.0, 48.0);
-    let mut cap_mix = 0.0f32;
     let mut was_speaking = false;
     let mut onset_blocks = 0u32;
     let mut agc_lo = f64::INFINITY;
@@ -289,47 +281,9 @@ fn replay_file() -> Result<()> {
     let mut vad_all = 0u32;
     let mut written_total = 0usize;
     let mut last_trace = -1i32;
-
-    // optional second denoiser, same placement as the live engine
-    let residual_kind = settings.residual_denoise.to_lowercase();
-    let order_before = settings.residual_order.eq_ignore_ascii_case("before");
-    let mut gtcrn_before = None;
-    let mut gtcrn_after = None;
-    if residual_kind == "gtcrn" && paths::gtcrn_model().exists() {
-        if let Ok(model) = Denoiser::new_gtcrn(&paths::gtcrn_model(), 2) {
-            let stream = noise_canceller_core::StreamDenoiser::new(model);
-            if order_before {
-                gtcrn_before = Some(stream);
-            } else {
-                gtcrn_after = Some(stream);
-            }
-        }
-    }
-    let mut res16: Vec<f32> = Vec::new();
-    let mut vad = if settings.vad_gate && paths::vad_model().exists() {
-        noise_canceller_core::Vad::new(&paths::vad_model(), 0.5).ok()
-    } else {
-        None
-    };
-    // second detector on the model input, same as the live engine
-    let mut input_vad = noise_canceller_core::Vad::new(&paths::vad_model(), 0.5).ok();
-    let mut vad_gain = 1.0f32;
-    let vad_attack = 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp();
-    let vad_release = 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp();
-    // the same fixed-length stages as the live engine: a model that returns more
-    // or less than a block must not shift speech in time
-    let mut isolate_out = vec![0.0f32; chunk];
-    let mut isolate_stage = FixedStage::new();
-    let mut gtcrn_out = vec![0.0f32; chunk];
-    let mut gtcrn_stage = FixedStage::new();
-    let mut gtcrn_before_out = vec![0.0f32; chunk];
-    let mut gtcrn_before_stage = FixedStage::new();
-    // diagnostics for NC_TRACE: how much each model stage really returns
     let mut stats_vox = (0usize, 0usize, 0usize);
-    let mut stats_gt = (0usize, 0usize, 0usize);
     let zeros = vec![0.0f32; chunk];
     let mut silent_run = 0u32;
-
     for block in at16.chunks_mut(chunk) {
         // same silence skip as the live engine, so replay reproduces what the
         // app does after a quiet room — including the gate state
@@ -344,17 +298,9 @@ fn replay_file() -> Result<()> {
             silent_run = 0;
         }
         if silent_run > SILENCE_SKIP_BLOCKS {
-            // keep the pre-roll current, as the live engine does
-            input_ring.extend_from_slice(block);
-            let keep = 3200; // 200 ms at 16 kHz
-            if input_ring.len() > keep {
-                let drop = input_ring.len() - keep;
-                input_ring.drain(..drop);
-            }
-            dropout.skipped();
-            // leave the gate open: the detector has not seen audio for a while
-            // and would otherwise take ~300 ms to let the next word through
-            vad_gain = 1.0;
+            // same as the live engine: keep the pre-roll current and leave the
+            // gate open, the detector has not seen audio for a while
+            pipeline.skip_silence(block);
             let produced = up.process(&zeros, &mut up_buf);
             for sample in up_buf[..produced].iter_mut() {
                 *sample = 0.0;
@@ -367,38 +313,21 @@ fn replay_file() -> Result<()> {
         leveler.process(block, settings.input_leveling, allow_up);
         guard.process(block);
 
-        if let Some(model) = gtcrn_before.as_mut() {
-            res16.clear();
-            model.process(block, &mut res16);
-            gtcrn_before_stage.take(&res16, &mut gtcrn_before_out, Some(block));
-            block.copy_from_slice(&gtcrn_before_out);
+        let wet = settings.isolation_strength.clamp(0.0, 1.0);
+        let warm = block_index as f32 * chunk as f32 / 16_000.0 > 1.0;
+        let out_block = pipeline.process(block, wet, warm, in_voice, input_voice.voiced());
+
+        if out_block.cold_reset && std::env::var("NC_TRACE").is_ok() {
+            eprintln!(
+                "cold start: reset while the model was closed at {:.2} s (in {:.0} dB)",
+                block_index as f32 * chunk as f32 / 16_000.0,
+                20.0 * raw_rms.max(1e-9).log10()
+            );
         }
-
-        let vad_in = input_vad.as_mut().map(|v| v.push(block));
-        let cap_voice = vad_in.unwrap_or(in_voice) || in_voice;
-
-        // same cold start as the live engine
-        let cold_onset = dropout.cold_onset(input_voice.voiced());
-        if cold_onset {
-            if let Some(model) = denoiser.as_mut() {
-                model.reset();
-                isolate_stage.reset();
-                if let Some(model) = gtcrn_after.as_mut() {
-                    model.reset();
-                    gtcrn_stage.reset();
-                }
-                if let Some(model) = gtcrn_before.as_mut() {
-                    model.reset();
-                    gtcrn_before_stage.reset();
-                }
-                if std::env::var("NC_TRACE").is_ok() {
-                    eprintln!(
-                        "cold start: reset while the model was closed at {:.2} s (in {:.0} dB)",
-                        block_index as f32 * chunk as f32 / 16_000.0,
-                        20.0 * raw_rms.max(1e-9).log10()
-                    );
-                }
-            }
+        stats_vox.0 += out_block.model_in_len;
+        stats_vox.1 += out_block.model_out_len;
+        if out_block.model_out_len != out_block.model_in_len {
+            stats_vox.2 += 1;
         }
 
         // same onset logic as the live engine
@@ -416,143 +345,15 @@ fn replay_file() -> Result<()> {
         }
         was_speaking = speaking;
 
-        let wet = settings.isolation_strength.clamp(0.0, 1.0);
-
-        let mut model_out_rms: Option<f32> = None;
-        match denoiser.as_mut() {
-            Some(model) => {
-                let produced = model.run(block);
-                stats_vox.0 += block.len();
-                stats_vox.1 += produced.len();
-                if produced.len() != block.len() {
-                    stats_vox.2 += 1;
-                }
-                model_out_rms = if produced.is_empty() {
-                    None
-                } else {
-                    Some(
-                        (produced
-                            .iter()
-                            .map(|v| (*v as f64) * (*v as f64))
-                            .sum::<f64>()
-                            / produced.len() as f64)
-                            .sqrt() as f32,
-                    )
-                };
-                isolate_stage.take(&produced, &mut isolate_out, None);
-            }
-            None => {
-                isolate_stage.reset();
-                isolate_out.copy_from_slice(block);
-            }
-        }
-        {
-            let in_db = 20.0 * rms.max(1e-9).log10();
-            // NaN or no output is as dead as a deep cut
-            let out_db = match model_out_rms {
-                Some(v) if v.is_finite() && v > 0.0 => 20.0 * v.log10(),
-                _ => -120.0,
-            };
-            let cut_db = 26.0f32.max(max_suppression + 6.0);
-            if dropout.observe(in_db, out_db, cap_voice, cut_db) {
-                if let Some(model) = denoiser.as_mut() {
-                    model.reset();
-                    isolate_stage.reset();
-                    for part in input_ring.chunks(chunk) {
-                        let _ = model.run(part);
-                    }
-                    let produced = model.run(block);
-                    model_out_rms = if produced.is_empty() {
-                        None
-                    } else {
-                        Some(
-                            (produced
-                                .iter()
-                                .map(|v| (*v as f64) * (*v as f64))
-                                .sum::<f64>()
-                                / produced.len() as f64)
-                                .sqrt() as f32,
-                        )
-                    };
-                    isolate_stage.take(&produced, &mut isolate_out, None);
-                }
-            }
-            input_ring.extend_from_slice(block);
-            let keep = 3200; // 200 ms at 16 kHz
-            if input_ring.len() > keep {
-                let drop = input_ring.len() - keep;
-                input_ring.drain(..drop);
-            }
-        }
-        let in_rms = rms;
-        let out_rms = model_out_rms.unwrap_or(0.0);
-
-        let atten = if in_rms > 1e-6 && out_rms > 1e-8 {
-            -20.0 * (out_rms / in_rms).log10()
-        } else {
-            0.0
-        };
-        let need = if max_suppression > 0.0 && cap_voice && in_rms > 2e-3 {
-            cap_dry_mix(in_rms, out_rms, max_suppression)
-        } else {
-            0.0
-        };
-        let coef = if need > cap_mix { 0.5 } else { 0.15 };
-        cap_mix += (need - cap_mix) * coef;
-        let cap_active = cap_mix > 0.01;
-        let wet_eff = if cap_mix > 0.0 {
-            wet.min(1.0 - cap_mix)
-        } else {
-            wet
-        };
-
-        clean16.clear();
-        for (i, sample) in isolate_out.iter().enumerate() {
-            let dry = block.get(i).copied().unwrap_or(0.0);
-            clean16.push(dry * (1.0 - wet_eff) + sample * wet_eff);
-        }
-
-        chain.set_target_present(atten < 8.0 || cap_active);
-
-        let mut voiced: Option<bool> = None;
-        if let Some(detector) = vad.as_mut() {
-            let speech = detector.push(&clean16);
-            voiced = Some(speech);
-            let target = if speech { 1.0f32 } else { 0.0f32 };
-            let coef = if target > vad_gain {
-                vad_attack
-            } else {
-                vad_release
-            };
-            for sample in clean16.iter_mut() {
-                vad_gain += (target - vad_gain) * coef;
-                *sample *= vad_gain;
-            }
-        }
-        // same as the live engine: the detector decides whether to lift
-        if let Some(speech) = voiced {
-            chain.set_target_present(speech || cap_active);
+        chain.set_target_present(out_block.target_model);
+        if let Some(speech) = out_block.target_vad {
+            chain.set_target_present(speech || out_block.cap_active);
             if speech {
                 vad_true += 1;
             }
             vad_all += 1;
         }
-
-        // GTCRN at 16 kHz before the resampler
-        let mut source: &[f32] = &clean16;
-        if let Some(model) = gtcrn_after.as_mut() {
-            res16.clear();
-            model.process(&clean16, &mut res16);
-            stats_gt.0 += clean16.len();
-            stats_gt.1 += res16.len();
-            if res16.len() != clean16.len() {
-                stats_gt.2 += 1;
-            }
-            gtcrn_stage.take(&res16, &mut gtcrn_out, Some(&clean16));
-            source = &gtcrn_out;
-        }
-
-        let produced = up.process(source, &mut up_buf);
+        let produced = up.process(out_block.wet, &mut up_buf);
         if std::env::var("NC_TRACE").is_ok() && written_total < rate as usize * 4 {
             let t = written_total as f32 / rate as f32;
             if (t * 4.0) as i32 > last_trace {
@@ -598,8 +399,8 @@ fn replay_file() -> Result<()> {
     };
     if std::env::var("NC_TRACE").is_ok() {
         eprintln!(
-            "voxlock fed {} got {} mismatch blocks {} | gtcrn fed {} got {} mismatch blocks {}",
-            stats_vox.0, stats_vox.1, stats_vox.2, stats_gt.0, stats_gt.1, stats_gt.2
+            "voxlock fed {} got {} mismatch blocks {}",
+            stats_vox.0, stats_vox.1, stats_vox.2
         );
     }
     println!(

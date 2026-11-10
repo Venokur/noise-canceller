@@ -504,7 +504,7 @@ pub(super) fn sanitize(block: &mut [f32]) -> bool {
     true
 }
 
-pub(super) fn rms_of(samples: &[f32]) -> f32 {
+pub fn rms_of(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
