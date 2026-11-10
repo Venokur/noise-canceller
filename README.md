@@ -59,7 +59,7 @@ cargo run -p noise-canceller-cli -- selftest 80   # паритет по звук
 powershell -File scripts\golden.ps1               # golden-тест
 ```
 
-Ожидаемые цифры: `mic 0.0534 · model 0.0417 · dsp 0.1261 · RTF 0.43`.
+Ожидаемые цифры: `mic 0.0534 · model 0.0417 · dsp 0.0285 · RTF 0.31`.
 
 ## Аудиотракт
 

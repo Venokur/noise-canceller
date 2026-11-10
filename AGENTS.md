@@ -36,7 +36,11 @@
 ```
 app/
   core/        аудиоядро
-    engine.rs      cpal duplex, кольца, профили A/B, метры, спектр
+    engine/        cpal duplex и обработка
+      mod.rs         Engine, Shared, кольца, профили A/B, метры, спектр
+      helpers.rs     Slew, FixedStage, детекторы, Leveler, PeakGuard, cap
+      ab.rs          буфер дубля и запись пары wav
+      streams.rs     capture/render колбэки, спектр, паника
     model.rs       FFI к sherpa-onnx (OnlineSpeechDenoiser)
     dsp.rs         HPF, гейт, AGC, лимитер, комфортный шум
     resample.rs    полифазный ресемплер
@@ -51,7 +55,8 @@ app/
     paths.rs       каталоги, 8.3-путь для нативных вызовов
   cli/         headless-проверки (бинарник `nc`)
   src-tauri/   Tauri: команды, трей, автозапуск, один экземпляр
-  src/         Vue: App.vue + components/{TitleBar,AppSelect,AppSwitch,AppSlider}
+  src/         Vue: App.vue, components/{TitleBar,AppSelect,AppSwitch,AppSlider},
+               composables/useToasts.ts, types.ts (формы DTO для invoke)
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
   models/denoise/  gtcrn.onnx (0,5 МБ), silero_vad.onnx
   native/      sherpa-onnx-c-api.dll + onnxruntime.dll
@@ -206,7 +211,7 @@ powershell -File scripts\voxlock.ps1 -Atten       # матрица блок/по
 Регрессия звука: `powershell -File scripts\regression.ps1 -Count 3` прогоняет
 последние A/B через `nc replay` и падает, если провал > 0.4 с, паузы ближе 12 дБ
 к речи, громкость уехала от сырого больше чем на 20 дБ или речь вне −55…−10 dBFS.
-CI (`.github/workflows/ci.yml`) гоняет clippy `-D warnings`, тесты, сборку фронта
+CI (`.github/workflows/ci.yml`) гоняет `cargo fmt --check`, clippy `-D warnings`, тесты, сборку фронта
 и Tauri.
 
 Те же цифры для одной пары: `nc metrics <raw.wav> <clean.wav>` — печатает уровень

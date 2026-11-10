@@ -8,133 +8,22 @@ import AppSelect from "./components/AppSelect.vue";
 import AppLabel from "./components/AppLabel.vue";
 import AppIcon from "./components/AppIcon.vue";
 import AppToast from "./components/AppToast.vue";
+import { useToasts } from "./composables/useToasts";
+import { useSettingsSearch } from "./composables/useSettingsSearch";
+import { useSystemInfo } from "./composables/useSystemInfo";
+import type {
+  AbEntry,
+  AbMetrics,
+  AbStatus,
+  LastAb,
+  Profile,
+  ProfileScore,
+  Quality,
+  Settings,
+  Stats,
+} from "./types";
 
-interface Settings {
-  enabled: boolean;
-  theme: string;
-  mode: string;
-  profilePath: string | null;
-  isolationStrength: number;
-  maxSuppressionDb: number;
-  inputDevice: string;
-  outputDevice: string;
-  inputLeveling: boolean;
-  residualDenoise: string;
-  vadGate: boolean;
-  voiceIsolation: boolean;
-  highPassEnabled: boolean;
-  highPassHz: number;
-  gateEnabled: boolean;
-  gateThresholdDb: number;
-  gateRatio: number;
-  gateAttackMs: number;
-  gateReleaseMs: number;
-  gateHoldMs: number;
-  agcEnabled: boolean;
-  agcTargetDb: number;
-  agcMaxGainDb: number;
-  limiterEnabled: boolean;
-  comfortNoiseEnabled: boolean;
-  comfortNoiseDb: number;
-  outputGainDb: number;
-  closeToTray: boolean;
-  bufferMs: number;
-  bufferAuto: boolean;
-  chunkMs: number;
-  autoThreads: boolean;
-  denoiserThreads: number;
-  startMinimized: boolean;
-  abSeconds: number;
-  onboarded: boolean;
-  autoStart: boolean;
-  followDefaultInput: boolean;
-  autoProfile: boolean;
-  muteHotkey: string;
-  hotkeyMode: string;
-  basicUi: boolean;
-  keepRecordings: number;
-}
-
-interface Stats {
-  inputRms: number;
-  outputRms: number;
-  rtf: number;
-  latencyMs: number;
-  bufferMs: number;
-  underruns: number;
-  outRate: number;
-  overflows: number;
-  captureDrops: number;
-  backend: string;
-  running: boolean;
-  spectrum: number[];
-  suppressionDb: number;
-  speech: boolean;
-  inputPeakDb: number;
-  muted: boolean;
-  guardResets: number;
-  levelerGainDb: number;
-  slewPpm: number;
-  threads: number;
-  healthy: boolean;
-}
-
-interface Quality {
-  duration: number;
-  speechPercent: number;
-  snrDb: number;
-  peakDb: number;
-  clipPercent: number;
-  score: number;
-}
-
-interface Profile {
-  path: string;
-  quality: Quality;
-}
-
-interface AbStatus {
-  running: boolean;
-  progress: number;
-  folder: string | null;
-  raw: string | null;
-  clean: string | null;
-}
-
-interface LastAb {
-  folder: string;
-  raw: string;
-  clean: string;
-}
-
-interface AbEntry {
-  stamp: number;
-  raw: string;
-  clean: string;
-}
-
-interface ProfileScore {
-  path: string;
-  score: number;
-  snrDb: number;
-}
-
-interface AbMetrics {
-  speechLevelDb: number;
-  levelDeltaDb: number;
-  pauseContrastDb: number;
-  longestDropoutS: number;
-}
-
-interface Toast {
-  id: number;
-  title: string;
-  text: string;
-  kind: ToastKind;
-}
-
-type ToastKind = "info" | "warn" | "ok";
-
+const { toasts, notify, dismissToast } = useToasts();
 const settings = ref<Settings | null>(null);
 const stats = ref<Stats>({
   inputRms: 0,
@@ -193,12 +82,7 @@ const showWizard = ref(false);
 const profileScores = ref<ProfileScore[]>([]);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
-const toasts = ref<Toast[]>([]);
 const capturingHotkey = ref(false);
-const settingsQuery = ref("");
-const toastTimers = new Map<number, number>();
-const TOAST_MS = 7000;
-let toastSeq = 0;
 let slowStreak = 0;
 let slowWarnAt = 0;
 let quietMicWarned = false;
@@ -448,9 +332,7 @@ const settingsSections = [
 ];
 const settingsSection = ref("voice");
 const scrollEl = ref<HTMLElement | null>(null);
-/// While a query is typed every section is shown, so a match is never hidden
-/// behind the selected tab.
-const searching = computed(() => settingsQuery.value.trim().length > 0);
+const { settingsQuery, searching, filterSettings } = useSettingsSearch();
 
 function switchSection(id: string) {
   settingsSection.value = id;
@@ -458,67 +340,7 @@ function switchSection(id: string) {
   scrollEl.value?.scrollTo({ top: 0 });
 }
 
-interface SystemInfo {
-  logicalCores: number;
-  physicalCores: number;
-  recommendedThreads: number;
-}
-
-const sysInfo = ref<SystemInfo | null>(null);
-const maxThreads = computed(() => Math.max(2, sysInfo.value?.logicalCores ?? 8));
-const autoThreads = computed(() => sysInfo.value?.recommendedThreads ?? 4);
-
-async function loadSystemInfo() {
-  try {
-    sysInfo.value = await invoke<SystemInfo>("system_info", {
-      chunkMs: settings.value?.chunkMs ?? 60,
-    });
-  } catch {
-    sysInfo.value = null;
-  }
-}
-
-/// Configurations measured slower than real time in scripts/voxlock.ps1: the
-/// model then cannot keep up and the ring drops blocks.
-const slowConfig = computed(() => {
-  const s = settings.value;
-  if (!s) return false;
-  const threads = s.autoThreads ? autoThreads.value : s.denoiserThreads;
-  return s.chunkMs <= 40 && threads <= 2;
-});
-
-function notify(title: string, kind: ToastKind = "info", text = "") {
-  // the same message twice (the engine watchdog fires every few seconds) must
-  // refresh the timer, not stack a second card
-  const existing = toasts.value.find((t) => t.title === title && t.text === text);
-  if (existing) {
-    window.clearTimeout(toastTimers.get(existing.id));
-    toastTimers.set(
-      existing.id,
-      window.setTimeout(() => dismissToast(existing.id), TOAST_MS),
-    );
-    return;
-  }
-  const id = ++toastSeq;
-  const next = [...toasts.value, { id, title, text, kind }].slice(-3);
-  for (const gone of toasts.value) {
-    if (!next.some((t) => t.id === gone.id)) {
-      window.clearTimeout(toastTimers.get(gone.id));
-      toastTimers.delete(gone.id);
-    }
-  }
-  toasts.value = next;
-  toastTimers.set(
-    id,
-    window.setTimeout(() => dismissToast(id), TOAST_MS),
-  );
-}
-
-function dismissToast(id: number) {
-  window.clearTimeout(toastTimers.get(id));
-  toastTimers.delete(id);
-  toasts.value = toasts.value.filter((t) => t.id !== id);
-}
+const { sysInfo, maxThreads, autoThreads, slowConfig, loadSystemInfo } = useSystemInfo(settings);
 
 async function matchLevel() {
   if (!abRaw.value) return;
@@ -577,37 +399,6 @@ function onHotkeyKey(event: KeyboardEvent) {
   }
   capturingHotkey.value = false;
 }
-
-async function filterSettings(value: string) {
-  settingsQuery.value = value;
-  // the sections are rendered by `v-if="searching || …"`, so Vue has to patch
-  // them in before the filter can walk the fresh rows
-  await nextTick();
-  applyFilter();
-}
-
-function applyFilter() {
-  const query = settingsQuery.value.trim().toLowerCase();
-  document.querySelectorAll<HTMLElement>(".srow").forEach((row) => {
-    row.style.display =
-      !query || (row.textContent ?? "").toLowerCase().includes(query) ? "" : "none";
-  });
-  // a section whose rows all fell out of the query should disappear instead of
-  // leaving an empty heading behind; the diagnostics table has no rows at all,
-  // so it is matched by its own text
-  document.querySelectorAll<HTMLElement>(".sblock").forEach((block) => {
-    if (!query) {
-      block.style.display = "";
-      return;
-    }
-    const rows = Array.from(block.querySelectorAll<HTMLElement>(".srow"));
-    const hit = rows.length
-      ? rows.some((row) => row.style.display !== "none")
-      : (block.textContent ?? "").toLowerCase().includes(query);
-    block.style.display = hit ? "" : "none";
-  });
-}
-
 
 async function startEngine(test: boolean) {
   if (starting.value) return;
