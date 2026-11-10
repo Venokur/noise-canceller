@@ -36,7 +36,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $rust = @{}
+# CI sets CARGO_TERM_COLOR=always, so the " (*)" marker of a deduplicated
+# dependency arrives wrapped in ANSI escapes and must be stripped first.
+$ansi = [regex]"\x1b\[[0-9;]*m"
 foreach ($line in $tree) {
+    $line = $ansi.Replace($line, '')
     if ($line -notmatch '\|') { continue }
     $left, $right = $line -split '\|', 2
     $license = ($right -replace '\s*\(\*\)\s*$', '').Trim()
