@@ -97,7 +97,7 @@ if ($Atten) {
         $failed++
         Write-Host ("FAIL  leveler did not start lifting the quiet mic (level {0} dB)" -f $quiet.level) -ForegroundColor Red
     }
-    # a remembered gain (data/leveler.txt) must restore the level right away
+    # a remembered gain (data/state.json) must restore the level right away
     $seeded = Invoke-Selftest 60 4 -20 6
     if ($null -ne $loud.model -and $null -ne $seeded.model) {
         $gap_db = 20 * [math]::Log10($loud.model / [math]::Max($seeded.model, 1e-9))

@@ -11,6 +11,7 @@ pub mod recordings;
 pub mod resample;
 pub mod settings;
 pub mod spectrum;
+pub mod state;
 pub mod wav;
 
 pub use engine::{

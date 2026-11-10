@@ -31,6 +31,7 @@ use crate::paths;
 use crate::recordings;
 use crate::resample::Resampler;
 use crate::settings::{self, Settings};
+use crate::state::{LearnedState, LEVELER_GAIN_MAX_DB};
 
 pub const MODEL_RATE: u32 = 16_000;
 pub const BANDS: usize = 32;
@@ -180,36 +181,50 @@ impl Shared {
 /// bends pitch and timbre, which is audible as "the voice speeds up and slows
 /// down". The step therefore moves by at most a fraction of a percent every
 /// couple of seconds.
-/// Writes the small state files (`leveler.txt`, `auto-buffer.txt`) off the
-/// processing thread.
+/// Writes the learned state (`data/state.json`) off the processing thread.
 ///
 /// `data/` sits next to the exe, and on a user's machine that is often a
 /// OneDrive folder: a `fs::write` there can block for tens of milliseconds
 /// while the output ring holds about 120 ms. The processing thread used to do
 /// these writes itself, so a sync hiccup was audible as a hole.
+///
+/// The thread owns the file: messages only carry one field, the thread merges it
+/// into the state it already has and serializes the whole JSON itself, so a
+/// write can never leave the file with one value updated and the other stale.
 struct Persist {
-    tx: std::sync::mpsc::Sender<(std::path::PathBuf, String)>,
+    tx: std::sync::mpsc::Sender<PersistMsg>,
+}
+
+enum PersistMsg {
+    AutoBuffer(f32),
+    LevelerGain(f32),
 }
 
 impl Persist {
-    fn spawn() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<(std::path::PathBuf, String)>();
+    fn spawn(dir: std::path::PathBuf, mut state: LearnedState) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<PersistMsg>();
         let _ = thread::Builder::new()
             .name("nc-persist".into())
             .spawn(move || {
-                while let Ok((path, text)) = rx.recv() {
-                    if let Err(err) = std::fs::write(&path, text) {
-                        crate::log::info(&format!("cannot write {}: {err}", path.display()));
+                while let Ok(msg) = rx.recv() {
+                    match msg {
+                        PersistMsg::AutoBuffer(ms) => state.auto_buffer_ms = ms,
+                        PersistMsg::LevelerGain(db) => state.leveler_gain_db = db,
                     }
+                    state.save(&dir);
                 }
             });
         Self { tx }
     }
 
-    fn write(&self, path: &std::path::Path, text: String) {
+    fn set_auto_buffer(&self, ms: f32) {
         // the receiver only goes away when the engine stops; losing a state
-        // file is not worth blocking the audio path
-        let _ = self.tx.send((path.to_path_buf(), text));
+        // update is not worth blocking the audio path
+        let _ = self.tx.send(PersistMsg::AutoBuffer(ms));
+    }
+
+    fn set_leveler_gain(&self, db: f32) {
+        let _ = self.tx.send(PersistMsg::LevelerGain(db));
     }
 }
 
@@ -295,15 +310,17 @@ impl Engine {
         );
 
         // the auto buffer is learned between sessions: start from the stored
-        // value, otherwise from the manual one; the ring is prefilled to it
-        let auto_buffer_path = paths::data_dir().join("auto-buffer.txt");
+        // value (`data/state.json`), otherwise from the manual one; the ring is
+        // prefilled to it
+        let learned = LearnedState::load(&paths::data_dir());
         // read once, here, before the streams run: the processing thread must
         // not read or write this folder
-        let mut learned_buffer_ms = std::fs::read_to_string(&auto_buffer_path)
-            .ok()
-            .and_then(|text| text.trim().parse::<f32>().ok())
-            .unwrap_or(settings.buffer_ms)
-            .clamp(settings::BUFFER_MS_MIN, settings::BUFFER_MS_MAX);
+        let mut learned_buffer_ms = if learned.auto_buffer_ms > 0.0 {
+            learned.auto_buffer_ms
+        } else {
+            settings.buffer_ms
+        }
+        .clamp(settings::BUFFER_MS_MIN, settings::BUFFER_MS_MAX);
         let buffer_ms = if settings.buffer_auto {
             learned_buffer_ms
         } else {
@@ -315,9 +332,9 @@ impl Engine {
             .buffer_ms
             .store(buffer_ms.to_bits(), Ordering::Relaxed);
 
-        // state files are written by a helper thread: `data/` may be a synced
+        // learned state is written by a helper thread: `data/` may be a synced
         // folder and a blocking write on the audio path is audible
-        let persist = Persist::spawn();
+        let persist = Persist::spawn(paths::data_dir(), learned);
 
         // rings ------------------------------------------------------------
         let (mut in_prod, mut in_cons) = rtrb::RingBuffer::<f32>::new(MODEL_RATE as usize * 2);
@@ -360,12 +377,7 @@ impl Engine {
         let mut rtf_window = (0usize, Duration::ZERO);
         // remember the level between runs: without it the first words of a
         // session start quiet and climb for a second or two
-        let level_path = paths::data_dir().join("leveler.txt");
-        let saved_gain = std::fs::read_to_string(&level_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<f32>().ok())
-            .unwrap_or(0.0)
-            .clamp(0.0, 18.0);
+        let saved_gain = learned.leveler_gain_db.clamp(0.0, LEVELER_GAIN_MAX_DB);
         let mut leveler = Leveler::new(saved_gain);
 
         let session_start = Instant::now();
@@ -459,7 +471,7 @@ impl Engine {
                                 proc_shared
                                     .buffer_ms
                                     .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                persist.write(&auto_buffer_path, format!("{auto_ms:.0}"));
+                                persist.set_auto_buffer(auto_ms);
                                 auto_changed = Instant::now();
                                 crate::log::info(&format!(
                                     "auto buffer: {auto_ms:.0} ms (+{delta} buffer miss)"
@@ -472,7 +484,7 @@ impl Engine {
                                 proc_shared
                                     .buffer_ms
                                     .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                persist.write(&auto_buffer_path, format!("{auto_ms:.0}"));
+                                persist.set_auto_buffer(auto_ms);
                                 auto_changed = Instant::now();
                                 crate::log::info(&format!(
                                     "auto buffer: {auto_ms:.0} ms (90 s without misses)"
@@ -606,7 +618,7 @@ impl Engine {
                         let gain = leveler.gain_db();
                         if (gain - saved_level).abs() > 2.0 {
                             saved_level = gain;
-                            persist.write(&level_path, format!("{gain:.1}"));
+                            persist.set_leveler_gain(gain);
                         }
                     }
 
@@ -1354,5 +1366,34 @@ mod tests {
         assert!(voice.update(&quiet));
         assert!(!voice.voiced());
         assert!(voice.speech());
+    }
+
+    #[test]
+    fn persist_merges_both_values_into_one_file() {
+        let dir = std::env::temp_dir().join(format!("nc-persist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let persist = Persist::spawn(dir.clone(), LearnedState::default());
+        persist.set_auto_buffer(170.0);
+        persist.set_leveler_gain(4.5);
+
+        // messages are handled in order on the writer thread; a state file that
+        // lost one of them would be a merge bug, not a timing race
+        let path = LearnedState::path(&dir);
+        for _ in 0..300 {
+            let state = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<LearnedState>(&text).ok());
+            if let Some(state) = state {
+                if state.auto_buffer_ms == 170.0 && state.leveler_gain_db == 4.5 {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        panic!("nc-persist did not write both values into state.json");
     }
 }

@@ -245,13 +245,11 @@ fn replay_file() -> Result<()> {
     }
 
     // the live engine starts the leveler from the gain it remembered in
-    // data/leveler.txt, so replay has to do the same or the first phrase comes
+    // data/state.json, so replay has to do the same or the first phrase comes
     // out quiet and slowly rises — a difference that is not in the real output
     let mut start_db = 0.0f32;
     if let Some(dir) = settings_path.as_ref().and_then(|p| p.parent()) {
-        if let Ok(text) = std::fs::read_to_string(dir.join("leveler.txt")) {
-            start_db = text.trim().parse().unwrap_or(0.0);
-        }
+        start_db = noise_canceller_core::state::LearnedState::load(dir).leveler_gain_db;
     }
     let mut leveler = Leveler::new(start_db);
     let mut guard = PeakGuard::new(16_000.0);
@@ -496,6 +494,9 @@ fn show_settings() -> Result<()> {
         .unwrap_or_else(|| paths::data_dir().join("settings.json"));
 
     let s = Settings::load(&path);
+    let learned = noise_canceller_core::state::LearnedState::load(
+        path.parent().unwrap_or_else(|| std::path::Path::new(".")),
+    );
     let block_ms = noise_canceller_core::engine::block_ms(
         noise_canceller_core::engine::block_samples(s.chunk_ms),
     );
@@ -519,6 +520,15 @@ fn show_settings() -> Result<()> {
     println!(
         "leveling  {} · agc {} (target {} dB, max {} dB)",
         s.input_leveling, s.agc_enabled, s.agc_target_db, s.agc_max_gain_db
+    );
+    println!(
+        "learned   leveler {:.1} dB · auto buffer {} ms",
+        learned.leveler_gain_db,
+        if learned.auto_buffer_ms > 0.0 {
+            format!("{:.0}", learned.auto_buffer_ms)
+        } else {
+            "—".to_string()
+        }
     );
     println!(
         "devices   in «{}» out «{}»",
@@ -583,7 +593,7 @@ fn selftest() -> Result<()> {
     let mut mismatched = 0usize;
     // the live engine lifts a quiet microphone *before* the model; without the
     // same stage here a -40 dB take would test the gate, not the leveler.
-    // The 5th argument seeds the gain the way data/leveler.txt does.
+    // The 5th argument seeds the gain the way data/state.json does.
     let start_gain: f32 = std::env::args()
         .nth(5)
         .and_then(|v| v.parse().ok())
