@@ -7,7 +7,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, modelStatus, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, startHotkeyCapture, stats, switchSection } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, startHotkeyCapture, stats, switchSection } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -461,6 +461,18 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
               <div :class="settingRow">
                 <AppLabel text="Хранить записей A/B" hint="Сколько последних пар хранить в data/recordings; старые удаляются." />
                 <AppSlider v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Лицензии"
+                  hint="Программа распространяется под MIT. Рядом с ней лежат тексты лицензий третьих сторон: моделей VoxLock, GTCRN, Silero и библиотек sherpa-onnx, ONNX Runtime."
+                />
+                <div class="flex justify-end">
+                  <button :class="btn" @click="openLicenses">
+                    <AppIcon name="file" :size="14" />
+                    Открыть
+                  </button>
+                </div>
               </div>
               <div class="mt-4 flex flex-wrap items-center gap-1">
                 <button :class="btnGhost" @click="exportSettings">Экспорт настроек</button>

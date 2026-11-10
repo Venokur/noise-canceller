@@ -22,7 +22,20 @@ function Get-File([string]$Url, [string]$Destination) {
         return
     }
     Write-Host "fetch $(Split-Path $Destination -Leaf)"
-    Start-BitsTransfer -Source $Url -Destination $Destination
+
+    # BITS is the fastest path locally, but it needs the service and is not
+    # always present on a CI runner; fall back instead of failing the build.
+    if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+        try {
+            Start-BitsTransfer -Source $Url -Destination $Destination
+            return
+        } catch {
+            Write-Host "  bits failed, retrying with Invoke-WebRequest"
+            Remove-Item $Destination -Force -ErrorAction SilentlyContinue
+        }
+    }
+    # -UseBasicParsing keeps Windows PowerShell from needing the IE engine.
+    Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
 }
 
 # 1. VoxLock (sherpa-onnx packaging: adds the metadata the runtime reads)

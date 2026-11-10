@@ -44,6 +44,14 @@ jobs:
         working-directory: app
         run: npm run build
 
+      - name: License inventory
+        working-directory: app
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\licenses.ps1 -Check
+
+      - name: Bundle config
+        working-directory: app
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-bundle.ps1
+
       - name: Tauri build (portable exe)
         working-directory: app
         run: npm run tauri build -- --no-bundle

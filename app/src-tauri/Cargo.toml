@@ -2,6 +2,7 @@
 name = "noise-canceller"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 default-run = "noise-canceller"
 
 [build-dependencies]

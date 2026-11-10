@@ -2,10 +2,25 @@
 
 Портативное приложение для Windows 11: подавляет шум и **убирает чужие голоса** из
 микрофона, отдавая очищенный звук в Zoom, Google Meet, Discord, Telegram через
-виртуальный кабель. Всё считается на устройстве, без интернета: единственный
-сетевой запрос — проверка ревизии модели на HuggingFace по кнопке.
+виртуальный кабель. Всё считается на устройстве, без интернета: сеть нужна только
+по нажатию — проверить ревизию модели на HuggingFace и скачать установщик
+VB-CABLE.
 
 ![Главное окно](docs/screenshot-main.png)
+
+## Скачать
+
+Готовые сборки — в [релизах](https://github.com/Venokur/noise-canceller/releases/latest):
+
+| Файл | Что это |
+|---|---|
+| `noise-canceller-<версия>-setup.exe` | Установщик для текущего пользователя: ставит в `%LOCALAPPDATA%\Noise Canceller`, добавляет ярлык в «Пуск», права администратора не нужны. Профили, записи и настройки лежат в `data\` рядом с exe и при удалении сохраняются. |
+| `noise-canceller-<версия>-portable.zip` | Портативная сборка: распаковать в любую папку и запустить `noise-canceller.exe`. Всё, включая `data\`, остаётся внутри этой папки. |
+
+Установщик не подписан сертификатом, поэтому SmartScreen покажет «Неизвестный
+издатель» — «Подробнее» → «Выполнить в любом случае». Контрольные суммы лежат
+рядом, в `SHA256SUMS.txt`. VB-CABLE в сборку не входит: он ставится из самого
+приложения и только по нажатию.
 
 ## Что умеет
 
@@ -41,9 +56,29 @@
 cd app
 .\scripts\fetch-models.ps1          # модели (voxlock + denoise) и DLL (native)
 npm.cmd install
-npm.cmd run tauri build -- --no-bundle
-copy target\release\noise-canceller.exe ..\portable\
+npm.cmd run tauri build             # exe + установщик NSIS
+.\scripts\package-release.ps1       # ..\release: setup.exe, portable.zip, SHA256SUMS.txt
 ```
+
+`package-release.ps1` собирает оба файла релиза (`-SkipBuild` — взять уже
+собранное): установщик берётся из `target\release\bundle\nsis`, портативная папка
+из `..\portable`. Он же падает, если раскладка установщика (`bundle.resources`
+в `src-tauri\tauri.conf.json`) и портативной сборки разошлись.
+
+Только портативная папка и архив: `.\scripts\package-portable.ps1 -Zip`
+(`-SkipBuild` нет — ему нужен готовый exe). Скрипты не трогают `data\`,
+не копируют эталонные wav и остатки удалённых моделей.
+
+Релиз публикуется workflow `.github/workflows/release.yml` по тегу:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Тег обязан совпадать с `version` в `tauri.conf.json`, иначе workflow падает до
+сборки. Ручной запуск (`workflow_dispatch`) собирает те же файлы и кладёт их в
+артефакты прогона, ничего не публикуя.
 
 Портативная папка:
 
@@ -53,9 +88,16 @@ portable\
   models\voxlock\     enroll.onnx, chunk_int8.onnx
   models\denoise\     gtcrn.onnx, silero_vad.onnx
   native\             sherpa-onnx-c-api.dll, onnxruntime.dll
+  licenses\           тексты лицензий моделей, DLL и иконок
+  LICENSE.txt         MIT для самой программы
+  THIRD_PARTY_NOTICES.txt
   data\               настройки, профили, записи, журнал (создаётся само)
   README.txt
 ```
+
+Установщик ставит ровно эту раскладку (без `data\` и `README.txt`) в
+`%LOCALAPPDATA%\Noise Canceller`, поэтому `paths::root_dir()` находит `models`
+рядом с exe, а `data\` создаётся уже при первом запуске.
 
 Модели и DLL в `portable\` берутся из `app\models\` и `app\native\` — те же файлы,
 что скачивает `fetch-models.ps1`.
@@ -92,6 +134,21 @@ mic 48k → 16k → выравнивание уровня → пиковый о�
 
 ## Лицензии
 
-VoxLock — Apache-2.0 © Arbaz Siddiqui · sherpa-onnx — Apache-2.0 © k2-fsa ·
-ONNX Runtime — MIT · cpal — Apache-2.0 · Tauri — MIT/Apache-2.0 · Vue — MIT ·
-Tailwind — MIT · Lucide — ISC.
+Программа бесплатная, исходники открыты, лицензия — **MIT** (`LICENSE`):
+пользуйтесь, меняйте, встраивайте, в том числе в коммерческие продукты.
+
+Что внутри и под какой лицензией — `THIRD_PARTY_NOTICES.md`, тексты лежат в
+`licenses/`:
+
+- VoxLock — Apache-2.0 © Arbaz Siddiqui (с NOTICE);
+- GTCRN — MIT © Rong Xiaobin;
+- Silero VAD — MIT © Silero Team;
+- sherpa-onnx — Apache-2.0 © k2-fsa;
+- ONNX Runtime — MIT © Microsoft;
+- cpal — Apache-2.0; Tauri — MIT/Apache-2.0; Vue — MIT; Tailwind — MIT;
+- Lucide (`@lucide/vue`) — ISC, включая иконку приложения.
+
+**VB-CABLE** — отдельный продукт VB-Audio Software, в сборку не входит: кнопка
+установки скачивает официальный архив с vb-audio.com и запускает их установщик.
+Он бесплатен для личного использования (donationware); для профессионального
+применения нужна лицензия VB-Audio.

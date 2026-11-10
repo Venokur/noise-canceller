@@ -1,0 +1,124 @@
+name: Release
+
+# A tag push builds both artifacts and publishes them; a manual run only builds
+# them and leaves the files in the run's artifacts, so a broken bundle is caught
+# before the tag exists.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The release notes are built from the commits since the previous tag.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      # Models and DLLs are 100 MB and not in git; they come from the sherpa-onnx
+      # releases. Cache them, otherwise every release downloads the same files.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            app/models
+            app/native
+          key: models-sherpa-2.0.1-voxlock-int8-gtcrn
+
+      - name: Fetch models
+        working-directory: app
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-models.ps1
+
+      - name: Check tag matches version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+              throw "tag $env:GITHUB_REF_NAME does not match version $version in tauri.conf.json"
+          }
+
+      - name: Build installer and portable zip
+        working-directory: app
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-release.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noise-canceller-windows
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.zip
+            release/SHA256SUMS.txt
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $tag = $env:GITHUB_REF_NAME
+
+          $header = @"
+          ## Скачать
+
+          **Windows 11.** Ставится и работает без прав администратора.
+
+          | Файл | Что это |
+          |---|---|
+          | ``noise-canceller-$version-setup.exe`` | Установщик. Ставит приложение в ``%LOCALAPPDATA%\Noise Canceller``, добавляет ярлык в «Пуск». Профили, записи и настройки лежат в папке ``data\`` рядом с exe и при удалении сохраняются. |
+          | ``noise-canceller-$version-portable.zip`` | Портативная сборка. Распаковать в любую папку и запустить ``noise-canceller.exe``: всё, включая ``data\``, остаётся внутри этой папки. |
+
+          Установщик не подписан сертификатом, поэтому SmartScreen может показать
+          «Неизвестный издатель»: «Подробнее» → «Выполнить в любом случае».
+
+          Виртуальный кабель VB-CABLE в сборку не входит — вкладка «Настройки» →
+          «Виртуальный кабель», официальный установщик с vb-audio.com (для личного
+          использования бесплатен).
+
+          Контрольные суммы — в ``SHA256SUMS.txt``.
+
+          ## Изменения
+          "@
+
+          git describe --tags --abbrev=0 "HEAD^" 2>$null | Out-Null
+          $range = if ($LASTEXITCODE -eq 0) { "$(git describe --tags --abbrev=0 'HEAD^')..HEAD" } else { "HEAD" }
+          $changes = git log $range --no-merges --pretty=format:"- %s"
+
+          $notes = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          $text = $header + "`n" + ($changes -join "`n") + "`n"
+          # Explicit UTF-8 without BOM: gh sends the body as-is and a BOM shows
+          # up as a stray character before the first heading.
+          [System.IO.File]::WriteAllText($notes, $text, [System.Text.UTF8Encoding]::new($false))
+
+          $files = (Get-ChildItem release -File | Select-Object -ExpandProperty FullName)
+
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+              # Re-running the workflow for the same tag replaces the files.
+              gh release upload $tag @files --clobber
+          } else {
+              gh release create $tag @files --title "Noise Canceller $version" --notes-file $notes
+          }

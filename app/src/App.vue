@@ -797,6 +797,15 @@ async function openLog() {
   }
 }
 
+async function openLicenses() {
+  error.value = "";
+  try {
+    await invoke("open_licenses");
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 async function setMuted(muted: boolean) {
   try {
     await invoke("set_muted", { muted });
@@ -920,6 +929,7 @@ provide(APP_CONTEXT, {
   matchLevel,
   micReady,
   modelStatus,
+  openLicenses,
   openLog,
   outputDb,
   outputLevel,

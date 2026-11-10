@@ -546,6 +546,34 @@ fn open_log() -> Result<(), String> {
     Ok(())
 }
 
+/// Licenses travel next to the exe: `THIRD_PARTY_NOTICES.txt` and `licenses/`.
+/// In a dev build they sit one level up, in the repository root.
+#[tauri::command]
+fn open_licenses() -> Result<(), String> {
+    let root = noise_canceller_core::paths::root_dir();
+    let candidates = [root.clone(), root.parent().unwrap_or(&root).to_path_buf()];
+
+    for dir in candidates.iter() {
+        let notices = dir.join("THIRD_PARTY_NOTICES.txt");
+        let folder = dir.join("licenses");
+        if notices.is_file() || folder.is_dir() {
+            let mut command = std::process::Command::new("explorer");
+            if notices.is_file() {
+                command.arg(format!("/select,{}", notices.display()));
+            } else {
+                command.arg(&folder);
+            }
+            command
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+
+    Err("файлы лицензий не найдены рядом с программой".to_string())
+}
+
 #[tauri::command]
 fn reset_settings(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
     let fresh = Settings::default();
@@ -1068,6 +1096,7 @@ fn main() {
             prune_recordings,
             set_muted,
             open_log,
+            open_licenses,
             reset_settings,
             export_settings,
             import_settings,

@@ -32,8 +32,48 @@
     "targets": [
       "nsis"
     ],
+    "publisher": "Venokur",
+    "copyright": "© 2026 Venokur",
+    "license": "MIT",
+    "licenseFile": "../../LICENSE",
+    "homepage": "https://github.com/Venokur/noise-canceller",
+    "shortDescription": "Подавляет шум и убирает чужие голоса из микрофона",
     "icon": [
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../models/voxlock/enroll.onnx": "models/voxlock/enroll.onnx",
+      "../models/voxlock/chunk_int8.onnx": "models/voxlock/chunk_int8.onnx",
+      "../models/voxlock/README.md": "models/voxlock/README.md",
+      "../models/denoise/gtcrn.onnx": "models/denoise/gtcrn.onnx",
+      "../models/denoise/silero_vad.onnx": "models/denoise/silero_vad.onnx",
+      "../native/sherpa-onnx-c-api.dll": "native/sherpa-onnx-c-api.dll",
+      "../native/onnxruntime.dll": "native/onnxruntime.dll",
+      "../../licenses/README.md": "licenses/README.md",
+      "../../licenses/apache-2.0.txt": "licenses/apache-2.0.txt",
+      "../../licenses/gtcrn-LICENSE.txt": "licenses/gtcrn-LICENSE.txt",
+      "../../licenses/lucide-LICENSE.txt": "licenses/lucide-LICENSE.txt",
+      "../../licenses/mit.txt": "licenses/mit.txt",
+      "../../licenses/onnxruntime-LICENSE.txt": "licenses/onnxruntime-LICENSE.txt",
+      "../../licenses/silero-vad-LICENSE.txt": "licenses/silero-vad-LICENSE.txt",
+      "../../licenses/voxlock-NOTICE.txt": "licenses/voxlock-NOTICE.txt",
+      "../../LICENSE": "LICENSE.txt",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.txt"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "languages": [
+          "Russian",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }

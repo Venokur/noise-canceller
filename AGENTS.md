@@ -64,7 +64,8 @@ app/
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
   models/denoise/  gtcrn.onnx (0,5 МБ), silero_vad.onnx
   native/      sherpa-onnx-c-api.dll + onnxruntime.dll
-  scripts/     fetch-models.ps1, golden.ps1
+  scripts/     fetch-models.ps1, package-portable.ps1, package-release.ps1,
+               check-bundle.ps1, licenses.ps1, golden.ps1
 portable/     готовая сборка (exe + models + native + README)
 ```
 
@@ -217,6 +218,7 @@ cargo run -p noise-canceller-cli -- ab 3          # A/B-запись
 cargo run -p noise-canceller-cli -- devices       # список устройств с индексами
 powershell -File scripts\golden.ps1               # golden-тест, падает при дрейфе
 powershell -File scripts\voxlock.ps1 -Atten       # матрица блок/потоки + тихий микрофон
+powershell -File scripts\licenses.ps1 -Check      # список лицензий не разъехался
 ```
 
 Если что-то ведёт себя странно, сначала `data/app.log` (кнопка «Открыть лог» на
@@ -274,18 +276,43 @@ rtf=0.318 (OK)
 
 Если `dsp rms` в десятки раз меньше `model rms` — искать баг в DSP, а не в модели.
 
-## Сборка portable
+## Сборка portable и установщика
 
 ```powershell
 cd app
+npm.cmd run tauri build             # exe + установщик NSIS
+.\scripts\package-release.ps1       # ../release: setup.exe, portable.zip, SHA256SUMS.txt
+
 npm.cmd run tauri build -- --no-bundle
-copy target\release\noise-canceller.exe ..\portable\
+.\scripts\package-portable.ps1      # только ../portable (+ -Zip для архива)
 ```
 
 Только через Tauri CLI: `cargo build --release` оставляет `devUrl` и окно показывает
 `ERR_CONNECTION_REFUSED`.
 
+`package-portable.ps1` копирует exe, модели, DLL, `licenses/` и
+`THIRD_PARTY_NOTICES.txt` в `../portable`, а `data/` (личные записи), `test_wavs`
+и остатки убранных моделей не трогает. Если приложение запущено, скрипт падает
+до копирования, а не на середине. С `-Zip` делает архив
+`noise-canceller-<версия>-portable.zip` с одной верхней папкой — тоже без `data/`.
+
 Модели и DLL берутся из `app/models/` и `app/native/` (в portable копируются рядом с exe).
+
+Установщик собирает сам Tauri из `bundle.resources` в `src-tauri/tauri.conf.json`
+(map-форма: источник → путь внутри папки установки). Раскладка после установки
+обязана совпадать с portable — это проверяет `package-release.ps1`, который
+падает, если установщик ставит файл, которого нет в `../portable`. Режим
+установки — `currentUser` (`%LOCALAPPDATA%\Noise Canceller`): `data/` пишется
+рядом с exe, как в portable, и прав администратора не требует.
+
+Релиз публикует `.github/workflows/release.yml` по тегу `v<версия>`: модели
+(их нет в git) качает `fetch-models.ps1`, дальше `package-release.ps1`, дальше
+`gh release create` с setup.exe, zip и контрольными суммами. Тег обязан совпадать
+с `version` в `tauri.conf.json`. Ручной запуск (`workflow_dispatch`) ничего не
+публикует, только кладёт файлы в артефакты прогона. Версию при выпуске поднимают
+в четырёх местах: `src-tauri/tauri.conf.json` (её берёт установщик и имя архива),
+`package.json`, `src-tauri/Cargo.toml` и `cli/Cargo.toml`; `core/Cargo.toml`
+тоже держим в ногу, иначе `cargo` начнёт тянуть разные версии ядра.
 
 ## Грабли, на которые уже наступали
 
@@ -401,6 +428,17 @@ copy target\release\noise-canceller.exe ..\portable\
     `quit_app` ставит `EXITING`, снимает движок, зовёт `app.exit(0)` и запускает
     сторожевой поток, который через 1,5 с делает `std::process::exit(0)`; пока флаг
     взведён, `CloseRequested` не прячет окно в трей.
+22. **`--no-bundle` не собирает установщик**: с этой опцией Tauri останавливается
+    на exe, `bundle.resources` никто не проверяет, и `target/release/bundle/nsis`
+    остаётся пустым. Модели, DLL и лицензии в установщик попадают только из
+    `bundle.resources` (`tauri.conf.json`); список в `package-portable.ps1` —
+    второй, независимый, и они обязаны совпадать (`scripts/check-bundle.ps1` в CI,
+    сверка раскладок в `package-release.ps1`). Моделей нет в git, поэтому на
+    чистом клоне `tauri build` без `fetch-models.ps1` падает на resources.
+    Установщик неподписанный: SmartScreen пишет «Неизвестный издатель», это
+    ожидаемо и описано в README и в теле релиза. Удаление приложения удаляет
+    exe и файлы из `bundle.resources`, а `data/` (профили, записи) оставляет:
+    `RMDir` без `/r` не трогает непустую папку.
 
 ## Настройки, которые важны
 
@@ -566,6 +604,37 @@ Scicom voice-isolator не берём: лицензия `other`, файла LICE
 
 ## Лицензии
 
-VoxLock — Apache-2.0 © Arbaz Siddiqui · sherpa-onnx — Apache-2.0 © k2-fsa ·
-ONNX Runtime — MIT · cpal — Apache-2.0 · Tauri — MIT/Apache-2.0 · Vue — MIT ·
-Tailwind — MIT · Lucide (`@lucide/vue`) — ISC.
+Программа — MIT (`LICENSE`), © 2026 Venokur. Чужие работы и требования к ним:
+
+| Что | Лицензия | Что обязаны сохранить |
+|---|---|---|
+| VoxLock (`models/voxlock`) | Apache-2.0 © Arbaz Siddiqui | текст лицензии + `NOTICE` (атрибуция REAL-TSE) |
+| GTCRN | MIT © Rong Xiaobin | текст + копирайт |
+| Silero VAD | MIT © Silero Team | текст + копирайт |
+| sherpa-onnx | Apache-2.0 © k2-fsa | текст лицензии |
+| ONNX Runtime | MIT © Microsoft | текст + копирайт |
+| Tauri, cpal, Vue, Tailwind | MIT / Apache-2.0 | в общем списке |
+| Lucide (`@lucide/vue`), иконка приложения | ISC | текст + копирайт |
+
+Тексты лежат в `licenses/`, общий список — `THIRD_PARTY_NOTICES.md`, у него две
+таблицы с маркерами `inventory:rust` / `inventory:npm`; их собирает
+`scripts/licenses.ps1` из `cargo tree --target x86_64-pc-windows-msvc` и
+`package-lock.json`. Руками таблицы не правят, `-Check` падает при расхождении
+(его гоняет CI).
+
+Правила, чтобы не наступить:
+
+- новый компонент (модель, DLL, иконка, крейт) — строка в `THIRD_PARTY_NOTICES.md`,
+  текст в `licenses/`, файл в `package-portable.ps1` и в `bundle.resources`
+  (`tauri.conf.json`); потом `licenses.ps1`;
+- в Windows-сборке нет ни одной GPL/AGPL: 226 крейтов, все MIT / Apache-2.0 /
+  BSD / ISC / Zlib / Unicode; `MPL-2.0` только у пяти неизменённых
+  (`cssparser`, `selectors`, `dtoa-short`, `option-ext`, `cssparser-macros`);
+- **VB-CABLE не кладём в сборку и не перевыкладываем**: только официальный архив
+  с vb-audio.com по кнопке. Это donationware: личное использование бесплатно,
+  профессиональное требует лицензии VB-Audio;
+- `data/` (профили и записи голоса), `test_wavs` и остатки убранных моделей не
+  попадают ни в `portable/`, ни в релизный архив — за этим следит
+  `package-portable.ps1`;
+- `tauri.conf.json` (`bundle.publisher/copyright/license/licenseFile`) должен
+  оставаться заполненным: из него берутся поля установщика NSIS.

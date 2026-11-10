@@ -9,6 +9,11 @@ portable/data/
 portable/models/
 portable/native/
 portable/*.exe
+portable/licenses/
+portable/LICENSE.txt
+portable/THIRD_PARTY_NOTICES.txt
+noise-canceller-*.zip
+release/
 data/
 
 # models and native libraries are downloaded
