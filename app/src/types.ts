@@ -21,6 +21,9 @@ export interface Settings {
   voiceIsolation: boolean;
   highPassEnabled: boolean;
   highPassHz: number;
+  toneEnabled: boolean;
+  toneLowDb: number;
+  toneHighDb: number;
   gateEnabled: boolean;
   gateThresholdDb: number;
   gateRatio: number;

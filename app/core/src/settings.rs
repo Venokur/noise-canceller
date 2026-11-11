@@ -17,6 +17,15 @@ pub const DEFAULTS_REV: u32 = 12;
 pub const BUFFER_MS_MIN: f32 = 40.0;
 pub const BUFFER_MS_MAX: f32 = 250.0;
 
+/// Tone shelves. Body may go down to −6 dB and no further up than +3: below
+/// 100 Hz the chain has just removed the rumble a boost would bring back.
+pub const TONE_LOW_MIN_DB: f32 = -6.0;
+pub const TONE_LOW_MAX_DB: f32 = 3.0;
+/// Presence is symmetric, but never more than ±6 dB: a larger lift makes
+/// sibilance and residual hiss stand out and moves the "pauses are quieter
+/// than speech" figure in the A/B check.
+pub const TONE_HIGH_MAX_DB: f32 = 6.0;
+
 fn default_threads() -> u16 {
     std::thread::available_parallelism()
         .map(|n| (n.get() / 2).clamp(2, 4) as u16)
@@ -81,6 +90,13 @@ pub struct Settings {
 
     pub high_pass_enabled: bool,
     pub high_pass_hz: f32,
+
+    /// Two fixed shelves after the AGC: body at 200 Hz, presence at 3 kHz.
+    /// 0 dB is off. There is deliberately no band above 8 kHz — the model runs
+    /// at 16 kHz, so that part of the output is empty.
+    pub tone_enabled: bool,
+    pub tone_low_db: f32,
+    pub tone_high_db: f32,
 
     pub gate_enabled: bool,
     pub gate_threshold_db: f32,
@@ -154,6 +170,9 @@ impl Default for Settings {
 
             high_pass_enabled: true,
             high_pass_hz: 100.0,
+            tone_enabled: true,
+            tone_low_db: 0.0,
+            tone_high_db: 0.0,
             gate_enabled: true,
             gate_threshold_db: -50.0,
             gate_ratio: 3.0,
@@ -221,6 +240,8 @@ impl Settings {
         self.gate_hold_ms = self.gate_hold_ms.clamp(0.0, 1000.0);
         self.output_gain_db = self.output_gain_db.clamp(-24.0, 6.0);
         self.high_pass_hz = self.high_pass_hz.clamp(20.0, 300.0);
+        self.tone_low_db = self.tone_low_db.clamp(TONE_LOW_MIN_DB, TONE_LOW_MAX_DB);
+        self.tone_high_db = self.tone_high_db.clamp(-TONE_HIGH_MAX_DB, TONE_HIGH_MAX_DB);
         self.comfort_noise_db = self.comfort_noise_db.clamp(-90.0, -30.0);
         self.ab_seconds = self.ab_seconds.clamp(5.0, 60.0);
         self.keep_recordings = self.keep_recordings.clamp(1, 100);
@@ -471,6 +492,8 @@ mod tests {
             residual_order: "nonsense".into(),
             hotkey_mode: "nonsense".into(),
             mute_hotkey: "  ".into(),
+            tone_low_db: 99.0,
+            tone_high_db: -99.0,
             ..Settings::default()
         };
         settings.sanitize();
@@ -486,5 +509,22 @@ mod tests {
         assert_eq!(settings.residual_order, "after");
         assert_eq!(settings.hotkey_mode, "toggle");
         assert_eq!(settings.mute_hotkey, "Ctrl+Alt+M");
+        assert_eq!(settings.tone_low_db, TONE_LOW_MAX_DB);
+        assert_eq!(settings.tone_high_db, -TONE_HIGH_MAX_DB);
+    }
+
+    #[test]
+    fn an_old_settings_file_gets_a_neutral_tone_control() {
+        // a file written before the shelves existed must keep the sound it had:
+        // 0 dB makes the chain skip both filters entirely
+        let dir = std::env::temp_dir().join(format!("nc-tone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, r#"{"defaultsRev":12,"residualDenoise":"gtcrn"}"#).unwrap();
+        let settings = Settings::load(&path);
+        assert_eq!(settings.tone_low_db, 0.0);
+        assert_eq!(settings.tone_high_db, 0.0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

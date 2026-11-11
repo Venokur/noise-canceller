@@ -559,6 +559,10 @@ fn show_settings() -> Result<()> {
         s.input_leveling, s.agc_enabled, s.agc_target_db, s.agc_max_gain_db
     );
     println!(
+        "tone      {} · body {:+.1} dB @ 200 Hz · presence {:+.1} dB @ 3 kHz",
+        s.tone_enabled, s.tone_low_db, s.tone_high_db
+    );
+    println!(
         "learned   leveler {:.1} dB · auto buffer {} ms",
         learned.leveler_gain_db,
         if learned.auto_buffer_ms > 0.0 {

@@ -1,5 +1,5 @@
-//! Post-isolation clean-up: high-pass, expander, AGC, limiter, optional comfort noise.
-//! Deterministic, no allocations in `process`.
+//! Post-isolation clean-up: high-pass, expander, AGC, tone shelves, limiter,
+//! optional comfort noise. Deterministic, no allocations in `process`.
 
 use crate::settings::Settings;
 
@@ -28,6 +28,42 @@ impl Biquad {
         self.b2 = (1.0 + cos) / 2.0 / a0;
         self.a1 = -2.0 * cos / a0;
         self.a2 = (1.0 - alpha) / a0;
+    }
+
+    /// RBJ low shelf: everything below `corner_hz` moves by `gain_db`.
+    ///
+    /// The slope is the steepest one that does not overshoot (`S = 1`), which is
+    /// what a tone control wants: a smooth tilt, not a resonant bump around the
+    /// corner that would sound like a second voice.
+    pub fn low_shelf(&mut self, sample_rate: f32, corner_hz: f32, gain_db: f64) {
+        let a = 10f64.powf(gain_db / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * corner_hz as f64 / sample_rate as f64;
+        let cos = w0.cos();
+        let alpha = w0.sin() / 2.0 * std::f64::consts::SQRT_2;
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+
+        let a0 = (a + 1.0) + (a - 1.0) * cos + two_sqrt_a_alpha;
+        self.b0 = a * ((a + 1.0) - (a - 1.0) * cos + two_sqrt_a_alpha) / a0;
+        self.b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos) / a0;
+        self.b2 = a * ((a + 1.0) - (a - 1.0) * cos - two_sqrt_a_alpha) / a0;
+        self.a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos) / a0;
+        self.a2 = ((a + 1.0) + (a - 1.0) * cos - two_sqrt_a_alpha) / a0;
+    }
+
+    /// RBJ high shelf: everything above `corner_hz` moves by `gain_db`.
+    pub fn high_shelf(&mut self, sample_rate: f32, corner_hz: f32, gain_db: f64) {
+        let a = 10f64.powf(gain_db / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * corner_hz as f64 / sample_rate as f64;
+        let cos = w0.cos();
+        let alpha = w0.sin() / 2.0 * std::f64::consts::SQRT_2;
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+
+        let a0 = (a + 1.0) - (a - 1.0) * cos + two_sqrt_a_alpha;
+        self.b0 = a * ((a + 1.0) + (a - 1.0) * cos + two_sqrt_a_alpha) / a0;
+        self.b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos) / a0;
+        self.b2 = a * ((a + 1.0) + (a - 1.0) * cos - two_sqrt_a_alpha) / a0;
+        self.a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos) / a0;
+        self.a2 = ((a + 1.0) - (a - 1.0) * cos - two_sqrt_a_alpha) / a0;
     }
 
     #[inline]
@@ -333,6 +369,10 @@ pub struct Chain {
     gate: Gate,
     agc: Agc,
     limiter: Limiter,
+    /// tone control: body shelf at 200 Hz and presence shelf at 3 kHz, both
+    /// after the AGC and before the limiter
+    tone_low: Biquad,
+    tone_high: Biquad,
     /// transient (keyboard click, knock) suppressor state
     click_gain: f64,
     click_hold: u32,
@@ -344,6 +384,13 @@ pub struct Chain {
 
     high_pass_enabled: bool,
     high_pass_hz: f32,
+    tone_enabled: bool,
+    tone_low_db: f32,
+    tone_high_db: f32,
+    /// a shelf at 0 dB is the identity filter, so it is skipped entirely: a
+    /// settings file without the tone fields keeps the chain bit-exact
+    tone_low_active: bool,
+    tone_high_active: bool,
     gate_enabled: bool,
     agc_enabled: bool,
     limiter_enabled: bool,
@@ -361,6 +408,14 @@ impl Chain {
     const CLICK_GAIN: f64 = 0.2;
     /// how long the duck lasts after the block that carried the click
     const CLICK_HOLD_MS: f64 = 50.0;
+    /// Presence sits at 3 kHz because consonants live at 1-4 kHz and that is
+    /// where the model plus the residual denoiser take the most out. Above
+    /// 8 kHz there is nothing to lift: the model runs at 16 kHz, so the band
+    /// the resampler stretches to 48 kHz is empty.
+    const TONE_HIGH_HZ: f32 = 3000.0;
+    /// Body sits at 200 Hz. Below the 100 Hz high-pass a boost only brings back
+    /// the rumble that filter removed, so the low shelf is mostly a cut.
+    const TONE_LOW_HZ: f32 = 200.0;
 
     pub fn new() -> Self {
         let mut chain = Self {
@@ -370,6 +425,8 @@ impl Chain {
             gate: Gate::default(),
             agc: Agc::default(),
             limiter: Limiter::default(),
+            tone_low: Biquad::default(),
+            tone_high: Biquad::default(),
             click_gain: 1.0,
             click_hold: 0,
             click_attack: 0.0,
@@ -381,6 +438,11 @@ impl Chain {
             agc_mix_coef: 0.0,
             high_pass_enabled: true,
             high_pass_hz: 85.0,
+            tone_enabled: true,
+            tone_low_db: 0.0,
+            tone_high_db: 0.0,
+            tone_low_active: false,
+            tone_high_active: false,
             gate_enabled: true,
             agc_enabled: true,
             limiter_enabled: true,
@@ -397,6 +459,9 @@ impl Chain {
         self.sample_rate = sample_rate as f64;
         self.high_pass_enabled = settings.high_pass_enabled;
         self.high_pass_hz = settings.high_pass_hz;
+        self.tone_enabled = settings.tone_enabled;
+        self.tone_low_db = settings.tone_low_db;
+        self.tone_high_db = settings.tone_high_db;
         self.gate_enabled = settings.gate_enabled;
         self.agc_enabled = settings.agc_enabled;
         self.limiter_enabled = settings.limiter_enabled;
@@ -421,6 +486,26 @@ impl Chain {
             .high_pass(sample_rate as f32, self.high_pass_hz, 0.5412);
         self.high_pass2
             .high_pass(sample_rate as f32, self.high_pass_hz, 1.3066);
+
+        // A shelf set to 0 dB is an identity filter; skipping it keeps the
+        // output bit-exact for every settings file written before the control
+        // existed, so the golden test has nothing to drift on.
+        self.tone_low_active = self.tone_enabled && self.tone_low_db.abs() >= 0.05;
+        self.tone_high_active = self.tone_enabled && self.tone_high_db.abs() >= 0.05;
+        if self.tone_low_active {
+            self.tone_low.low_shelf(
+                sample_rate as f32,
+                Self::TONE_LOW_HZ,
+                self.tone_low_db as f64,
+            );
+        }
+        if self.tone_high_active {
+            self.tone_high.high_shelf(
+                sample_rate as f32,
+                Self::TONE_HIGH_HZ,
+                self.tone_high_db as f64,
+            );
+        }
         // 30 ms crossfade between "no level change" and the AGC output
         self.agc_mix_coef = 1.0 - (-1000.0 / 30.0 / sample_rate as f64).exp();
         // a keyboard click is a 1-3 ms crack: duck it within a millisecond and
@@ -439,6 +524,8 @@ impl Chain {
     pub fn reset(&mut self) {
         self.high_pass.reset();
         self.high_pass2.reset();
+        self.tone_low.reset();
+        self.tone_high.reset();
         self.gate.reset();
         self.agc.reset();
         self.limiter.reset();
@@ -502,6 +589,16 @@ impl Chain {
                 let target = if self.agc.apply { 1.0 } else { 0.0 };
                 self.agc_mix += (target - self.agc_mix) * self.agc_mix_coef;
                 x = dry + (wet - dry) * self.agc_mix;
+            }
+            // Tone sits after the AGC and before the limiter. In front of the
+            // AGC it would be measured as loudness and pulled back within
+            // 100 ms, so the slider would look like it does nothing; behind
+            // the limiter the boost would clip.
+            if self.tone_low_active {
+                x = self.tone_low.process(x);
+            }
+            if self.tone_high_active {
+                x = self.tone_high.process(x);
             }
             if self.limiter_enabled {
                 x = self.limiter.process(x, sr);
@@ -731,5 +828,76 @@ mod tests {
                 "speech changed: {before:.1} -> {after:.1} dBFS"
             );
         }
+    }
+
+    /// A chain that only runs the tone shelves: no high-pass, gate, AGC,
+    /// limiter or gain, so the measured change is the shelf and nothing else.
+    fn tone_chain(low_db: f32, high_db: f32) -> Chain {
+        let mut chain = Chain::new();
+        let settings = Settings {
+            high_pass_enabled: false,
+            gate_enabled: false,
+            agc_enabled: false,
+            limiter_enabled: false,
+            comfort_noise_enabled: false,
+            output_gain_db: 0.0,
+            tone_enabled: true,
+            tone_low_db: low_db,
+            tone_high_db: high_db,
+            ..Settings::default()
+        };
+        chain.configure(&settings, 48_000);
+        chain
+    }
+
+    /// Change in dB of a sine at `hz` after the chain has settled.
+    fn tone_change_db(chain: &mut Chain, hz: f64) -> f64 {
+        let sine = |from: usize, len: usize| -> Vec<f32> {
+            (from..from + len)
+                .map(|i| {
+                    (2.0 * std::f64::consts::PI * hz * i as f64 / 48_000.0).sin() as f32 * 0.05
+                })
+                .collect()
+        };
+        let mut warmup = sine(0, 12_000);
+        chain.process(&mut warmup);
+        let reference = rms_db(&sine(12_000, 12_000));
+        let mut measured = sine(12_000, 12_000);
+        chain.process(&mut measured);
+        rms_db(&measured) - reference
+    }
+
+    #[test]
+    fn a_tone_shelf_at_zero_db_changes_nothing() {
+        // every settings file written before the control existed lands here,
+        // and the chain has to sound exactly as it did
+        let mut chain = tone_chain(0.0, 0.0);
+        for hz in [100.0, 3_000.0, 6_000.0] {
+            let change = tone_change_db(&mut chain, hz);
+            assert!(change.abs() < 0.05, "{hz} Hz moved by {change:.3} dB");
+        }
+    }
+
+    #[test]
+    fn presence_lifts_consonants_more_than_the_corner() {
+        // the corner of a shelf sits at half its gain, so 3 kHz moves ~3 dB and
+        // 8 kHz gets almost the full +6
+        let mut chain = tone_chain(0.0, 6.0);
+        let corner = tone_change_db(&mut chain, 3_000.0);
+        let high = tone_change_db(&mut chain, 8_000.0);
+        assert!(
+            (2.0..=4.0).contains(&corner),
+            "3 kHz moved by {corner:.1} dB"
+        );
+        assert!((4.5..=6.5).contains(&high), "8 kHz moved by {high:.1} dB");
+    }
+
+    #[test]
+    fn the_body_shelf_is_mostly_a_cut() {
+        // +3 dB is the ceiling in the settings: everything below 100 Hz is the
+        // rumble the high-pass just removed
+        let mut chain = tone_chain(-6.0, 0.0);
+        let low = tone_change_db(&mut chain, 80.0);
+        assert!((low + 6.0).abs() < 1.5, "80 Hz moved by {low:.1} dB");
     }
 }

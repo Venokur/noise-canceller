@@ -164,6 +164,27 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
               </div>
               <div :class="settingRow">
                 <AppLabel
+                  text="Тембр"
+                  hint="Две полки после автогромкости: «тело» на 200 Гц и разборчивость на 3 кГц. 0 дБ — звук не меняется."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.toneEnabled" /></div>
+              </div>
+              <div v-if="settings.toneEnabled" :class="settingRow">
+                <AppLabel
+                  text="Тело"
+                  hint="Полка на 200 Гц. Вниз убирает бубнёж и остатки гула, вверх добавляет плотность. Выше +3 дБ возвращает то, что снимает срез низов."
+                />
+                <AppSlider v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+              </div>
+              <div v-if="settings.toneEnabled" :class="settingRow">
+                <AppLabel
+                  text="Разборчивость"
+                  hint="Полка на 3 кГц — там согласные. Вверх делает речь яснее, но поднимает и остаточный шип, поэтому предел ±6 дБ. Выше 8 кГц полосы нет: модель работает на 16 кГц."
+                />
+                <AppSlider v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
                   text="Гейт"
                   hint="Пороговый шумодав для остатков сигнала: закрывает всё, что тише порога."
                 />
