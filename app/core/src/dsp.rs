@@ -133,11 +133,19 @@ pub struct Agc {
     /// model did not suppress is the target speaker, and only then the level
     /// may be raised
     pub target_present: bool,
+    /// this detector window is at the speech level, so the held gain may be
+    /// applied. A breath or the room between two words is not: lifting it is
+    /// how the gap between words arrived 12 dB louder than it left.
+    apply: bool,
     block_sum: f64,
     block_peak: f64,
     block_len: usize,
     block_count: usize,
     rms: f64,
+    /// loudest recent block: the reference for "is this block a word at all".
+    /// An average drifts down to the room level during a long gap, and then the
+    /// room itself counts as speech and gets the gain.
+    peak: f64,
     gain_db: f64,
     gain_lin: f64,
     target_lin: f64,
@@ -158,11 +166,13 @@ impl Default for Agc {
             // lift whatever was in the room, and the first word came out 8 dB
             // louder than the rest
             target_present: false,
+            apply: false,
             block_sum: 0.0,
             block_peak: 0.0,
             block_len: 0,
             block_count: 0,
             rms: 0.0,
+            peak: 0.0,
             gain_db: 0.0,
             gain_lin: 1.0,
             target_lin: 1.0,
@@ -185,6 +195,12 @@ impl Agc {
     const WARMUP_DB: f64 = 4.0;
     /// ...for the first two seconds
     const WARMUP_WINDOWS: u32 = 20;
+    /// blocks this far below the recent speech level are the room, not a word
+    const SPEECH_WINDOW_DB: f64 = 22.0;
+    /// ...and this is how close a block has to be for the held gain to be applied
+    const APPLY_WINDOW_DB: f64 = 12.0;
+    /// the loudest-block reference loses 0.5 % per 100 ms window
+    const PEAK_DECAY: f64 = 0.995;
 
     #[inline]
     pub fn process(&mut self, x: f64, sample_rate: f64) -> f64 {
@@ -209,11 +225,27 @@ impl Agc {
             self.block_peak = 0.0;
             self.block_count = 0;
 
-            // a knock is a short loud crack; it must not pull the level down,
+            // A knock is a short loud crack; it must not pull the level down,
             // or the words after it come out quiet for a second or two
             let crest = 20.0 * ((block_peak + 1e-9) / (block_rms + 1e-9)).log10();
 
-            if block_rms > 1.8e-3 && crest < 14.0 && self.target_present {
+            // A block this far below the loudest recent one is the room, a
+            // keyboard click or the book in the background, not a word. Lifting
+            // it is exactly how a pause arrives 12 dB louder than it left, and
+            // why the same room was audible in the A/B takes but not in the raw.
+            // The reference decays slowly (0.5 % per window), so a long gap does
+            // not drag it down to the room level and turn the room into speech.
+            self.peak = (self.peak * Self::PEAK_DECAY).max(block_rms);
+            let speech_level = block_rms > self.peak * 10f64.powf(-Self::SPEECH_WINDOW_DB / 20.0);
+
+            // ...and even inside a phrase the held gain is applied only where
+            // the block is close to the speech level: a breath between two words
+            // used to receive the full +12 dB of a phrase that was quieter.
+            self.apply = self.target_present
+                && block_rms > 1.8e-3
+                && block_rms > self.peak * 10f64.powf(-Self::APPLY_WINDOW_DB / 20.0);
+
+            if speech_level && block_rms > 1.8e-3 && crest < 14.0 && self.target_present {
                 self.rms = if self.rms <= 0.0 {
                     block_rms
                 } else {
@@ -246,8 +278,10 @@ impl Agc {
         self.block_sum = 0.0;
         self.block_count = 0;
         self.rms = 0.0;
+        self.peak = 0.0;
         self.gain_db = 0.0;
         self.gain_lin = 1.0;
+        self.apply = false;
         self.warmup = Self::WARMUP_WINDOWS;
     }
 }
@@ -299,6 +333,11 @@ pub struct Chain {
     gate: Gate,
     agc: Agc,
     limiter: Limiter,
+    /// transient (keyboard click, knock) suppressor state
+    click_gain: f64,
+    click_hold: u32,
+    click_attack: f64,
+    click_release: f64,
     silence_env: f64,
     agc_mix: f64,
     agc_mix_coef: f64,
@@ -315,6 +354,14 @@ pub struct Chain {
 }
 
 impl Chain {
+    /// speech stays under about 14 dB of crest; a keyboard click or a knock is
+    /// a 17-25 dB crack and is what "typing in the background" sounds like
+    const CLICK_CREST_DB: f64 = 17.0;
+    /// a click is not a word: 14 dB down keeps it recognisable but not annoying
+    const CLICK_GAIN: f64 = 0.2;
+    /// how long the duck lasts after the block that carried the click
+    const CLICK_HOLD_MS: f64 = 50.0;
+
     pub fn new() -> Self {
         let mut chain = Self {
             sample_rate: 48000.0,
@@ -323,6 +370,10 @@ impl Chain {
             gate: Gate::default(),
             agc: Agc::default(),
             limiter: Limiter::default(),
+            click_gain: 1.0,
+            click_hold: 0,
+            click_attack: 0.0,
+            click_release: 0.0,
             silence_env: 0.0,
             // the crossfade starts fully dry: the AGC has no gain yet, so there
             // is nothing to fade in
@@ -372,6 +423,10 @@ impl Chain {
             .high_pass(sample_rate as f32, self.high_pass_hz, 1.3066);
         // 30 ms crossfade between "no level change" and the AGC output
         self.agc_mix_coef = 1.0 - (-1000.0 / 30.0 / sample_rate as f64).exp();
+        // a keyboard click is a 1-3 ms crack: duck it within a millisecond and
+        // let go in 30 ms, so a word starting right after is not swallowed
+        self.click_attack = 1.0 - (-1000.0 / 1.0 / sample_rate as f64).exp();
+        self.click_release = 1.0 - (-1000.0 / 30.0 / sample_rate as f64).exp();
     }
 
     /// The engine tells the chain whether the model thinks the target speaker
@@ -387,6 +442,8 @@ impl Chain {
         self.gate.reset();
         self.agc.reset();
         self.limiter.reset();
+        self.click_gain = 1.0;
+        self.click_hold = 0;
         self.silence_env = 0.0;
     }
 
@@ -401,6 +458,25 @@ impl Chain {
         let sr = self.sample_rate;
         let gain = 10f64.powf(self.output_gain_db as f64 / 20.0);
         let comfort_threshold = 10f64.powf(((self.comfort_level + 6.0) as f64) / 20.0);
+
+        // A keyboard click or a knock is a crack of 17-25 dB crest; speech stays
+        // under 14 dB even at its loudest syllable. Ducking the block that
+        // carries one keeps the click (and the room it excites) out of the way
+        // without touching words.
+        let peak = buffer.iter().fold(0.0f64, |m, v| m.max((*v as f64).abs()));
+        let rms = (buffer
+            .iter()
+            .map(|v| {
+                let x = *v as f64;
+                x * x
+            })
+            .sum::<f64>()
+            / buffer.len().max(1) as f64)
+            .sqrt();
+        let crest = 20.0 * ((peak + 1e-9) / (rms + 1e-9)).log10();
+        if crest > Self::CLICK_CREST_DB {
+            self.click_hold = (sr * Self::CLICK_HOLD_MS / 1000.0) as u32;
+        }
 
         for sample in buffer.iter_mut() {
             let dry = *sample as f64;
@@ -423,7 +499,7 @@ impl Chain {
                 let wet = self.agc.process(x, sr);
                 // only lift blocks the model considers the target speaker; the
                 // rest passes without the held AGC gain, so noise stays down
-                let target = if self.agc.target_present { 1.0 } else { 0.0 };
+                let target = if self.agc.apply { 1.0 } else { 0.0 };
                 self.agc_mix += (target - self.agc_mix) * self.agc_mix_coef;
                 x = dry + (wet - dry) * self.agc_mix;
             }
@@ -432,6 +508,20 @@ impl Chain {
             }
 
             x *= gain;
+
+            let duck = if self.click_hold > 0 {
+                Self::CLICK_GAIN
+            } else {
+                1.0
+            };
+            let click_coef = if duck < self.click_gain {
+                self.click_attack
+            } else {
+                self.click_release
+            };
+            self.click_gain += (duck - self.click_gain) * click_coef;
+            self.click_hold = self.click_hold.saturating_sub(1);
+            x *= self.click_gain;
 
             if self.comfort_enabled && self.silence_env < comfort_threshold {
                 let ramp = 1.0 - self.silence_env / comfort_threshold.max(1e-9);
@@ -592,5 +682,54 @@ mod tests {
             "the gain jumped {:.1} dB at a phrase start",
             after_quiet - agc.gain_db
         );
+    }
+
+    fn rms_db(buffer: &[f32]) -> f64 {
+        let sum: f64 = buffer.iter().map(|v| (*v as f64) * (*v as f64)).sum();
+        20.0 * ((sum / buffer.len().max(1) as f64).sqrt() + 1e-12).log10()
+    }
+
+    /// A chain that only runs the click suppressor: no gate, AGC, limiter or gain.
+    fn plain_chain() -> Chain {
+        let mut chain = Chain::new();
+        let settings = Settings {
+            high_pass_enabled: false,
+            gate_enabled: false,
+            agc_enabled: false,
+            limiter_enabled: false,
+            comfort_noise_enabled: false,
+            output_gain_db: 0.0,
+            ..Settings::default()
+        };
+        chain.configure(&settings, 48_000);
+        chain
+    }
+
+    #[test]
+    fn a_keyboard_click_is_ducked_and_speech_is_not() {
+        let mut chain = plain_chain();
+        // a click: one spike of 0.5 in an otherwise quiet block
+        let mut click = vec![0.0005f32; 3072];
+        click[100] = 0.5;
+        let before = rms_db(&click);
+        chain.process(&mut click);
+        let after = rms_db(&click);
+        assert!(
+            after < before - 8.0,
+            "the click was not ducked: {before:.1} -> {after:.1} dBFS"
+        );
+
+        // speech: a tone with a natural crest, twenty blocks in a row
+        let mut chain = plain_chain();
+        for _ in 0..20 {
+            let mut block: Vec<f32> = (0..3072).map(|i| (i as f32 * 0.05).sin() * 0.05).collect();
+            let before = rms_db(&block);
+            chain.process(&mut block);
+            let after = rms_db(&block);
+            assert!(
+                (after - before).abs() < 1.0,
+                "speech changed: {before:.1} -> {after:.1} dBFS"
+            );
+        }
     }
 }

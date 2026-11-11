@@ -27,12 +27,20 @@ const VAD_FLOOR: f32 = 0.001;
 /// How long the gate stays open after the detector releases, seconds.
 const VAD_HOLD_SEC: f32 = 0.2;
 
+/// Gain applied while the microphone says the user is silent.
+///
+/// Silero calls an audiobook, a television and a keyboard click speech as
+/// readily as a voice, so its own gate stays open and whatever VoxLock lets
+/// through is heard at full level. The mic-side verdict closes that: −18 dB is
+/// far below anything a word needs, and quiet enough that the leftovers of a
+/// background voice disappear.
+const DUCK_GAIN: f32 = 0.125;
+
 pub struct Pipeline {
     isolated: Option<Denoiser>,
     residual_before: Option<StreamDenoiser>,
     residual_after: Option<StreamDenoiser>,
     vad: Option<Vad>,
-    input_vad: Option<Vad>,
     dropout: DropoutGuard,
     leak: LeakGuard,
     isolate_stage: FixedStage,
@@ -54,9 +62,15 @@ pub struct Pipeline {
     vad_release: f32,
     /// samples left before the gate may close again
     vad_hold: u32,
+    /// smoothed gain that closes the output while the user is silent
+    duck_gain: f32,
+    duck_attack: f32,
+    duck_release: f32,
     /// attenuation and input level of the previous block, for the leak guard
     last_atten_db: f32,
     last_in_db: f32,
+    /// linear level of the speaker's own blocks, for the cap
+    speech_ref: f32,
 }
 
 /// What one block produced, for the caller's meters, logs and DSP.
@@ -124,17 +138,12 @@ impl Pipeline {
         } else {
             None
         };
-        // a second detector on the model input: the output-side one follows
-        // VoxLock, so while the model is cold it reports silence exactly when
-        // the speaker is talking. The cap and the cold reset need the input.
-        let input_vad = Vad::new(&paths::vad_model(), 0.5).ok();
 
         Ok(Self {
             isolated,
             residual_before,
             residual_after,
             vad,
-            input_vad,
             dropout: DropoutGuard::new(),
             leak: LeakGuard::new(),
             isolate_stage: FixedStage::new(),
@@ -155,8 +164,12 @@ impl Pipeline {
             vad_attack: 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp(),
             vad_release: 1.0 - (-1000.0f32 / 450.0 / 16_000.0).exp(),
             vad_hold: 0,
+            duck_gain: 1.0,
+            duck_attack: 1.0 - (-1000.0f32 / 10.0 / 16_000.0).exp(),
+            duck_release: 1.0 - (-1000.0f32 / 150.0 / 16_000.0).exp(),
             last_atten_db: 0.0,
             last_in_db: -120.0,
+            speech_ref: 0.0,
         })
     }
 
@@ -177,9 +190,11 @@ impl Pipeline {
         self.dropout.skipped();
         self.vad_gain = 1.0;
         self.vad_hold = 0;
+        self.duck_gain = 1.0;
         // the model did not see this block, so the leak guard must not judge it
         self.last_atten_db = 0.0;
         self.last_in_db = -120.0;
+        self.speech_ref *= 0.99;
     }
 
     /// Runs the chain on one 16 kHz block (already leveled and peak-limited).
@@ -200,7 +215,6 @@ impl Pipeline {
             residual_before,
             residual_after,
             vad,
-            input_vad,
             dropout,
             leak,
             isolate_stage,
@@ -221,8 +235,12 @@ impl Pipeline {
             vad_attack,
             vad_release,
             vad_hold,
+            duck_gain,
+            duck_attack,
+            duck_release,
             last_atten_db,
             last_in_db,
+            speech_ref,
         } = self;
 
         // "before" mode: clean the input so VoxLock extracts the voice from a
@@ -240,9 +258,10 @@ impl Pipeline {
         // just removed straight back into the output: at a 10 dB limit the
         // audiobook sat 10 dB below the voice and was clearly audible. The
         // mic-side speaker detector (a level jump over the room) is what tells
-        // the two apart, so it has the last word and Silero may only agree.
-        let vad_in = input_vad.as_mut().map(|v| v.push(block));
-        let cap_voice = speech_hint && vad_in.unwrap_or(true);
+        // the two apart, so it is the only verdict the cap listens to — an input
+        // VAD would also switch the cap off on a quiet syllable in the middle of
+        // a phrase, and one A/B take lost a whole second of speech that way.
+        // (The verdict is computed below, once the block level is known.)
 
         // after a long stretch of the model suppressing everything, its speaker
         // state is stale: start it over before it sees the first word. The
@@ -312,7 +331,7 @@ impl Pipeline {
             // with a suppression cap a 50 dB cut is not visible in the output,
             // so the dropout threshold has to stay above the cap
             let cut_db = 26.0f32.max(*max_suppression + 6.0);
-            if warm && dropout.observe(in_db, out_db, cap_voice, cut_db) {
+            if warm && dropout.observe(in_db, out_db, speech_hint, cut_db) {
                 model.reset();
                 isolate_stage.reset();
                 for part in preroll.chunks(*chunk) {
@@ -337,13 +356,37 @@ impl Pipeline {
 
         let count = isolate_out.len().min(block.len());
         let in_rms = rms_of(block);
-        let out_rms = model_out_rms.unwrap_or_else(|| rms_of(&isolate_out[..count]));
+        let mut out_rms = model_out_rms.unwrap_or_else(|| rms_of(&isolate_out[..count]));
+        // VoxLock is an isolator, not an amplifier. On a background voice it can
+        // return a block up to 13 dB louder than it went in, and that is heard
+        // as the audiobook suddenly louder than the room it sits in: in one A/B
+        // take the model turned a -55 dBFS block into -40. A block may leave the
+        // isolation stage at the level it arrived, never above it.
+        if out_rms > in_rms && out_rms > 1e-9 {
+            let scale = in_rms / out_rms;
+            for sample in isolate_out[..count].iter_mut() {
+                *sample *= scale;
+            }
+            out_rms = in_rms;
+        }
         let atten_db = if in_rms > 1e-6 && out_rms > 1e-8 {
             -20.0 * (out_rms / in_rms).log10()
         } else {
             0.0
         };
         let speech_in = in_rms > 1.8e-3;
+
+        // Level of the speaker's own blocks, kept across the session. The cap
+        // may only rescue a block that is still close to it: rescuing something
+        // 30 dB below the voice is how the room and the book in the pause came
+        // back into the output.
+        if speech_hint && in_rms > *speech_ref {
+            *speech_ref = in_rms;
+        } else {
+            *speech_ref *= 0.995;
+        }
+        let near_speech = *speech_ref <= 0.0 || in_rms > *speech_ref * 0.05;
+        let cap_voice = speech_hint && near_speech;
 
         // Maximum suppression: if the model cut a speech block by more than the
         // limit, mix the (leveled, peak-limited) model input back until the
@@ -374,6 +417,22 @@ impl Pipeline {
             *sample = block[i] * (1.0 - wet_eff) + *sample * wet_eff;
         }
         mix[count..].copy_from_slice(&block[count..]);
+
+        // Speaker gate. Silero keeps the output open for anything voice-like —
+        // an audiobook playing next to the microphone passes its test — so what
+        // VoxLock lets through in a pause used to arrive at full level. The
+        // mic-side verdict closes the output instead; 10 ms in, 150 ms out, so
+        // the beginning of a phrase is not clipped.
+        let duck_target = if speech_hint { 1.0 } else { DUCK_GAIN };
+        let duck_coef = if duck_target < *duck_gain {
+            *duck_attack
+        } else {
+            *duck_release
+        };
+        for sample in mix.iter_mut() {
+            *duck_gain += (duck_target - *duck_gain) * duck_coef;
+            *sample *= *duck_gain;
+        }
 
         // Silero VAD gate: close the output in pauses, keep every syllable.
         let mut target_vad = None;
