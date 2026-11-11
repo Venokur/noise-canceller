@@ -355,9 +355,10 @@ npm.cmd run tauri build -- --no-bundle
 `gh release create` с setup.exe, zip и контрольными суммами. Тег обязан совпадать
 с `version` в `tauri.conf.json`. Ручной запуск (`workflow_dispatch`) ничего не
 публикует, только кладёт файлы в артефакты прогона. Версию при выпуске поднимают
-в четырёх местах: `src-tauri/tauri.conf.json` (её берёт установщик и имя архива),
-`package.json`, `src-tauri/Cargo.toml` и `cli/Cargo.toml`; `core/Cargo.toml`
-тоже держим в ногу, иначе `cargo` начнёт тянуть разные версии ядра.
+в трёх местах: `src-tauri/tauri.conf.json` (её берут установщик и имя архива),
+`package.json` вместе с `package-lock.json` и `Cargo.toml` в `[workspace.package]`;
+крейты `core`, `cli` и `src-tauri` наследуют её через `version.workspace = true`,
+поэтому разъехаться они не могут.
 
 ## Грабли, на которые уже наступали
 
