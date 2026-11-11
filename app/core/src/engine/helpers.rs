@@ -298,7 +298,10 @@ impl DropoutGuard {
             self.retries = 0;
         }
 
-        if self.cut >= 3 && self.cool == 0 && (self.armed || cold) && self.retries < 4 {
+        // A real hole in a loud block is obvious after two blocks; waiting for
+        // the third costs another 64 ms of the word, and the word starts there.
+        let confirm = if in_db > -40.0 { 2 } else { 3 };
+        if self.cut >= confirm && self.cool == 0 && (self.armed || cold) && self.retries < 4 {
             self.resets += 1;
             self.retries += 1;
             self.cut = 0;

@@ -230,6 +230,22 @@ impl Persist {
     }
 }
 
+/// Fades the "Подавление" readout while nothing is being suppressed.
+///
+/// The number is the model's attenuation on speech blocks, smoothed per block.
+/// It used to be written only on speech, so it froze at the last phrase and the
+/// app looked like it kept cutting the room in silence; here it decays in about
+/// half a second instead.
+fn fade_suppression(shared: &Shared) {
+    let current = f32::from_bits(shared.suppression.load(Ordering::Relaxed));
+    let next = if current * 0.9 < 0.05 {
+        0.0
+    } else {
+        current * 0.9
+    };
+    shared.suppression.store(next.to_bits(), Ordering::Relaxed);
+}
+
 pub struct Engine {
     shared: Shared,
     input: Option<cpal::Stream>,
@@ -582,6 +598,7 @@ impl Engine {
                         // gate open: the detector has not seen audio for a while
                         // and would take ~300 ms to notice the next word
                         pipeline.skip_silence(&block);
+                        fade_suppression(&proc_shared);
                         let produced = up.process(&zeros, &mut up_buf);
                         for sample in up_buf[..produced].iter_mut() {
                             *sample = 0.0;
@@ -631,7 +648,7 @@ impl Engine {
                     // VoxLock needs a moment to lock on after a start
                     let warm = session_start.elapsed() > Duration::from_secs(1);
                     let started = Instant::now();
-                    let out = pipeline.process(&mut block, wet, warm, in_voice);
+                    let out = pipeline.process(&mut block, wet, warm, in_voice, input_voice.voiced());
                     if out.cold_reset {
                         crate::log::info(&format!(
                             "cold start: VoxLock reset while the model was closed (in {:.0} dB)",
@@ -668,6 +685,11 @@ impl Engine {
                         let current = f32::from_bits(proc_shared.suppression.load(Ordering::Relaxed));
                         let smoothed = current + (shown - current) * 0.1;
                         proc_shared.suppression.store(smoothed.to_bits(), Ordering::Relaxed);
+                    } else {
+                        // nothing is being suppressed in a pause: let the readout
+                        // fall back instead of freezing at the last phrase, which
+                        // made the app look like it kept cutting the room
+                        fade_suppression(&proc_shared);
                     }
                     // a block the model cut hard is not the target speaker: do
                     // not lift its level, unless the cap keeps the speaker

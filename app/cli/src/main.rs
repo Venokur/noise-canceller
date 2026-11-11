@@ -314,7 +314,7 @@ fn replay_file() -> Result<()> {
 
         let wet = settings.isolation_strength.clamp(0.0, 1.0);
         let warm = block_index as f32 * chunk as f32 / 16_000.0 > 1.0;
-        let out_block = pipeline.process(block, wet, warm, in_voice);
+        let out_block = pipeline.process(block, wet, warm, in_voice, input_voice.voiced());
 
         if out_block.leak_reset && trace {
             eprintln!(

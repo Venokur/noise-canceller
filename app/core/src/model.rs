@@ -555,7 +555,10 @@ impl Vad {
                 model: model_c.as_ptr(),
                 threshold: threshold.clamp(0.05, 0.95),
                 min_silence_duration: 0.5,
-                min_speech_duration: 0.08,
+                // 80 ms used to keep the output gate shut for the first letters
+                // of every phrase after a pause; 30 ms is still long enough not
+                // to open on a single click
+                min_speech_duration: 0.03,
                 window_size: 512,
                 max_speech_duration: 30.0,
             },

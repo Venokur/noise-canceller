@@ -245,14 +245,17 @@ impl Pipeline {
     ///
     /// `wet` is the isolation strength, `warm` says the session is older than
     /// one second (the dropout guard stays out until the model has loaded),
-    /// `speech_hint` comes from the caller's `InputVoice`, which must be fed the
-    /// *raw* microphone block before the leveler.
+    /// `speech_hint` и `voiced` come from the caller's `InputVoice`, which must
+    /// be fed the *raw* microphone block before the leveler. `voiced` is true on
+    /// the block that jumped above the room — the first block of a phrase, and
+    /// the one the model is coldest on.
     pub fn process(
         &mut self,
         block: &mut [f32],
         wet: f32,
         warm: bool,
         speech_hint: bool,
+        voiced: bool,
     ) -> BlockOut<'_> {
         let Self {
             isolated,
@@ -430,7 +433,11 @@ impl Pipeline {
             *speech_ref *= 0.995;
         }
         let near_speech = *speech_ref <= 0.0 || in_rms > *speech_ref * 0.05;
-        let cap_voice = speech_hint && near_speech;
+        // The first block of a phrase is the one VoxLock is coldest on, and the
+        // one `speech_hint` does not cover yet: it needs two blocks to confirm.
+        // A single level jump is enough to rescue it, otherwise the first
+        // letters arrive 10-30 dB down (measured on the user's takes).
+        let cap_voice = (speech_hint || voiced) && near_speech;
 
         // Maximum suppression: if the model cut a speech block by more than the
         // limit, mix the (leveled, peak-limited) model input back until the
@@ -466,8 +473,14 @@ impl Pipeline {
         // an audiobook playing next to the microphone passes its test — so what
         // VoxLock lets through in a pause used to arrive at full level. The
         // mic-side verdict closes the output instead; 10 ms in, 150 ms out, so
-        // the beginning of a phrase is not clipped.
-        let duck_target = if speech_hint { 1.0 } else { DUCK_GAIN };
+        // the beginning of a phrase is not clipped. The *first* block of a
+        // phrase has to open it: `speech_hint` needs two blocks to confirm, and
+        // with the duck still closed the first letters arrived 15 dB down.
+        let duck_target = if speech_hint || voiced {
+            1.0
+        } else {
+            DUCK_GAIN
+        };
         let duck_coef = if duck_target < *duck_gain {
             *duck_attack
         } else {
