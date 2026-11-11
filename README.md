@@ -93,8 +93,8 @@ npm.cmd run tauri build             # exe + установщик NSIS
 Релиз публикуется workflow `.github/workflows/release.yml` по тегу:
 
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 Тег обязан совпадать с `version` в `tauri.conf.json`, иначе workflow падает до
