@@ -1,7 +1,7 @@
 # Downloads everything the app needs at runtime.
 #   native/          sherpa-onnx C API + ONNX Runtime DLLs
 #   models/voxlock/  VoxLock int8 model, metadata, test wavs
-#   models/denoise/  GTCRN residual denoiser + Silero VAD
+#   models/denoise/  GTCRN and DPDFNet residual denoisers + Silero VAD
 param(
     [string]$Root = (Split-Path $PSScriptRoot -Parent)
 )
@@ -50,6 +50,7 @@ if (-not (Test-Path (Join-Path $models "chunk_int8.onnx"))) {
 
 # 2. Denoiser stages: GTCRN after VoxLock and the Silero VAD gate
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx" (Join-Path $denoise "gtcrn.onnx")
+Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet4.onnx" (Join-Path $denoise "dpdfnet4.onnx")
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" (Join-Path $denoise "silero_vad.onnx")
 
 # 3. sherpa-onnx native libraries (C API + ONNX Runtime)

@@ -1,0 +1,15 @@
+DPDFNet
+=======
+
+License: Apache License 2.0
+
+Model:      https://huggingface.co/Ceva-IP/DPDFNet  (Apache-2.0)
+Paper:      https://arxiv.org/abs/2512.16420
+Source:     https://github.com/ceva-ip/DPDFNet
+Packaging:  https://github.com/k2-fsa/sherpa-onnx (speech-enhancement-models
+            release, dpdfnet4.onnx)
+
+The full text of the Apache License 2.0 is shipped next to this file as
+`apache-2.0.txt` and applies to this model.
+
+The model is distributed unmodified, as published by the authors above.

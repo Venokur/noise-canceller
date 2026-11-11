@@ -26,7 +26,7 @@
 | Слой | Решение |
 |---|---|
 | Ядро | Rust 2021, `cpal` 0.18 (WASAPI), `rtrb` 0.4, `libloading` 0.8 |
-| Модель | **sherpa-onnx 2.0.1** через C API + VoxLock int8 (16 кГц) + GTCRN (остаточный шум) |
+| Модель | **sherpa-onnx 2.0.1** через C API + VoxLock int8 (16 кГц) + GTCRN / DPDFNet / UL-UNAS (остаточный шум) |
 | Оболочка | Tauri 2.12.5, `decorations: false` (свой заголовок) |
 | UI | Vue 3 (`<script setup>`) + TypeScript + Vite 8 + Tailwind 4 |
 | Сборка | портативная папка: exe + `models/` + `native/` |
@@ -62,7 +62,7 @@ app/
                composables/{useToasts,useSettingsSearch,useSystemInfo}.ts,
                appContext.ts (что оболочка отдаёт экранам), types.ts (формы DTO)
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
-  models/denoise/  gtcrn.onnx (0,5 МБ), silero_vad.onnx
+  models/denoise/  gtcrn.onnx (0,5 МБ), dpdfnet4.onnx (11 МБ), silero_vad.onnx
   native/      sherpa-onnx-c-api.dll + onnxruntime.dll
   scripts/     fetch-models.ps1, package-portable.ps1, package-release.ps1,
                check-bundle.ps1, licenses.ps1, golden.ps1
@@ -79,7 +79,7 @@ cpal capture 48k → моно float
   → пиковый ограничитель −6 dBFS (стук не перегружает вход модели)
   → буфер 60 мс (кратен 128)
   → sherpa OnlineSpeechDenoiser.Run(chunk, 16000)   (тишина > 360 мс — пропуск)
-  → [GTCRN 16 кГц]  — остаточный шум, если включён
+  → [GTCRN / DPDFNet / UL-UNAS 16 кГц] — остаточный шум, если включён
   → [VAD-гейт Silero] — закрывает выход в паузах до −60 dBFS по детектору речи
   (с удержанием 200 мс, чтобы не обрубать концы слов)
   → Resampler 16→48
@@ -509,7 +509,7 @@ npm.cmd run tauri build -- --no-bundle
 | Поле | Смысл |
 |---|---|
 | `input_leveling` | поднимает тихий микрофон до −26 dBFS до модели (до +18 дБ); стуки и паузы не учитываются |
-| `residual_denoise` | вторая стадия после VoxLock: `off` / `gtcrn` (по умолчанию) |
+| `residual_denoise` | вторая стадия после VoxLock: `off` / `gtcrn` (по умолчанию) / `dpdfnet` (агрессивнее, тяжелее, нужен `dpdfnet4.onnx`) / `ulunas` (UL-UNAS, сильнее и дешевле, веса внутри exe) |
 | `residual_order` | `after` (по умолчанию) или `before` — где денойзер стоит относительно VoxLock |
 | `vad_gate` | Silero VAD закрывает выход в паузах (по умолчанию включён) |
 | `voice_isolation` | VoxLock включён/выключен; при `false` модель не грузится вовсе (только шумодав) |
@@ -584,11 +584,27 @@ CUDA-сборка sherpa занимает 460–570 МБ + cuDNN, работае
 | DeepFilterNet3 | −25.4 | −83.0 | 59 % | 9.2 |
 | DPDFNet2 | −25.0 | −240 | 45 % | 11.9 |
 
-GTCRN — единственная остаточная стадия: паузы тише на 22 дБ, речь почти не страдает,
-щелчков меньше, чем без него. DeepFilterNet3 и DPDFNet из меню убраны: оба на реальной
-записи трещат. DPDFNet — из-за собственного VAD (глушит кадры ступенькой), DFN —
-из-за самовозбуждения на тихих участках (из входа ±0.002 выдаёт ±0.05 знакопеременных
-сэмплов). Крейт `deep-filter-rt` удалён, exe вернулся к ~10 МБ.
+GTCRN — заводская стадия: паузы тише на 22 дБ, речь почти не страдает, щелчков меньше,
+чем без него. DeepFilterNet3 убран совсем (самовозбуждение на тихих участках: из
+входа ±0.002 выдаёт ±0.05 знакопеременных сэмплов), крейт `deep-filter-rt` удалён.
+
+С 2026-11 в меню есть ещё две стадии (`residual_denoise`):
+
+| Вариант | что это | цена |
+|---|---|---|
+| `gtcrn` | 0,5 МБ, sherpa | RTF +0,06 |
+| `dpdfnet` | `dpdfnet4.onnx`, 11 МБ, Apache-2.0 | RTF +0,20 (у `dpdfnet8` +0,38 — не успевает) |
+| `ulunas` | UL-UNAS DNS3, веса 0,66 МБ вкомпилированы, MIT | RTF +0,04 |
+
+Замер на пяти дублях пользователя (речь + аудиокнига): UL-UNAS и GTCRN идут вровень
+(утечка в паузах 25–64 дБ против 26–54 у GTCRN, «съеденных» кадров столько же, RTF
+даже ниже), DPDFNet4 сильнее давит фон, но на одном дубле просаживает паузы до 8,8 дБ
+и съедает тихие слова, а DPDFNet8 на этой машине даёт RTF ~1,0 и роняет кольцо.
+Поэтому DPDFNet — опция «для сильного CPU», по умолчанию остаётся GTCRN.
+
+`sherpa-onnx` умеет только GTCRN, DPDFNet и VoxLock; UL-UNAS подключён как обычная
+Rust-зависимость (`ul_unas_rs`, кадр 256 отсчётов, задержка 16 мс, `FixedStage`
+выравнивает длину блока, как и для остальных стадий).
 
 Свой спектральный шумодав пробовали и **удалили**: на реальной записи он глушил 45 %
 кадров речи и снимал всего 2–4 дБ пола. GTCRN делает это лучше без потерь.

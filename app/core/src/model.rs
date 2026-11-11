@@ -13,11 +13,12 @@ struct GtcrnConfig {
     model: *const c_char,
 }
 
-/// Part of the C struct layout and therefore part of `ModelConfig`; the app no
-/// longer offers DPDFNet (it clipped words and clicked), so it stays null.
+/// Part of the C struct layout and therefore part of `ModelConfig`.
 #[repr(C)]
 struct DpdfNetConfig {
     model: *const c_char,
+    /// 0 = no limit: the app has its own suppression cap, and stacking two
+    /// limits made quiet syllables disappear
     attenuation_limit_db: f32,
 }
 
@@ -181,12 +182,79 @@ pub struct Denoiser {
     frame_shift: i32,
 }
 
+/// Which residual denoiser sits behind a [`StreamDenoiser`].
+///
+/// GTCRN and DPDFNet run through sherpa-onnx and differ only in the model file
+/// and the config field. UL-UNAS is a small pure-Rust streaming model with its
+/// weights compiled in: no DLL call, no model file in the portable folder.
+pub enum ResidualModel {
+    Sherpa(Denoiser),
+    /// Boxed: the UL-UNAS state is a few hundred KB of recurrent caches, and an
+    /// unboxed variant would make every `StreamDenoiser` that big
+    Unas(Box<ul_unas_rs::Denoiser>),
+}
+
+impl ResidualModel {
+    /// UL-UNAS at its default aggressiveness (DNS3 checkpoint, 16 kHz).
+    pub fn unas() -> Self {
+        Self::Unas(Box::new(ul_unas_rs::Denoiser::new()))
+    }
+
+    fn frame_shift(&self) -> usize {
+        match self {
+            Self::Sherpa(model) => model.frame_shift.max(1) as usize,
+            Self::Unas(_) => ul_unas_rs::FRAME_SIZE,
+        }
+    }
+
+    fn sample_rate(&self) -> u32 {
+        match self {
+            Self::Sherpa(model) => model.sample_rate.max(1) as u32,
+            Self::Unas(_) => ul_unas_rs::SAMPLE_RATE,
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            Self::Sherpa(model) => model.reset(),
+            Self::Unas(model) => model.reset(),
+        }
+    }
+
+    /// Runs one frame of `frame_shift` samples and appends the output.
+    fn run_into(&mut self, chunk: &[f32], out: &mut Vec<f32>) {
+        match self {
+            Self::Sherpa(model) => model.run_into(chunk, out),
+            Self::Unas(model) => {
+                let mut frame = [0.0f32; ul_unas_rs::FRAME_SIZE];
+                let n = chunk.len().min(frame.len());
+                frame[..n].copy_from_slice(&chunk[..n]);
+                model.process_frame(&mut frame);
+                out.clear();
+                out.extend_from_slice(&frame);
+            }
+        }
+    }
+
+    fn flush(&mut self) -> Vec<f32> {
+        match self {
+            Self::Sherpa(model) => model.flush(),
+            Self::Unas(model) => {
+                // UL-UNAS holds 16 ms of overlap-add tail; one zero frame emits it
+                let mut frame = [0.0f32; ul_unas_rs::FRAME_SIZE];
+                model.process_frame(&mut frame);
+                frame.to_vec()
+            }
+        }
+    }
+}
+
 /// A denoiser wrapped with sample-accurate framing: the model is always fed
 /// exactly `frame_shift` samples, and its output is queued, so the caller sees
 /// one continuous stream instead of blocks of varying length (that mismatch is
 /// what made DPDFNet click).
 pub struct StreamDenoiser {
-    model: Denoiser,
+    model: ResidualModel,
     pending: Vec<f32>,
     /// one reusable frame: `run` used to build a fresh Vec for every shift
     chunk: Vec<f32>,
@@ -196,8 +264,8 @@ pub struct StreamDenoiser {
 }
 
 impl StreamDenoiser {
-    pub fn new(model: Denoiser) -> Self {
-        let shift = model.frame_shift.max(1) as usize;
+    pub fn new(model: ResidualModel) -> Self {
+        let shift = model.frame_shift();
         Self {
             model,
             pending: Vec::with_capacity(shift * 4),
@@ -208,7 +276,7 @@ impl StreamDenoiser {
     }
 
     pub fn sample_rate(&self) -> u32 {
-        self.model.sample_rate.max(1) as u32
+        self.model.sample_rate()
     }
 
     pub fn frame_shift(&self) -> usize {
@@ -240,7 +308,11 @@ impl StreamDenoiser {
     pub fn flush(&mut self, out: &mut Vec<f32>) {
         if !self.pending.is_empty() {
             let tail: Vec<f32> = std::mem::take(&mut self.pending);
-            out.extend_from_slice(&self.model.run(&tail));
+            self.chunk.clear();
+            self.chunk.extend_from_slice(&tail);
+            self.chunk.resize(self.shift, 0.0);
+            self.model.run_into(&self.chunk, &mut self.scratch);
+            out.extend_from_slice(&self.scratch);
         }
         out.extend_from_slice(&self.model.flush());
     }
@@ -312,6 +384,39 @@ impl Denoiser {
                 provider: ptr::null(),
                 dpdfnet: DpdfNetConfig {
                     model: ptr::null(),
+                    attenuation_limit_db: 0.0,
+                },
+                voxlock: VoxLockConfig {
+                    enroll_model: ptr::null(),
+                    chunk_model: ptr::null(),
+                    voice_sample: ptr::null(),
+                },
+            },
+        };
+
+        Self::create(api, config)
+    }
+
+    /// DPDFNet: the more aggressive sherpa denoiser (10-14 MB, 16 kHz).
+    ///
+    /// It suppresses harder than GTCRN, at 3-4x the CPU and with a real risk of
+    /// stepping on quiet syllables; it is a user choice, not a default.
+    pub fn new_dpdfnet(model: &Path, threads: u16) -> Result<Self> {
+        let api = api()?;
+        let model_c = CString::new(
+            crate::paths::native_safe(model)
+                .to_string_lossy()
+                .as_bytes(),
+        )?;
+
+        let config = OnlineConfig {
+            model: ModelConfig {
+                gtcrn: GtcrnConfig { model: ptr::null() },
+                num_threads: threads.max(1) as i32,
+                debug: 0,
+                provider: ptr::null(),
+                dpdfnet: DpdfNetConfig {
+                    model: model_c.as_ptr(),
                     attenuation_limit_db: 0.0,
                 },
                 voxlock: VoxLockConfig {
@@ -521,5 +626,46 @@ impl Drop for Vad {
         if let Ok(api) = api() {
             unsafe { (api.vad_destroy)(self.handle) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ulunas_stage_keeps_the_block_length() {
+        let mut stream = StreamDenoiser::new(ResidualModel::unas());
+        assert_eq!(stream.sample_rate(), 16_000);
+        assert_eq!(stream.frame_shift(), ul_unas_rs::FRAME_SIZE);
+
+        // the model works in 256-sample frames; a 64 ms block is four of them
+        let input = vec![0.01f32; 1024];
+        let mut out = Vec::new();
+        stream.process(&input, &mut out);
+        assert_eq!(out.len(), 1024);
+        assert!(out.iter().all(|v| v.is_finite()));
+
+        stream.reset();
+    }
+
+    #[test]
+    fn ulunas_stage_survives_noise_and_tone() {
+        let mut stream = StreamDenoiser::new(ResidualModel::unas());
+        let mut out = Vec::new();
+        let mut seed = 0x1234_5678u32;
+        for _ in 0..32 {
+            let block: Vec<f32> = (0..1024)
+                .map(|i| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let noise = ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.1;
+                    (i as f32 * 0.05).sin() * 0.05 + noise
+                })
+                .collect();
+            stream.process(&block, &mut out);
+        }
+        assert_eq!(out.len(), 32 * 1024);
+        assert!(out.iter().all(|v| v.is_finite()));
+        stream.flush(&mut out);
     }
 }

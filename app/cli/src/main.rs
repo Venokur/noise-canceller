@@ -521,6 +521,25 @@ fn show_settings() -> Result<()> {
     println!("file      {}", path.display());
     println!("rev       {}", s.defaults_rev);
     println!(
+        "residual  {} (gtcrn {} · dpdfnet {})",
+        s.residual_denoise,
+        if paths::gtcrn_model().exists() {
+            "present"
+        } else {
+            "missing"
+        },
+        if paths::dpdfnet_model().exists() {
+            "present"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "roots     {} · denoise {}",
+        paths::models_dir().display(),
+        paths::denoise_dir().display()
+    );
+    println!(
         "chunk     {} ms (block {block_ms:.0} ms) · threads {} ({}) · buffer {} ms",
         s.chunk_ms,
         s.effective_threads(block_ms),

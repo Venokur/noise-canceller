@@ -227,7 +227,10 @@ impl Settings {
         if !matches!(self.mode.as_str(), "profile" | "auto") {
             self.mode = "profile".into();
         }
-        if !matches!(self.residual_denoise.as_str(), "off" | "gtcrn") {
+        if !matches!(
+            self.residual_denoise.as_str(),
+            "off" | "gtcrn" | "dpdfnet" | "ulunas"
+        ) {
             self.residual_denoise = "gtcrn".into();
         }
         if !matches!(self.residual_order.as_str(), "after" | "before") {

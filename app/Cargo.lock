@@ -2314,6 +2314,7 @@ dependencies = [
  "rtrb",
  "serde",
  "serde_json",
+ "ul_unas_rs",
 ]
 
 [[package]]
@@ -4323,6 +4324,12 @@ dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "ul_unas_rs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7af6ec5ed4d6c76855dd62e7a862f251a09d8e77b55f5c8495cfe12554af8217"
 
 [[package]]
 name = "unicode-ident"

@@ -12,7 +12,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::engine::{cap_dry_mix, rms_of, DropoutGuard, FixedStage, LeakGuard};
-use crate::model::{Denoiser, StreamDenoiser, Vad};
+use crate::model::{Denoiser, ResidualModel, StreamDenoiser, Vad};
 use crate::paths;
 use crate::settings::Settings;
 
@@ -122,14 +122,45 @@ impl Pipeline {
         let order_before = settings.residual_order.eq_ignore_ascii_case("before");
         let mut residual_before = None;
         let mut residual_after = None;
-        if residual_kind == "gtcrn" && paths::gtcrn_model().exists() {
-            if let Ok(model) = Denoiser::new_gtcrn(&paths::gtcrn_model(), 2) {
-                let stream = StreamDenoiser::new(model);
-                if order_before {
-                    residual_before = Some(stream);
-                } else {
-                    residual_after = Some(stream);
+        // GTCRN and DPDFNet share the sherpa denoiser API; UL-UNAS is a pure
+        // Rust model with the weights compiled in. A missing or rejected model
+        // falls back to no residual stage, but says so in the log: a silent
+        // fallback looks exactly like "the option does nothing".
+        let residual: Option<ResidualModel> = match residual_kind.as_str() {
+            "gtcrn" if paths::gtcrn_model().exists() => {
+                match Denoiser::new_gtcrn(&paths::gtcrn_model(), 2) {
+                    Ok(model) => Some(ResidualModel::Sherpa(model)),
+                    Err(err) => {
+                        crate::log::info(&format!("residual: GTCRN failed to load: {err}"));
+                        None
+                    }
                 }
+            }
+            "dpdfnet" if paths::dpdfnet_model().exists() => {
+                match Denoiser::new_dpdfnet(&paths::dpdfnet_model(), 2) {
+                    Ok(model) => Some(ResidualModel::Sherpa(model)),
+                    Err(err) => {
+                        crate::log::info(&format!("residual: DPDFNet failed to load: {err}"));
+                        None
+                    }
+                }
+            }
+            "ulunas" => Some(ResidualModel::unas()),
+            other => {
+                if other != "off" {
+                    crate::log::info(&format!(
+                        "residual: '{other}' is selected but the model file is missing"
+                    ));
+                }
+                None
+            }
+        };
+        if let Some(model) = residual {
+            let stream = StreamDenoiser::new(model);
+            if order_before {
+                residual_before = Some(stream);
+            } else {
+                residual_after = Some(stream);
             }
         }
 

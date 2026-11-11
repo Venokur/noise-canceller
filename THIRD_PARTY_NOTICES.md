@@ -15,6 +15,8 @@ Noise Canceller (дальше — «программа») распростран
 |---|---|---|---|
 | VoxLock | `models/voxlock/enroll.onnx`, `chunk_int8.onnx` | Apache-2.0 | © 2026 Arbaz Siddiqui |
 | GTCRN | `models/denoise/gtcrn.onnx` | MIT | © 2024 Rong Xiaobin |
+| DPDFNet | `models/denoise/dpdfnet4.onnx` | Apache-2.0 | © Ceva-IP (dpdfnet) |
+| UL-UNAS | внутри exe (веса DNS3) | MIT | © 2026 Xiaobin Rong; порт © 2026 Tanix |
 | Silero VAD | `models/denoise/silero_vad.onnx` | MIT | © 2020-present Silero Team |
 | sherpa-onnx | `native/sherpa-onnx-c-api.dll` | Apache-2.0 | © k2-fsa |
 | ONNX Runtime | `native/onnxruntime.dll` | MIT | © Microsoft Corporation |
@@ -239,6 +241,7 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | tray-icon | 0.25.1 | MIT OR Apache-2.0 |
 | typeid | 1.0.3 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
+| ul_unas_rs | 0.1.2 | MIT |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
 | url | 2.5.8 | MIT OR Apache-2.0 |
@@ -325,6 +328,8 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 - `licenses/apache-2.0.txt` — Apache License 2.0 (VoxLock, sherpa-onnx, cpal, Tauri)
 - `licenses/voxlock-NOTICE.txt` — NOTICE модели VoxLock
 - `licenses/gtcrn-LICENSE.txt` — MIT, GTCRN
+- `licenses/dpdfnet-LICENSE.txt` — Apache-2.0, DPDFNet
+- `licenses/ulunas-LICENSE.txt` — MIT, UL-UNAS и её Rust-порт
 - `licenses/silero-vad-LICENSE.txt` — MIT, Silero VAD
 - `licenses/onnxruntime-LICENSE.txt` — MIT, ONNX Runtime
 - `licenses/lucide-LICENSE.txt` — ISC, Lucide

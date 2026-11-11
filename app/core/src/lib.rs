@@ -17,6 +17,6 @@ pub mod wav;
 pub use engine::{
     cap_dry_mix, DropoutGuard, FixedStage, InputVoice, Leveler, PeakGuard, SILENCE_SKIP_BLOCKS,
 };
-pub use model::{Denoiser, StreamDenoiser, Vad};
+pub use model::{Denoiser, ResidualModel, StreamDenoiser, Vad};
 pub use pipeline::Pipeline;
 pub use settings::Settings;

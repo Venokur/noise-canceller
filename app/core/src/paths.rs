@@ -83,6 +83,14 @@ pub fn gtcrn_model() -> PathBuf {
     denoise_dir().join("gtcrn.onnx")
 }
 
+/// DPDFNet: the aggressive alternative to GTCRN (same sherpa denoiser API).
+///
+/// The 4-block variant: the 8-block one is more aggressive on paper but costs
+/// RTF 0.4 on this machine, which leaves no headroom next to VoxLock.
+pub fn dpdfnet_model() -> PathBuf {
+    denoise_dir().join("dpdfnet4.onnx")
+}
+
 pub fn vad_model() -> PathBuf {
     denoise_dir().join("silero_vad.onnx")
 }

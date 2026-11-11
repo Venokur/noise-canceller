@@ -10,6 +10,8 @@
 | `apache-2.0.txt` | VoxLock, sherpa-onnx, cpal, Tauri | Apache-2.0 |
 | `voxlock-NOTICE.txt` | VoxLock © Arbaz Siddiqui | Apache-2.0, §4(d) |
 | `gtcrn-LICENSE.txt` | GTCRN © Rong Xiaobin | MIT |
+| `dpdfnet-LICENSE.txt` | DPDFNet © Ceva-IP | Apache-2.0 |
+| `ulunas-LICENSE.txt` | UL-UNAS © Xiaobin Rong, порт © Tanix | MIT |
 | `silero-vad-LICENSE.txt` | Silero VAD © Silero Team | MIT |
 | `onnxruntime-LICENSE.txt` | ONNX Runtime © Microsoft | MIT |
 | `lucide-LICENSE.txt` | Lucide © Lucide Icons and Contributors | ISC |

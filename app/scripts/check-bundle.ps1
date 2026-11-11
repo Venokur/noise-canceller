@@ -45,6 +45,7 @@ foreach ($required in @(
         "models/voxlock/enroll.onnx",
         "models/voxlock/chunk_int8.onnx",
         "models/denoise/gtcrn.onnx",
+        "models/denoise/dpdfnet4.onnx",
         "models/denoise/silero_vad.onnx",
         "native/sherpa-onnx-c-api.dll",
         "native/onnxruntime.dll",

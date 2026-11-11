@@ -83,12 +83,12 @@ function Copy-Models {
     # from a removed experiment and must not travel with the build.
     $denoise = Join-Path $dst "denoise"
     New-Item -ItemType Directory -Force $denoise | Out-Null
-    foreach ($name in @("gtcrn.onnx", "silero_vad.onnx")) {
+    foreach ($name in @("gtcrn.onnx", "dpdfnet4.onnx", "silero_vad.onnx")) {
         $from = Join-Path $src "denoise\$name"
         if (Test-Path $from) { Copy-Item $from $denoise -Force }
     }
     Get-ChildItem $denoise -Filter "*.onnx" |
-        Where-Object { $_.Name -ne "gtcrn.onnx" -and $_.Name -ne "silero_vad.onnx" } |
+        Where-Object { $_.Name -ne "gtcrn.onnx" -and $_.Name -ne "dpdfnet4.onnx" -and $_.Name -ne "silero_vad.onnx" } |
         ForEach-Object {
             Write-Host "  drop $($_.Name)"
             Remove-Item $_.FullName -Force

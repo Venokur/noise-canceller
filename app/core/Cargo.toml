@@ -12,3 +12,5 @@ cpal.workspace = true
 rtrb.workspace = true
 libloading.workspace = true
 hound.workspace = true
+# UL-UNAS DNS3: a small streaming denoiser in pure Rust, weights embedded
+ul_unas_rs = "0.1"

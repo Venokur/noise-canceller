@@ -128,13 +128,15 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
               <div :class="settingRow">
                 <AppLabel
                   text="Остаточный шум"
-                  hint="GTCRN добивает шум после VoxLock: паузы тише примерно на 20 дБ. Выключение немного снижает нагрузку."
+                  hint="Чем агрессивнее, тем сильнее давит фон и чужие голоса, но тем выше нагрузка и риск подъесть тихие слоги. GTCRN — баланс, DPDFNet и UL-UNAS — сильнее."
                 />
                 <AppSelect
                   v-model="settings.residualDenoise"
                   :options="[
                     { value: 'off', label: 'Выключено' },
                     { value: 'gtcrn', label: 'GTCRN · лёгкий' },
+                    { value: 'dpdfnet', label: 'DPDFNet · агрессивный' },
+                    { value: 'ulunas', label: 'UL-UNAS · самый сильный' },
                   ]"
                   @update:model-value="() => restartSoon()"
                 />
