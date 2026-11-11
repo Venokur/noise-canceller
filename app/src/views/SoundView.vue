@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject } from "vue";
+import { computed, inject } from "vue";
 import AppIcon from "../components/AppIcon.vue";
 import AppSelect from "../components/AppSelect.vue";
 import AppSlider from "../components/AppSlider.vue";
@@ -7,6 +7,21 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
 const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileMeta, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, testMode, testOutput, toggleAb, togglePower, toggleTest } = inject(APP_CONTEXT)!;
+
+/// Which denoiser actually sits after VoxLock: the chain has to name the one
+/// the user picked, not the model it used to ship with.
+const noiseStage = computed(() => {
+  switch (settings.residualDenoise) {
+    case "dpdfnet":
+      return "DPDFNet";
+    case "ulunas":
+      return "UL-UNAS";
+    case "gtcrn":
+      return "GTCRN";
+    default:
+      return "Шумодав";
+  }
+});
 </script>
 
 <template>
@@ -59,7 +74,7 @@ const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, a
                     <span class="dot" :data-off="!settings.voiceIsolation"></span>VoxLock
                   </span>
                   <span class="flex items-center gap-1.5">
-                    <span class="dot" :data-off="settings.residualDenoise === 'off'"></span>GTCRN
+                    <span class="dot" :data-off="settings.residualDenoise === 'off'"></span>{{ noiseStage }}
                   </span>
                   <span class="flex items-center gap-1.5">
                     <span class="dot" :data-off="!settings.vadGate"></span>VAD

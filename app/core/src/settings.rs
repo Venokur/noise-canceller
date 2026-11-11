@@ -10,7 +10,7 @@ pub enum Theme {
 
 /// Version of the shipped defaults. Bumped when a default changes so that a
 /// stored settings file that still has the old, untouched values is migrated.
-pub const DEFAULTS_REV: u32 = 11;
+pub const DEFAULTS_REV: u32 = 12;
 
 /// Range of the output ring buffer, ms. The floor is also the auto buffer's
 /// floor: below 40 ms a single 200 ms cable callback drains the ring.
@@ -147,7 +147,7 @@ impl Default for Settings {
             output_device: String::new(),
             input_leveling: true,
 
-            residual_denoise: "gtcrn".into(),
+            residual_denoise: "dpdfnet".into(),
             residual_order: "after".into(),
             vad_gate: true,
             voice_isolation: true,
@@ -338,6 +338,12 @@ impl Settings {
                 settings.max_suppression_db = 15.0;
             }
 
+            // rev 12: the shipped denoiser is DPDFNet now. Only the old default
+            // moves: "off" and a hand-picked UL-UNAS are left alone.
+            if settings.defaults_rev < 12 && settings.residual_denoise == "gtcrn" {
+                settings.residual_denoise = "dpdfnet".into();
+            }
+
             settings.defaults_rev = DEFAULTS_REV;
         }
 
@@ -427,6 +433,26 @@ mod tests {
             "{}",
             settings.chunk_ms
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_old_default_denoiser_becomes_dpdfnet() {
+        assert_eq!(Settings::default().residual_denoise, "dpdfnet");
+
+        let dir = std::env::temp_dir().join(format!("nc-denoise-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // the old shipped default moves over...
+        std::fs::write(&path, r#"{"defaultsRev":11,"residualDenoise":"gtcrn"}"#).unwrap();
+        assert_eq!(Settings::load(&path).residual_denoise, "dpdfnet");
+
+        // ...a deliberate choice does not
+        std::fs::write(&path, r#"{"defaultsRev":11,"residualDenoise":"ulunas"}"#).unwrap();
+        assert_eq!(Settings::load(&path).residual_denoise, "ulunas");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

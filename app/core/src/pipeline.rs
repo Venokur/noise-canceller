@@ -145,6 +145,19 @@ impl Pipeline {
                     }
                 }
             }
+            // DPDFNet is the default, so a package without its model file (a dev
+            // build, or a fetch-models.ps1 run from before it existed) has to
+            // keep denoising: GTCRN ships with the app.
+            "dpdfnet" => {
+                crate::log::info("residual: dpdfnet4.onnx is missing, using GTCRN");
+                match Denoiser::new_gtcrn(&paths::gtcrn_model(), 2) {
+                    Ok(model) => Some(ResidualModel::Sherpa(model)),
+                    Err(err) => {
+                        crate::log::info(&format!("residual: GTCRN failed to load: {err}"));
+                        None
+                    }
+                }
+            }
             "ulunas" => Some(ResidualModel::unas()),
             other => {
                 if other != "off" {
