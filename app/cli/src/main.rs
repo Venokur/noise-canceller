@@ -371,7 +371,8 @@ fn replay_file() -> Result<()> {
         // same target as the live engine: the output detector must agree with
         // the mic that the user is talking, otherwise an audiobook is lifted
         let vad_ok = out_block.target_vad.unwrap_or(out_block.target_model);
-        chain.set_target_present((in_voice && vad_ok) || out_block.cap_active);
+        let speaker = (in_voice && vad_ok) || out_block.cap_active;
+        chain.set_target_present(speaker);
         if let Some(speech) = out_block.target_vad {
             if speech {
                 vad_true += 1;
@@ -397,12 +398,13 @@ fn replay_file() -> Result<()> {
             }
         }
         if let Some(air) = air.as_mut() {
-            let speech = out_block.target_vad.unwrap_or(out_block.speech_in);
+            // same predicate as the engine: the air lifts whatever the model
+            // passed, so it must follow the speaker, not any speech
             air.add(
                 out_block.wet,
                 &mut up_buf[..produced],
                 settings.air_amount,
-                speech,
+                speaker,
             );
         }
         chain.process(&mut up_buf[..produced]);

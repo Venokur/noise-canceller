@@ -753,7 +753,8 @@ impl Engine {
                     // to agree: the mic heard a level jump (the user is
                     // talking) and the detector did not call the block silent.
                     let vad_ok = out.target_vad.unwrap_or(out.target_model);
-                    chain.set_target_present((in_voice && vad_ok) || cap_active);
+                    let speaker = (in_voice && vad_ok) || cap_active;
+                    chain.set_target_present(speaker);
 
                     let produced = up.process(out.wet, &mut up_buf);
 
@@ -778,8 +779,10 @@ impl Engine {
                         }
                     }
                     if let Some(stage) = air.as_mut() {
-                        let speech = out.target_vad.unwrap_or(out.speech_in);
-                        stage.add(out.wet, &mut up_buf[..produced], air_amount, speech);
+                        // only while the speaker talks: the air stage lifts
+                        // whatever the model passed, and 8-12 kHz is exactly
+                        // what makes a leaked television voice intelligible
+                        stage.add(out.wet, &mut up_buf[..produced], air_amount, speaker);
                     }
                     chain.process(&mut up_buf[..produced]);
 
