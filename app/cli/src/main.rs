@@ -369,8 +369,10 @@ fn replay_file() -> Result<()> {
         was_speaking = speaking;
 
         // same target as the live engine: the output detector must agree with
-        // the mic that the user is talking, otherwise an audiobook is lifted
-        let vad_ok = out_block.target_vad.unwrap_or(out_block.target_model);
+        // the mic that the user is talking, and the model must not have cut the
+        // block as if it were another voice, otherwise an audiobook is lifted
+        let vad = out_block.target_vad.unwrap_or(true);
+        let vad_ok = vad && out_block.target_model;
         let speaker = (in_voice && vad_ok) || out_block.cap_active;
         chain.set_target_present(speaker);
         if let Some(speech) = out_block.target_vad {

@@ -543,7 +543,13 @@ impl Pipeline {
             cap_active,
             speech_in,
             cap_voice,
-            target_model: atten_db < 8.0 || cap_active,
+            // A block the model cut by more than 16 dB is not the enrolled
+            // speaker: the model cuts the owner by 6-14 dB and another voice by
+            // 20-25 dB. The AGC uses this to decide whether to lift the block;
+            // without it a distant talker (cut 20 dB) was lifted back to the
+            // target and the owner's next phrase arrived with the gain the quiet
+            // talker had asked for — heard as "my voice suddenly got loud".
+            target_model: atten_db < 16.0,
             target_vad,
             cold_reset,
             leak_reset,

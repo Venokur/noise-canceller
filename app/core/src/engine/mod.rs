@@ -752,7 +752,8 @@ impl Engine {
                     // used to lift the background to the target. Both sides have
                     // to agree: the mic heard a level jump (the user is
                     // talking) and the detector did not call the block silent.
-                    let vad_ok = out.target_vad.unwrap_or(out.target_model);
+                    let vad = out.target_vad.unwrap_or(true);
+                    let vad_ok = vad && out.target_model;
                     let speaker = (in_voice && vad_ok) || cap_active;
                     chain.set_target_present(speaker);
 
