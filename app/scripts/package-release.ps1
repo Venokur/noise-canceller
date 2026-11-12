@@ -23,6 +23,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $app = Split-Path $PSScriptRoot -Parent
 $repo = Split-Path $app -Parent
+. (Join-Path $PSScriptRoot "target-dir.ps1")
 $configPath = Join-Path $app "src-tauri\tauri.conf.json"
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 
@@ -59,10 +60,20 @@ if ($missing.Count -gt 0) {
 
 # --- build -----------------------------------------------------------------
 
-$exe = Join-Path $app "target\release\noise-canceller.exe"
-$installerDir = Join-Path $app "target\release\bundle\nsis"
+$target = Get-CargoTargetDir -App $app
+$exe = Join-Path $target "release\noise-canceller.exe"
+$installerDir = Join-Path $target "release\bundle\nsis"
 
 if (-not $SkipBuild) {
+    # Every release leaves its installer here (70-80 MB each) and nothing removed
+    # them: 0.1.0, 0.2.0 and 0.2.1 sat next to the current build. The published
+    # copy stays in release\; the cache only needs the version being built.
+    if (Test-Path $installerDir) {
+        Get-ChildItem $installerDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike "*$Version*" } |
+            Remove-Item -Force
+    }
+
     Write-Host "build: npm run tauri build"
     Push-Location $app
     try {

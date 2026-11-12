@@ -47,6 +47,7 @@ foreach ($required in @(
         "models/denoise/gtcrn.onnx",
         "models/denoise/dpdfnet4.onnx",
         "models/denoise/silero_vad.onnx",
+        "models/bwe/novasr.onnx",
         "native/sherpa-onnx-c-api.dll",
         "native/onnxruntime.dll",
         "THIRD_PARTY_NOTICES.txt"

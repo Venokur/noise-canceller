@@ -14,10 +14,11 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $app = Join-Path $root "app"
+. (Join-Path $PSScriptRoot "target-dir.ps1")
 $recordings = Join-Path $root "portable\data\recordings"
 $profiles = Join-Path $root "portable\data\profiles"
 $settings = Join-Path $root "portable\data\settings.json"
-$nc = Join-Path $app "target\release\nc.exe"
+$nc = Join-Path (Get-CargoTargetDir -App $app) "release\nc.exe"
 
 if (-not (Test-Path $nc)) {
     Write-Host "building nc..."

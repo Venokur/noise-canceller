@@ -185,6 +185,13 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
               </div>
               <div :class="settingRow">
                 <AppLabel
+                  text="Воздух"
+                  hint="Добавляет верх выше 8 кГц, которого у 16-кГц модели нет: голос перестаёт звучать «в подушку». Это не шумодав и не изоляция — полоса 0–8 кГц, громкость и чужие голоса не меняются. 0 % — выключено."
+                />
+                <AppSlider v-model="settings.airAmount" :min="0" :max="1" :step="0.05" :format="(v) => `${Math.round(v * 100)} %`" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
                   text="Гейт"
                   hint="Пороговый шумодав для остатков сигнала: закрывает всё, что тише порога."
                 />

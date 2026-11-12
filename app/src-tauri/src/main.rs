@@ -966,6 +966,27 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // WebView2 can show a white frame if the window becomes visible before
+        // the page has painted. Keep it hidden until the first page has loaded,
+        // then show it and nudge the size once so the compositor commits.
+        .on_page_load({
+            let show = !start_minimized;
+            move |webview, payload| {
+                if !show
+                    || webview.label() != "main"
+                    || !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                {
+                    return;
+                }
+                let window = webview.window();
+                let _ = window.show();
+                let _ = window.set_focus();
+                if let Ok(size) = window.inner_size() {
+                    let _ = window.set_size(tauri::PhysicalSize::new(size.width + 1, size.height));
+                    let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
+                }
+            }
+        })
         .setup(move |app| {
             use tauri::menu::{
                 CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem,
@@ -1029,14 +1050,20 @@ fn main() {
             builder.build(app)?;
 
             register_hotkey(app.handle(), &start_hotkey);
-            // the window is created hidden: restore its size, center it, and only
-            // then show it, so the first frame the user sees is the final one
+            // the window is created hidden: restore its size and center it while
+            // the page is loading; `on_page_load` shows it after the first paint
             restore_window(app.handle());
             if !start_minimized {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                // safety net: a broken page must still be visible and closable
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if let Some(window) = handle.get_webview_window("main") {
+                        if !window.is_visible().unwrap_or(false) {
+                            let _ = window.show();
+                        }
+                    }
+                });
             }
             Ok(())
         })

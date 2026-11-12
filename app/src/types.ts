@@ -24,6 +24,7 @@ export interface Settings {
   toneEnabled: boolean;
   toneLowDb: number;
   toneHighDb: number;
+  airAmount: number;
   gateEnabled: boolean;
   gateThresholdDb: number;
   gateRatio: number;

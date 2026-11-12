@@ -14,3 +14,6 @@ libloading.workspace = true
 hound.workspace = true
 # UL-UNAS DNS3: a small streaming denoiser in pure Rust, weights embedded
 ul_unas_rs = "0.1"
+# NovaSR: the optional "air" stage. `load-dynamic` reuses native/onnxruntime.dll,
+# which sherpa-onnx already ships, instead of linking a second copy.
+ort = { version = "=2.0.0-rc.10", features = ["load-dynamic"] }

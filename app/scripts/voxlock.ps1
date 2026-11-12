@@ -21,7 +21,8 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $app = Join-Path $root "app"
-$nc = Join-Path $app "target\release\nc.exe"
+. (Join-Path $PSScriptRoot "target-dir.ps1")
+$nc = Join-Path (Get-CargoTargetDir -App $app) "release\nc.exe"
 
 if (-not (Test-Path $nc)) {
     Write-Host "building nc..."

@@ -29,6 +29,7 @@ $ErrorActionPreference = "Stop"
 
 $app = Split-Path $PSScriptRoot -Parent
 $repo = Split-Path $app -Parent
+. (Join-Path $PSScriptRoot "target-dir.ps1")
 if (-not $Out) {
     $Out = Join-Path $repo "portable"
 }
@@ -46,7 +47,14 @@ if (-not $Version) {
 
 if (-not $SkipExe) {
     if (-not $Exe) {
-        $Exe = Join-Path $app "target\release\noise-canceller.exe"
+        $Exe = Join-Path (Get-CargoTargetDir -App $app) "release\noise-canceller.exe"
+    }
+    if (-not (Test-Path $Exe)) {
+        # `cargo metadata` can return the path with a different Unicode
+        # normalization of the folder name; the default app\target is still
+        # the place the Tauri CLI just wrote to.
+        $fallback = Join-Path $app "target\release\noise-canceller.exe"
+        if (Test-Path $fallback) { $Exe = $fallback }
     }
     if (-not (Test-Path $Exe)) {
         throw "exe not found: $Exe (build it with: npm run tauri build -- --no-bundle)"
@@ -93,6 +101,12 @@ function Copy-Models {
             Write-Host "  drop $($_.Name)"
             Remove-Item $_.FullName -Force
         }
+    # Optional air stage. It is tiny but the engine logs and continues without
+    # it, so a missing file must not fail packaging.
+    $bwe = Join-Path $dst "bwe"
+    New-Item -ItemType Directory -Force $bwe | Out-Null
+    $air = Join-Path $src "bwe\novasr.onnx"
+    if (Test-Path $air) { Copy-Item $air $bwe -Force }
 }
 
 function Copy-Native {
@@ -165,7 +179,7 @@ if ($Zip) {
     }
 
     # Zipping half a package is worse than not zipping at all.
-    foreach ($required in @("noise-canceller.exe", "models\voxlock\chunk_int8.onnx", "native\sherpa-onnx-c-api.dll")) {
+    foreach ($required in @("noise-canceller.exe", "models\voxlock\chunk_int8.onnx", "models\bwe\novasr.onnx", "native\sherpa-onnx-c-api.dll")) {
         if (-not (Test-Path (Join-Path $stage $required))) {
             throw "incomplete package: $required is missing from $Out"
         }

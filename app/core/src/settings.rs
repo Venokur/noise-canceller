@@ -10,7 +10,7 @@ pub enum Theme {
 
 /// Version of the shipped defaults. Bumped when a default changes so that a
 /// stored settings file that still has the old, untouched values is migrated.
-pub const DEFAULTS_REV: u32 = 12;
+pub const DEFAULTS_REV: u32 = 15;
 
 /// Range of the output ring buffer, ms. The floor is also the auto buffer's
 /// floor: below 40 ms a single 200 ms cable callback drains the ring.
@@ -97,6 +97,10 @@ pub struct Settings {
     pub tone_enabled: bool,
     pub tone_low_db: f32,
     pub tone_high_db: f32,
+    /// 0..1 amount of synthesized "air" above 8 kHz. The 16 kHz model has no
+    /// content there; 0 leaves the output bit-exact. A build without the
+    /// optional model simply logs and skips the stage.
+    pub air_amount: f32,
 
     pub gate_enabled: bool,
     pub gate_threshold_db: f32,
@@ -173,6 +177,7 @@ impl Default for Settings {
             tone_enabled: true,
             tone_low_db: 0.0,
             tone_high_db: 0.0,
+            air_amount: 0.5,
             gate_enabled: true,
             gate_threshold_db: -50.0,
             gate_ratio: 3.0,
@@ -242,6 +247,7 @@ impl Settings {
         self.high_pass_hz = self.high_pass_hz.clamp(20.0, 300.0);
         self.tone_low_db = self.tone_low_db.clamp(TONE_LOW_MIN_DB, TONE_LOW_MAX_DB);
         self.tone_high_db = self.tone_high_db.clamp(-TONE_HIGH_MAX_DB, TONE_HIGH_MAX_DB);
+        self.air_amount = self.air_amount.clamp(0.0, 1.0);
         self.comfort_noise_db = self.comfort_noise_db.clamp(-90.0, -30.0);
         self.ab_seconds = self.ab_seconds.clamp(5.0, 60.0);
         self.keep_recordings = self.keep_recordings.clamp(1, 100);
@@ -363,6 +369,23 @@ impl Settings {
             // moves: "off" and a hand-picked UL-UNAS are left alone.
             if settings.defaults_rev < 12 && settings.residual_denoise == "gtcrn" {
                 settings.residual_denoise = "dpdfnet".into();
+            }
+
+            // rev 14: -24 dBFS was a hot mix. The voice arrived 6-8 dB louder
+            // than the microphone and its loudest syllables sat at -1.5 dBFS:
+            // they jumped out of the phrase and hit the limiter. -30 dBFS keeps
+            // the processed voice at the level it was recorded.
+            if settings.defaults_rev < 14 && (settings.agc_target_db - (-24.0)).abs() < 0.1 {
+                settings.agc_target_db = -30.0;
+            }
+
+            // rev 15: the quieter -30 dBFS moved the voice under the model's
+            // own hiss and made it read as dull, so the target goes back to
+            // -24. A jump at the start of a loud phrase is better handled with
+            // `agc_max_gain_db`, which limits the boost without moving the
+            // whole voice down.
+            if settings.defaults_rev < 15 && (settings.agc_target_db - (-30.0)).abs() < 0.1 {
+                settings.agc_target_db = -24.0;
             }
 
             settings.defaults_rev = DEFAULTS_REV;
@@ -494,6 +517,7 @@ mod tests {
             mute_hotkey: "  ".into(),
             tone_low_db: 99.0,
             tone_high_db: -99.0,
+            air_amount: 2.0,
             ..Settings::default()
         };
         settings.sanitize();
@@ -511,6 +535,7 @@ mod tests {
         assert_eq!(settings.mute_hotkey, "Ctrl+Alt+M");
         assert_eq!(settings.tone_low_db, TONE_LOW_MAX_DB);
         assert_eq!(settings.tone_high_db, -TONE_HIGH_MAX_DB);
+        assert_eq!(settings.air_amount, 1.0);
     }
 
     #[test]
@@ -525,6 +550,7 @@ mod tests {
         let settings = Settings::load(&path);
         assert_eq!(settings.tone_low_db, 0.0);
         assert_eq!(settings.tone_high_db, 0.0);
+        assert_eq!(settings.air_amount, 0.5);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

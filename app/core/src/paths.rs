@@ -95,6 +95,16 @@ pub fn vad_model() -> PathBuf {
     denoise_dir().join("silero_vad.onnx")
 }
 
+/// Optional bandwidth-extension model (`Air`). Lives next to the denoisers,
+/// so a portable build only needs one extra folder.
+pub fn bwe_model() -> PathBuf {
+    denoise_dir()
+        .parent()
+        .map(|p| p.join("bwe"))
+        .unwrap_or_else(|| PathBuf::from("models").join("bwe"))
+        .join("novasr.onnx")
+}
+
 /// sherpa-onnx opens files with narrow CRT calls, so non-ASCII paths fail.
 /// Returns the 8.3 short form when needed.
 #[cfg(windows)]

@@ -18,6 +18,7 @@ Noise Canceller (дальше — «программа») распростран
 | DPDFNet | `models/denoise/dpdfnet4.onnx` | Apache-2.0 | © Ceva-IP (dpdfnet) |
 | UL-UNAS | внутри exe (веса DNS3) | MIT | © 2026 Xiaobin Rong; порт © 2026 Tanix |
 | Silero VAD | `models/denoise/silero_vad.onnx` | MIT | © 2020-present Silero Team |
+| NovaSR | `models/bwe/novasr.onnx` | Apache-2.0 | © 2026 Yatharth Sharma; ONNX-граф © TigreGotico |
 | sherpa-onnx | `native/sherpa-onnx-c-api.dll` | Apache-2.0 | © k2-fsa |
 | ONNX Runtime | `native/onnxruntime.dll` | MIT | © Microsoft Corporation |
 | Tauri, wry, tao, tray-icon, global-hotkey, плагины | внутри exe | MIT / Apache-2.0 | © Tauri Programme within the Commons Conservancy |
@@ -28,7 +29,8 @@ Noise Canceller (дальше — «программа») распростран
 
 Apache-2.0 обязывает не только приложить текст лицензии, но и сохранить
 `NOTICE`, если он есть: у VoxLock он есть (`licenses/voxlock-NOTICE.txt`, там
-атрибуция REAL-TSE/WeSep), у sherpa-onnx — нет.
+атрибуция REAL-TSE/WeSep), у NovaSR — тоже (`licenses/novasr-NOTICE.txt`),
+у sherpa-onnx — нет.
 
 Внутри `onnxruntime.dll` статически собраны сторонние библиотеки (Eigen,
 abseil, protobuf, flatbuffers и другие) — это официальная сборка Microsoft,
@@ -149,16 +151,23 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | lock_api | 0.4.14 | MIT OR Apache-2.0 |
 | log | 0.4.35 | MIT OR Apache-2.0 |
 | markup5ever | 0.39.0 | MIT OR Apache-2.0 |
+| matrixmultiply | 0.3.11 | MIT/Apache-2.0 |
 | memchr | 2.8.3 | Unlicense OR MIT |
 | mime | 0.3.17 | MIT OR Apache-2.0 |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
 | mio | 1.2.4 | MIT |
 | muda | 0.20.0 | Apache-2.0 OR MIT |
+| ndarray | 0.16.1 | MIT OR Apache-2.0 |
 | new_debug_unreachable | 1.0.6 | MIT |
+| num-complex | 0.4.6 | MIT OR Apache-2.0 |
 | num-conv | 0.2.2 | MIT OR Apache-2.0 |
+| num-integer | 0.1.47 | MIT OR Apache-2.0 |
+| num-traits | 0.2.19 | MIT OR Apache-2.0 |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
 | option-ext | 0.2.0 | MPL-2.0 |
+| ort | 2.0.0-rc.10 | MIT OR Apache-2.0 |
+| ort-sys | 2.0.0-rc.10 | MIT OR Apache-2.0 |
 | os_info | 3.15.0 | MIT |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
@@ -176,6 +185,7 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
 | quick-xml | 0.42.0 | MIT |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
+| rawpointer | 0.2.1 | MIT/Apache-2.0 |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
 | regex | 1.13.1 | MIT OR Apache-2.0 |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 |
@@ -205,6 +215,7 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | simd-adler32 | 0.3.10 | MIT |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 |
 | smallvec | 1.16.4 | MIT OR Apache-2.0 |
+| smallvec | 2.0.0-alpha.10 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
@@ -331,6 +342,8 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 - `licenses/dpdfnet-LICENSE.txt` — Apache-2.0, DPDFNet
 - `licenses/ulunas-LICENSE.txt` — MIT, UL-UNAS и её Rust-порт
 - `licenses/silero-vad-LICENSE.txt` — MIT, Silero VAD
+- `licenses/novasr-LICENSE.txt` — Apache-2.0, NovaSR
+- `licenses/novasr-NOTICE.txt` — NOTICE модели NovaSR
 - `licenses/onnxruntime-LICENSE.txt` — MIT, ONNX Runtime
 - `licenses/lucide-LICENSE.txt` — ISC, Lucide
 - `licenses/mit.txt` — MIT для остальных крейтов и npm-пакетов

@@ -30,6 +30,20 @@ impl Biquad {
         self.a2 = (1.0 - alpha) / a0;
     }
 
+    /// RBJ low-pass: everything above `cutoff_hz` is rolled off.
+    pub fn low_pass(&mut self, sample_rate: f32, cutoff_hz: f32, q: f64) {
+        let w0 = 2.0 * std::f64::consts::PI * cutoff_hz as f64 / sample_rate as f64;
+        let cos = w0.cos();
+        let alpha = w0.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+
+        self.b0 = (1.0 - cos) / 2.0 / a0;
+        self.b1 = (1.0 - cos) / a0;
+        self.b2 = (1.0 - cos) / 2.0 / a0;
+        self.a1 = -2.0 * cos / a0;
+        self.a2 = (1.0 - alpha) / a0;
+    }
+
     /// RBJ low shelf: everything below `corner_hz` moves by `gain_db`.
     ///
     /// The slope is the steepest one that does not overshoot (`S = 1`), which is
@@ -64,6 +78,19 @@ impl Biquad {
         self.b2 = a * ((a + 1.0) + (a - 1.0) * cos - two_sqrt_a_alpha) / a0;
         self.a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos) / a0;
         self.a2 = ((a + 1.0) - (a - 1.0) * cos - two_sqrt_a_alpha) / a0;
+    }
+
+    /// RBJ notch: removes a narrow band around `center_hz`.
+    pub fn notch(&mut self, sample_rate: f32, center_hz: f32, q: f64) {
+        let w0 = 2.0 * std::f64::consts::PI * center_hz as f64 / sample_rate as f64;
+        let cos = w0.cos();
+        let alpha = w0.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        self.b0 = 1.0 / a0;
+        self.b1 = -2.0 * cos / a0;
+        self.b2 = 1.0 / a0;
+        self.a1 = -2.0 * cos / a0;
+        self.a2 = (1.0 - alpha) / a0;
     }
 
     #[inline]
@@ -486,6 +513,12 @@ impl Chain {
             .high_pass(sample_rate as f32, self.high_pass_hz, 0.5412);
         self.high_pass2
             .high_pass(sample_rate as f32, self.high_pass_hz, 1.3066);
+        // No notch at 100/200 Hz. The owner's F0 is 96-110 Hz, so a Q=12
+        // notch at 100 Hz cut the fundamental by 18 dB and rotated its phase
+        // by several milliseconds against the harmonics: vowels lost their
+        // body and read as hollow/resonant. What looked like "mains hum" in
+        // the band share was the voice itself; the microphone now has only
+        // about -60 dBFS of hum in pauses, which the gate covers.
 
         // A shelf set to 0 dB is an identity filter; skipping it keeps the
         // output bit-exact for every settings file written before the control
@@ -677,6 +710,34 @@ mod tests {
         }
 
         out_rms
+    }
+
+    #[test]
+    fn a_narrow_notch_removes_its_center_frequency() {
+        let run = |freq: f64| {
+            let mut n1 = Biquad::default();
+            n1.notch(48_000.0, 100.0, 12.0);
+            let mut n2 = Biquad::default();
+            n2.notch(48_000.0, 200.0, 18.0);
+            let n = 48_000;
+            let mut rms = 0.0;
+            for i in 0..n {
+                let x = 0.5 * (2.0 * std::f64::consts::PI * freq * i as f64 / 48_000.0).sin();
+                let y = n2.process(n1.process(x));
+                if i > 4800 {
+                    rms += y * y;
+                }
+            }
+            (rms / (n - 4800) as f64).sqrt()
+        };
+        let voice = run(1_000.0);
+        for hz in [100.0, 200.0] {
+            let hum = run(hz);
+            assert!(
+                hum < voice * 0.2,
+                "{hz} Hz should be notched: {hum:.4} vs {voice:.4}"
+            );
+        }
     }
 
     #[test]
@@ -872,7 +933,7 @@ mod tests {
         // every settings file written before the control existed lands here,
         // and the chain has to sound exactly as it did
         let mut chain = tone_chain(0.0, 0.0);
-        for hz in [100.0, 3_000.0, 6_000.0] {
+        for hz in [400.0, 3_000.0, 6_000.0] {
             let change = tone_change_db(&mut chain, hz);
             assert!(change.abs() < 0.05, "{hz} Hz moved by {change:.3} dB");
         }

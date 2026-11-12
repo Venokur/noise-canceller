@@ -16,6 +16,7 @@ use ab::{ab_append_clean, AbBuffer};
 use helpers::*;
 use streams::{capture_f32, install_panic_hook, push_block, render_f32};
 
+use crate::air::Air;
 use crate::pipeline::Pipeline;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -114,6 +115,8 @@ struct Shared {
     spectrum: Arc<Mutex<[f32; BANDS]>>,
     settings_seq: Arc<AtomicU32>,
     wet: Arc<AtomicU32>,
+    /// 0..1 amount of synthesized air above 8 kHz
+    air: Arc<AtomicU32>,
     buffer_ms: Arc<AtomicU32>,
     leveling: Arc<AtomicBool>,
     out_fill: Arc<AtomicU32>,
@@ -156,6 +159,7 @@ impl Shared {
             spectrum: Arc::new(Mutex::new([0.0; BANDS])),
             settings_seq: Arc::new(AtomicU32::new(1)),
             wet: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            air: Arc::new(AtomicU32::new(settings.air_amount.to_bits())),
             buffer_ms: Arc::new(AtomicU32::new(50.0f32.to_bits())),
             leveling: Arc::new(AtomicBool::new(settings.input_leveling)),
             out_fill: Arc::new(AtomicU32::new(0)),
@@ -419,6 +423,11 @@ impl Engine {
         let processor = thread::Builder::new()
             .name("voxlock-processor".into())
             .spawn(move || {
+                // NovaSR is loaded on first use, not at start: most sessions
+                // never enable "air", and a 22 ms session load in the middle of
+                // the first buffer is worse than a short wait after the switch.
+                let mut air: Option<Air> = None;
+                let mut air_error = false;
                 while proc_shared.running.load(Ordering::Relaxed) {
                     let seq = proc_shared.settings_seq.load(Ordering::Relaxed);
                     if seq != chain_seq {
@@ -598,6 +607,9 @@ impl Engine {
                         // gate open: the detector has not seen audio for a while
                         // and would take ~300 ms to notice the next word
                         pipeline.skip_silence(&block);
+                        if let Some(air) = air.as_mut() {
+                            air.reset();
+                        }
                         fade_suppression(&proc_shared);
                         let produced = up.process(&zeros, &mut up_buf);
                         for sample in up_buf[..produced].iter_mut() {
@@ -750,6 +762,24 @@ impl Engine {
                         if seen == 1 {
                             crate::log::info("model returned NaN/Inf — block replaced with silence");
                         }
+                    }
+                    // Optional air above 8 kHz. It goes in before the DSP so the
+                    // tone shelves and the limiter shape it like the rest of the
+                    // voice; the 0-8 kHz path itself is unchanged.
+                    let air_amount =
+                        f32::from_bits(proc_shared.air.load(Ordering::Relaxed));
+                    if air_amount > 0.0 && air.is_none() && !air_error {
+                        match Air::new(out_rate) {
+                            Ok(stage) => air = Some(stage),
+                            Err(err) => {
+                                air_error = true;
+                                crate::log::info(&format!("air: {err}"));
+                            }
+                        }
+                    }
+                    if let Some(stage) = air.as_mut() {
+                        let speech = out.target_vad.unwrap_or(out.speech_in);
+                        stage.add(out.wet, &mut up_buf[..produced], air_amount, speech);
                     }
                     chain.process(&mut up_buf[..produced]);
 
@@ -960,6 +990,10 @@ impl Engine {
         }
         self.shared.wet.store(
             settings.isolation_strength.clamp(0.0, 1.0).to_bits(),
+            Ordering::Relaxed,
+        );
+        self.shared.air.store(
+            settings.air_amount.clamp(0.0, 1.0).to_bits(),
             Ordering::Relaxed,
         );
         // in auto mode the processor owns the buffer; do not overwrite the

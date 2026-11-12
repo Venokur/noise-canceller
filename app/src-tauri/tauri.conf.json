@@ -48,6 +48,7 @@
       "../models/denoise/gtcrn.onnx": "models/denoise/gtcrn.onnx",
     "../models/denoise/dpdfnet4.onnx": "models/denoise/dpdfnet4.onnx",
       "../models/denoise/silero_vad.onnx": "models/denoise/silero_vad.onnx",
+      "../models/bwe/novasr.onnx": "models/bwe/novasr.onnx",
       "../native/sherpa-onnx-c-api.dll": "native/sherpa-onnx-c-api.dll",
       "../native/onnxruntime.dll": "native/onnxruntime.dll",
       "../../licenses/README.md": "licenses/README.md",
@@ -58,6 +59,8 @@
       "../../licenses/onnxruntime-LICENSE.txt": "licenses/onnxruntime-LICENSE.txt",
       "../../licenses/silero-vad-LICENSE.txt": "licenses/silero-vad-LICENSE.txt",
       "../../licenses/voxlock-NOTICE.txt": "licenses/voxlock-NOTICE.txt",
+      "../../licenses/novasr-LICENSE.txt": "licenses/novasr-LICENSE.txt",
+      "../../licenses/novasr-NOTICE.txt": "licenses/novasr-NOTICE.txt",
       "../../LICENSE": "LICENSE.txt",
       "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.txt"
     },

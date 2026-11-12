@@ -12,9 +12,10 @@ $ProgressPreference = "SilentlyContinue"
 $native = Join-Path $Root "native"
 $models = Join-Path $Root "models\voxlock"
 $denoise = Join-Path $Root "models\denoise"
+$bwe = Join-Path $Root "models\bwe"
 $tmp = Join-Path $Root ".download"
 
-New-Item -ItemType Directory -Force $native, $models, $denoise, $tmp | Out-Null
+New-Item -ItemType Directory -Force $native, $models, $denoise, $bwe, $tmp | Out-Null
 
 function Get-File([string]$Url, [string]$Destination) {
     if (Test-Path $Destination) {
@@ -52,6 +53,8 @@ if (-not (Test-Path (Join-Path $models "chunk_int8.onnx"))) {
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx" (Join-Path $denoise "gtcrn.onnx")
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/dpdfnet4.onnx" (Join-Path $denoise "dpdfnet4.onnx")
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" (Join-Path $denoise "silero_vad.onnx")
+# 2b. Optional "air" stage: NovaSR 16 kHz -> 48 kHz bandwidth extension
+Get-File "https://huggingface.co/TigreGotico/audiosronnx-novasr/resolve/main/novasr.onnx" (Join-Path $bwe "novasr.onnx")
 
 # 3. sherpa-onnx native libraries (C API + ONNX Runtime)
 $libsTar = Join-Path $tmp "sherpa-onnx-libs.tar.bz2"
@@ -75,3 +78,5 @@ Write-Host "models:"
 Get-ChildItem $models -File | ForEach-Object { "  {0,-28} {1,8:0.0} MB" -f $_.Name, ($_.Length / 1MB) }
 Write-Host "denoise:"
 Get-ChildItem $denoise -File | ForEach-Object { "  {0,-28} {1,8:0.0} MB" -f $_.Name, ($_.Length / 1MB) }
+Write-Host "bwe:"
+Get-ChildItem $bwe -File | ForEach-Object { "  {0,-28} {1,8:0.0} MB" -f $_.Name, ($_.Length / 1MB) }

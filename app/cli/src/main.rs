@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
+use noise_canceller_core::air::Air;
 use noise_canceller_core::dsp::Chain;
 use noise_canceller_core::paths;
 use noise_canceller_core::resample::Resampler;
@@ -266,6 +267,17 @@ fn replay_file() -> Result<()> {
     let mut up = Resampler::new(16_000, rate);
     let mut chain = Chain::new();
     chain.configure(&settings, rate);
+    let mut air = if settings.air_amount > 0.0 {
+        match Air::new(rate) {
+            Ok(air) => Some(air),
+            Err(err) => {
+                eprintln!("air: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let mut out: Vec<f32> = Vec::with_capacity(at16.len() * 3 + 64);
     let mut up_buf = vec![0.0f32; up.max_output(chunk) + 64];
@@ -300,6 +312,9 @@ fn replay_file() -> Result<()> {
             // same as the live engine: keep the pre-roll current and leave the
             // gate open, the detector has not seen audio for a while
             pipeline.skip_silence(block);
+            if let Some(air) = air.as_mut() {
+                air.reset();
+            }
             let produced = up.process(&zeros, &mut up_buf);
             for sample in up_buf[..produced].iter_mut() {
                 *sample = 0.0;
@@ -380,6 +395,15 @@ fn replay_file() -> Result<()> {
                     chain.agc_gain_db(),
                 );
             }
+        }
+        if let Some(air) = air.as_mut() {
+            let speech = out_block.target_vad.unwrap_or(out_block.speech_in);
+            air.add(
+                out_block.wet,
+                &mut up_buf[..produced],
+                settings.air_amount,
+                speech,
+            );
         }
         chain.process(&mut up_buf[..produced]);
         let g = chain.agc_gain_db();
@@ -561,6 +585,15 @@ fn show_settings() -> Result<()> {
     println!(
         "tone      {} · body {:+.1} dB @ 200 Hz · presence {:+.1} dB @ 3 kHz",
         s.tone_enabled, s.tone_low_db, s.tone_high_db
+    );
+    println!(
+        "air       {:.2} · {}",
+        s.air_amount,
+        if paths::bwe_model().exists() {
+            "model present"
+        } else {
+            "model missing"
+        }
     );
     println!(
         "learned   leveler {:.1} dB · auto buffer {} ms",

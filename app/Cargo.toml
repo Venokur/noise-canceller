@@ -7,6 +7,19 @@ version = "0.2.2"
 edition = "2021"
 license = "MIT"
 
+# Размер кэша, а не скорость сборки — то, ради чего эти настройки. Кэш лежит
+# в app\target и нормируется scripts\clean.ps1.
+[profile.dev]
+# Полный DWARF (`debug = 2`, значение по умолчанию) кладёт 226 МБ .pdb на
+# крейт; таблицы строк оставляют бэктрейсы читаемыми за долю этого.
+debug = "line-tables-only"
+# Инкрементальная компиляция держала 83 копии графа крейтов (~2,2 ГБ) и на
+# 280 крейтах редко окупается.
+incremental = false
+
+[profile.release]
+strip = "debuginfo"
+
 [workspace.dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
