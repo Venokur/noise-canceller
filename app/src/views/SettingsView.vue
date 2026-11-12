@@ -7,7 +7,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, startHotkeyCapture, stats, switchSection } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, startHotkeyCapture, stats, switchSection, searching, settingsQuery, filterSettings } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -113,6 +113,27 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
                   @update:model-value="() => restartSoon()"
                 />
               </div>
+              <div :class="settingRow">
+                <AppLabel
+                  text="Тембр"
+                  hint="Две полки после автогромкости: «тело» на 200 Гц и разборчивость на 3 кГц. 0 дБ — звук не меняется."
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.toneEnabled" /></div>
+              </div>
+              <div v-if="settings.toneEnabled" :class="settingRow">
+                <AppLabel
+                  text="Тело"
+                  hint="Полка на 200 Гц. Вниз убирает бубнёж и остатки гула, вверх добавляет плотность. Выше +3 дБ возвращает то, что снимает срез низов."
+                />
+                <AppSlider v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+              </div>
+              <div v-if="settings.toneEnabled" :class="settingRow">
+                <AppLabel
+                  text="Разборчивость"
+                  hint="Полка на 3 кГц — там согласные. Вверх делает речь яснее, но поднимает и остаточный шип, поэтому предел ±6 дБ. Выше 8 кГц полосы нет: модель работает на 16 кГц."
+                />
+                <AppSlider v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+              </div>
             </div>
 
             <!-- clean -->
@@ -161,27 +182,6 @@ const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, captu
                   hint="Ниже этой частоты сигнал ослабляется. 80–120 Гц убирают гул, выше — начинает худеть сам голос."
                 />
                 <AppSlider v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} Гц`" />
-              </div>
-              <div :class="settingRow">
-                <AppLabel
-                  text="Тембр"
-                  hint="Две полки после автогромкости: «тело» на 200 Гц и разборчивость на 3 кГц. 0 дБ — звук не меняется."
-                />
-                <div class="flex justify-end"><AppSwitch v-model="settings.toneEnabled" /></div>
-              </div>
-              <div v-if="settings.toneEnabled" :class="settingRow">
-                <AppLabel
-                  text="Тело"
-                  hint="Полка на 200 Гц. Вниз убирает бубнёж и остатки гула, вверх добавляет плотность. Выше +3 дБ возвращает то, что снимает срез низов."
-                />
-                <AppSlider v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
-              </div>
-              <div v-if="settings.toneEnabled" :class="settingRow">
-                <AppLabel
-                  text="Разборчивость"
-                  hint="Полка на 3 кГц — там согласные. Вверх делает речь яснее, но поднимает и остаточный шип, поэтому предел ±6 дБ. Выше 8 кГц полосы нет: модель работает на 16 кГц."
-                />
-                <AppSlider v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
