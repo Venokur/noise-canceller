@@ -10,7 +10,7 @@ pub enum Theme {
 
 /// Version of the shipped defaults. Bumped when a default changes so that a
 /// stored settings file that still has the old, untouched values is migrated.
-pub const DEFAULTS_REV: u32 = 15;
+pub const DEFAULTS_REV: u32 = 16;
 
 /// Range of the output ring buffer, ms. The floor is also the auto buffer's
 /// floor: below 40 ms a single 200 ms cable callback drains the ring.
@@ -177,7 +177,7 @@ impl Default for Settings {
             tone_enabled: true,
             tone_low_db: 0.0,
             tone_high_db: 0.0,
-            air_amount: 0.5,
+            air_amount: 0.10,
             gate_enabled: true,
             gate_threshold_db: -50.0,
             gate_ratio: 3.0,
@@ -388,6 +388,15 @@ impl Settings {
                 settings.agc_target_db = -24.0;
             }
 
+            // rev 16: the air stage at 0.5 was audible as a resonance on
+            // vowels. The model's 8-12 kHz band is noise, not harmonics, so
+            // above roughly 15 % it stops being "air" and starts ringing on
+            // sustained vowels; 0.10 still lifts the top without ringing. The
+            // slider stays free for other microphones and headphones.
+            if settings.defaults_rev < 16 && (settings.air_amount - 0.5).abs() < 0.001 {
+                settings.air_amount = 0.10;
+            }
+
             settings.defaults_rev = DEFAULTS_REV;
         }
 
@@ -550,7 +559,7 @@ mod tests {
         let settings = Settings::load(&path);
         assert_eq!(settings.tone_low_db, 0.0);
         assert_eq!(settings.tone_high_db, 0.0);
-        assert_eq!(settings.air_amount, 0.5);
+        assert_eq!(settings.air_amount, 0.10);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

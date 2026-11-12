@@ -44,6 +44,12 @@ const CROSSFADE: usize = 96;
 /// The stage adds only what is above this. The resampler already carries the
 /// 0-8 kHz band, so the two do not overlap much.
 const CROSSOVER_HZ: f32 = 8_000.0;
+/// The model also writes content up to 24 kHz, and that part is not "air":
+/// the microphone never had it, and the narrow tones it puts at 14.9-18 kHz
+/// can intermodulate in a cheap headphone driver into an audible ring. The
+/// 4th-order Butterworth at 16 kHz leaves 8-14 kHz (the audible air) within
+/// 1.3 dB and rolls 18-24 kHz off by 13-20 dB.
+const TAME_HZ: f32 = 16_000.0;
 /// Input samples below this are treated as silence by the per-sample air gate.
 /// -56 dBFS: quiet syllables still open it, the VAD floor does not.
 const GATE_LEVEL: f32 = 0.0016;
@@ -83,6 +89,10 @@ struct Mixer {
     /// 4th-order Butterworth high-pass at the crossover, run as two biquads
     high1: Biquad,
     high2: Biquad,
+    /// 4th-order Butterworth low-pass at `TAME_HZ`: keeps the audible air and
+    /// removes the invented top octave.
+    tame1: Biquad,
+    tame2: Biquad,
     /// Last per-sample gate value, used to fade the tail out in a pause.
     gate: f32,
     gate_release: f32,
@@ -93,17 +103,23 @@ impl Mixer {
         let mut mixer = Self {
             high1: Biquad::default(),
             high2: Biquad::default(),
+            tame1: Biquad::default(),
+            tame2: Biquad::default(),
             gate: 0.0,
             gate_release: 1.0 - (-1000.0 / (GATE_RELEASE_MS * OUT_RATE as f32)).exp(),
         };
         mixer.high1.high_pass(OUT_RATE as f32, CROSSOVER_HZ, 0.5412);
         mixer.high2.high_pass(OUT_RATE as f32, CROSSOVER_HZ, 1.3066);
+        mixer.tame1.low_pass(OUT_RATE as f32, TAME_HZ, 0.5412);
+        mixer.tame2.low_pass(OUT_RATE as f32, TAME_HZ, 1.3066);
         mixer
     }
 
     fn reset(&mut self) {
         self.high1.reset();
         self.high2.reset();
+        self.tame1.reset();
+        self.tame2.reset();
         self.gate = 0.0;
     }
 
@@ -138,6 +154,7 @@ impl Mixer {
             };
             let raw = if raw.is_finite() { raw } else { 0.0 };
             let high = self.high2.process(self.high1.process(raw as f64)) as f32;
+            let high = self.tame2.process(self.tame1.process(high as f64)) as f32;
             let high = if high.is_finite() { high } else { 0.0 };
             let g = if g.is_finite() {
                 g.clamp(0.0, 1.0)
@@ -155,6 +172,7 @@ impl Mixer {
     fn fade_out(&mut self, dst: &mut [f32], amount: f32) {
         for slot in dst.iter_mut() {
             let high = self.high2.process(self.high1.process(0.0)) as f32;
+            let high = self.tame2.process(self.tame1.process(high as f64)) as f32;
             let high = if high.is_finite() { high } else { 0.0 };
             self.gate += (0.0 - self.gate) * self.gate_release;
             *slot += high * self.gate * amount;
@@ -489,6 +507,38 @@ mod tests {
             high_db - low_db > 20.0,
             "high band should pass and low band should not: 1 kHz {low_db:.1} dB, 12 kHz {high_db:.1} dB"
         );
+    }
+
+    #[test]
+    fn the_band_above_the_tame_cut_is_rolled_off() {
+        // The model writes content up to 24 kHz that the microphone never had.
+        // Above 16 kHz it is not air but ultrasonic noise with narrow tones
+        // that can ring in a headphone driver, so the top octave stays down.
+        let mut mixer = Mixer::new();
+        let mut run = |freq: f32| {
+            let input = sine(freq, 0.5, OUT_RATE / 2);
+            let mut dst = vec![0.0f32; input.len()];
+            let mut pos = 0;
+            let gate = vec![1.0f32; input.len()];
+            let mut gate_pos = 0;
+            mixer.mix_into(&input, &mut pos, &gate, &mut gate_pos, &mut dst, 1.0);
+            mixer.reset();
+            let rms = (dst[1000..]
+                .iter()
+                .map(|v| (*v as f64) * (*v as f64))
+                .sum::<f64>()
+                / (dst.len() - 1000) as f64)
+                .sqrt();
+            20.0 * (rms as f32 + 1e-12).log10()
+        };
+        let band = run(11_000.0);
+        for freq in [20_000.0, 23_000.0] {
+            let top = run(freq);
+            assert!(
+                band - top > 12.0,
+                "{freq} Hz should be rolled off: 11 kHz {band:.1} dB, {freq} Hz {top:.1} dB"
+            );
+        }
     }
 
     #[test]
