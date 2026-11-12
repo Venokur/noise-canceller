@@ -63,11 +63,35 @@ const GATE_ENV_RELEASE_MS: f32 = 50.0;
 /// 13 kHz low-pass and a 10 kHz shelf were tried after it and both took the
 /// life out of the voice, so the band is left unfiltered above 8 kHz.
 const AIR_GAIN: f32 = 0.5;
+/// The model's band is noise, and on a sustained vowel it reads as an electric
+/// resonance. The band is therefore ducked on voiced (low zero-crossing) blocks
+/// and left at full level on sibilants: at a 50 % slider a vowel gets the 10 %
+/// that was proven clean, a consonant keeps the 50 % that gives the character.
+const VOWEL_GAIN: f32 = 0.2;
+/// zero-crossing rate, crossings per second, on the 16 kHz model input. Measured
+/// on the run of the owner's take: voiced blocks p25 580, median 900; sibilants
+/// p90 3700. The band between the two constants is a smooth ramp.
+const VOICED_ZCR: f32 = 700.0;
+const UNVOICED_ZCR: f32 = 2200.0;
+/// how fast the duck follows: ~150 ms
+const VOICING_MS: f32 = 150.0;
 
 /// ONNX Runtime is process-global in `ort` 2.0-rc.10: the first `Air` commits
 /// the environment, later ones reuse it. Both the app and `nc replay` can
 /// construct an `Air` in the same process.
 static ENV: OnceLock<()> = OnceLock::new();
+
+/// 1.0 for a sibilant, `VOWEL_GAIN` for a sustained vowel, linear in between.
+fn voicing_target(block16: &[f32]) -> f32 {
+    let crossings = block16
+        .windows(2)
+        .filter(|pair| (pair[0] >= 0.0) != (pair[1] >= 0.0))
+        .count();
+    let seconds = block16.len() as f32 / 16_000.0;
+    let zcr = crossings as f32 / seconds.max(1e-6);
+    let voiced = ((UNVOICED_ZCR - zcr) / (UNVOICED_ZCR - VOICED_ZCR)).clamp(0.0, 1.0);
+    1.0 - voiced * (1.0 - VOWEL_GAIN)
+}
 
 fn environment(dll: &Path) -> Result<()> {
     if ENV.get().is_some() {
@@ -211,6 +235,9 @@ pub struct Air {
     gate_env: f32,
     gate_env_attack: f32,
     gate_env_release: f32,
+    /// Smoothed air gain from the voicing detector: 1 on sibilants,
+    /// `VOWEL_GAIN` on sustained vowels.
+    voicing: f32,
     /// Model output for the current processed segment, reused as a buffer.
     segment: Vec<f32>,
     /// First samples of the previous window's lookahead output, crossfaded
@@ -274,6 +301,7 @@ impl Air {
             gate_env: 0.0,
             gate_env_attack: 1.0 - (-1000.0 / (GATE_ENV_ATTACK_MS * 16_000.0)).exp(),
             gate_env_release: 1.0 - (-1000.0 / (GATE_ENV_RELEASE_MS * 16_000.0)).exp(),
+            voicing: VOWEL_GAIN,
             segment: Vec::new(),
             tail: Vec::new(),
             model_out: Vec::new(),
@@ -311,8 +339,19 @@ impl Air {
         self.gate_fifo.clear();
         self.gate_pos = 0;
         self.gate_env = 0.0;
+        self.voicing = VOWEL_GAIN;
         self.segment.clear();
         self.tail.clear();
+    }
+
+    /// Follows the zero-crossing rate of the model input: a sustained vowel is
+    /// low (300-500 crossings/s), a sibilant is high (1.4-5 kHz). The air band
+    /// is a noise layer, and on a vowel it reads as an electric resonance, so
+    /// the band is ducked there and left alone on consonants.
+    fn update_voicing(&mut self, block16: &[f32]) {
+        let target = voicing_target(block16);
+        let coef = 1.0 - (-(block16.len() as f32) / (VOICING_MS * 16.0)).exp();
+        self.voicing += (target - self.voicing) * coef;
     }
 
     /// Adds the synthesized high band of `block16` to `dst48`.
@@ -324,7 +363,7 @@ impl Air {
     /// the engine gate; without it the high band would lift a pause above the
     /// DSP gate threshold and the gate would open on its own.
     pub fn add(&mut self, block16: &[f32], dst48: &mut [f32], amount: f32, speech: bool) {
-        let amount = amount.clamp(0.0, 1.0) * AIR_GAIN;
+        let mut amount = amount.clamp(0.0, 1.0) * AIR_GAIN;
         if amount <= 0.0001 {
             // Off: do not keep a half-open gate or a charged filter for the
             // moment the user switches back on.
@@ -348,6 +387,8 @@ impl Air {
             }
             return;
         }
+        self.update_voicing(block16);
+        amount *= self.voicing;
         self.pending.extend_from_slice(block16);
         let processed = self.pending.len().saturating_sub(LOOKAHEAD);
         if processed == 0 {
@@ -582,6 +623,32 @@ mod tests {
             speech.iter().any(|v| v.abs() > 1e-3),
             "gate did not open on speech"
         );
+    }
+
+    #[test]
+    fn a_vowel_ducks_the_air_and_a_sibilant_does_not() {
+        let sr = 16_000.0f32;
+        let vowel: Vec<f32> = (0..1024)
+            .map(|i| 0.2 * (2.0 * std::f32::consts::PI * 120.0 * i as f32 / sr).sin())
+            .collect();
+        // white-ish noise through a one-pole high-pass: crossing rate ~5 kHz
+        let mut prev = 0.0f32;
+        let mut n = 0x1234_5678u32;
+        let sibilant: Vec<f32> = (0..1024)
+            .map(|_| {
+                n ^= n << 13;
+                n ^= n >> 17;
+                n ^= n << 5;
+                let white = (n as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                let hp = white - prev;
+                prev = white;
+                0.2 * hp
+            })
+            .collect();
+        let v = voicing_target(&vowel);
+        let s = voicing_target(&sibilant);
+        assert!((v - VOWEL_GAIN).abs() < 0.05, "vowel target {v}");
+        assert!(s > 0.9, "sibilant target {s}");
     }
 
     #[test]
