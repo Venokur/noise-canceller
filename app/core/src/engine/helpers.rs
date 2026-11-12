@@ -301,7 +301,18 @@ impl DropoutGuard {
         // A real hole in a loud block is obvious after two blocks; waiting for
         // the third costs another 64 ms of the word, and the word starts there.
         let confirm = if in_db > -40.0 { 2 } else { 3 };
-        if self.cut >= confirm && self.cool == 0 && (self.armed || cold) && self.retries < 4 {
+        // Only the owner's speech counts. Without `in_speech` a distant voice
+        // (or a fan) above -54 dB that the model suppresses by 30-40 dB looks
+        // like a dropped word, and the guard restarted the model every second;
+        // each restart is a window where the model re-locks and passes what it
+        // hears, which is exactly "a third-party voice breaks through now and
+        // then". The model is not dropping the owner if the owner is silent.
+        if self.cut >= confirm
+            && self.cool == 0
+            && (self.armed || cold)
+            && self.retries < 4
+            && in_speech
+        {
             self.resets += 1;
             self.retries += 1;
             self.cut = 0;

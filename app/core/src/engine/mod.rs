@@ -1411,6 +1411,20 @@ mod tests {
     }
 
     #[test]
+    fn a_background_voice_does_not_restart_the_model() {
+        // A distant voice is loud enough to pass -54 dB and the model suppresses
+        // it by 40 dB, but the owner is silent: that is not a dropout.
+        let mut guard = DropoutGuard::new();
+        let mut resets = 0;
+        for _ in 0..200 {
+            if guard.observe(-45.0, -85.0, false, 26.0) {
+                resets += 1;
+            }
+        }
+        assert_eq!(resets, 0, "the guard restarted the model {resets} times");
+    }
+
+    #[test]
     fn dropout_guard_retries_but_is_bounded() {
         let mut guard = DropoutGuard::new();
         for _ in 0..8 {
