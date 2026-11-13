@@ -284,6 +284,7 @@
   "settings.diag.captureDrops": "Потеряно на входе",
   "settings.diag.captureDropsHint": "Сэмплы микрофона, потерянные из-за переполнения входного кольца. Ноль — норма.",
   "settings.diag.inputPeak": "Пик входа",
+  "settings.diag.outputPeak": "Пик выхода",
   "settings.diag.clock": "Расхождение часов",
   "settings.diag.clockHint": "Подстройка под расхождение часов микрофона и вывода. 0 ppm — конвертер работает ровно, темп и тембр не меняются.",
   "settings.diag.log": "Открыть лог",

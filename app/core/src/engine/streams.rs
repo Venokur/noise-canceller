@@ -130,6 +130,7 @@ pub(super) fn render_f32(
 
     let muted = shared.muted.load(Ordering::Relaxed);
     let mut missed = 0u32;
+    let mut peak = 0.0f32;
 
     for f in 0..frames {
         // a starved ring repeats the last sample instead of inserting silence: a
@@ -149,6 +150,7 @@ pub(super) fn render_f32(
         sum_sq += (value as f64) * (value as f64);
         // muted: keep draining so the timing does not drift, but send silence
         let value = if muted { 0.0 } else { value };
+        peak = peak.max(value.abs());
         for c in 0..channels {
             data[f * channels + c] = value;
         }
@@ -165,6 +167,8 @@ pub(super) fn render_f32(
         0.0
     };
     shared.output_rms.store(rms.to_bits(), Ordering::Relaxed);
+    let held = (f32::from_bits(shared.output_peak.load(Ordering::Relaxed)) * 0.995).max(peak);
+    shared.output_peak.store(held.to_bits(), Ordering::Relaxed);
 
     // real buffer fill seen by the consumer, plus VoxLock's own 24 ms of latency
     let fill_ms = ring.slots() as f32 / out_rate.max(1) as f32 * 1000.0;

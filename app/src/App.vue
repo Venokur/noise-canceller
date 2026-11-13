@@ -49,6 +49,7 @@ const stats = ref<Stats>({
   running: false,
   spectrum: Array(32).fill(0),
   inputPeakDb: -120,
+  outputPeakDb: -120,
   muted: false,
   guardResets: 0,
   levelerGainDb: 0,

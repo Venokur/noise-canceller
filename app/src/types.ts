@@ -82,6 +82,7 @@ export interface Stats {
   suppressionDb: number;
   speech: boolean;
   inputPeakDb: number;
+  outputPeakDb: number;
   muted: boolean;
   guardResets: number;
   levelerGainDb: number;

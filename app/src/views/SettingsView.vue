@@ -497,6 +497,10 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 </span>
                 <span>{{ t("settings.diag.inputPeak") }}</span>
                 <span>{{ stats.inputPeakDb > -100 ? stats.inputPeakDb.toFixed(0) + " " + u.db : "—" }}</span>
+                <span>{{ t("settings.diag.outputPeak") }}</span>
+                <span :class="stats.outputPeakDb > -1 ? 'text-[var(--danger)]' : ''">
+                  {{ stats.outputPeakDb > -100 ? stats.outputPeakDb.toFixed(0) + " " + u.db : "—" }}
+                </span>
                 <span :title="t('settings.diag.clockHint')">
                   {{ t("settings.diag.clock") }}
                 </span>

@@ -27,6 +27,7 @@ pub(crate) struct StatsDto {
     pub(crate) suppression_db: f32,
     pub(crate) speech: bool,
     pub(crate) input_peak_db: f32,
+    pub(crate) output_peak_db: f32,
     pub(crate) muted: bool,
     pub(crate) guard_resets: u32,
     pub(crate) leveler_gain_db: f32,
@@ -56,6 +57,7 @@ impl Default for StatsDto {
             speech: false,
             // silence, not full scale: the clip indicator reads this value
             input_peak_db: -120.0,
+            output_peak_db: -120.0,
             muted: false,
             guard_resets: 0,
             leveler_gain_db: 0.0,
@@ -86,6 +88,7 @@ impl From<Stats> for StatsDto {
             suppression_db: s.suppression_db,
             speech: s.speech,
             input_peak_db: s.input_peak_db,
+            output_peak_db: s.output_peak_db,
             muted: s.muted,
             guard_resets: s.guard_resets,
             leveler_gain_db: s.leveler_gain_db,

@@ -73,6 +73,8 @@ pub struct Stats {
     pub speech: bool,
     /// peak of the last input callback, dBFS (clip indicator)
     pub input_peak_db: f32,
+    /// peak of the rendered output, dBFS
+    pub output_peak_db: f32,
     /// output is muted (global hotkey / tray)
     pub muted: bool,
     /// how many times the dropout guard reset VoxLock
@@ -123,6 +125,7 @@ struct Shared {
     suppression: Arc<AtomicU32>,
     speech: Arc<AtomicBool>,
     input_peak: Arc<AtomicU32>,
+    output_peak: Arc<AtomicU32>,
     muted: Arc<AtomicBool>,
     guard_resets: Arc<AtomicU32>,
     leveler_gain: Arc<AtomicU32>,
@@ -168,6 +171,7 @@ impl Shared {
             suppression: Arc::new(AtomicU32::new(0)),
             speech: Arc::new(AtomicBool::new(false)),
             input_peak: Arc::new(AtomicU32::new(0)),
+            output_peak: Arc::new(AtomicU32::new(0)),
             muted: Arc::new(AtomicBool::new(false)),
             guard_resets: Arc::new(AtomicU32::new(0)),
             leveler_gain: Arc::new(AtomicU32::new(0)),
@@ -498,6 +502,10 @@ impl Engine {
             speech: self.shared.speech.load(Ordering::Relaxed),
             input_peak_db: 20.0
                 * f32::from_bits(self.shared.input_peak.load(Ordering::Relaxed))
+                    .max(1e-6)
+                    .log10(),
+            output_peak_db: 20.0
+                * f32::from_bits(self.shared.output_peak.load(Ordering::Relaxed))
                     .max(1e-6)
                     .log10(),
             muted: self.shared.muted.load(Ordering::Relaxed),
