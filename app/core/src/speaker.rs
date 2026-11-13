@@ -30,6 +30,69 @@ const MIN_RMS: f32 = 0.0015;
 /// confidence sentinel: no profile, no speech, or the model is missing
 pub const UNKNOWN: f32 = -1.0;
 
+/// Similarity of every speech window in a recording to one profile.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Similarity {
+    pub windows: u32,
+    pub min: f32,
+    pub median: f32,
+    pub max: f32,
+}
+
+/// Slides a 3 s window over a recording and compares each speech window with
+/// the profile. Used by the A/B card to collect real "own / other" numbers
+/// before a confidence threshold is allowed to duck anything.
+pub fn similarity_to_profile(
+    embedder: &mut SpeakerEmbedder,
+    profile: &Path,
+    samples: &[f32],
+    rate: u32,
+) -> Result<Similarity> {
+    let enrolled = embedding_from_wav(embedder, profile)?;
+    let samples = if rate == MODEL_RATE {
+        samples.to_vec()
+    } else {
+        let mut resampler = Resampler::new(rate, MODEL_RATE);
+        let mut out = vec![0.0f32; resampler.max_output(samples.len()) + 64];
+        let count = resampler.process(samples, &mut out);
+        out.truncate(count);
+        out
+    };
+
+    let mut values: Vec<f32> = Vec::new();
+    if samples.len() < WINDOW {
+        return Err(anyhow!("recording is shorter than 3 seconds"));
+    }
+    let mut start = 0usize;
+    while start + WINDOW <= samples.len() {
+        let window = &samples[start..start + WINDOW];
+        let rms = (window
+            .iter()
+            .map(|v| (*v as f64) * (*v as f64))
+            .sum::<f64>()
+            / window.len() as f64)
+            .sqrt() as f32;
+        if rms >= MIN_RMS {
+            if let Ok(vector) = embedder.embed(window, MODEL_RATE) {
+                values.push(cosine(&vector, &enrolled));
+            }
+        }
+        start += HOP;
+    }
+    if values.is_empty() {
+        return Err(anyhow!("no speech windows found"));
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = values[values.len() / 2];
+    Ok(Similarity {
+        windows: values.len() as u32,
+        min: *values.first().unwrap_or(&0.0),
+        median,
+        max: *values.last().unwrap_or(&0.0),
+    })
+}
+
 /// Cosine similarity of two embeddings; 1.0 is the same vector.
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let len = a.len().min(b.len());

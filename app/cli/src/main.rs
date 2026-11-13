@@ -35,6 +35,7 @@ fn main() -> Result<()> {
         "metrics" => metrics_file(),
         "speaker" => speaker_check(),
         "speaker-live" => speaker_live(),
+        "speaker-stats" => speaker_stats(),
         other => Err(anyhow!("unknown mode: {other} (use selftest|devices)")),
     }
 }
@@ -177,6 +178,37 @@ fn speaker_live() -> Result<()> {
     println!("confidence: {value:.3}");
     running.store(false, Ordering::Relaxed);
     guard.stop();
+    Ok(())
+}
+
+fn speaker_stats() -> Result<()> {
+    use noise_canceller_core::model::SpeakerEmbedder;
+    use noise_canceller_core::speaker;
+
+    let profile = std::env::args()
+        .nth(2)
+        .ok_or_else(|| anyhow!("usage: nc speaker-stats <profile.wav> <wav>..."))?;
+    let files: Vec<String> = std::env::args().skip(3).collect();
+    if files.is_empty() {
+        return Err(anyhow!("usage: nc speaker-stats <profile.wav> <wav>..."));
+    }
+
+    let mut embedder = SpeakerEmbedder::new(&paths::speaker_model(), 2)?;
+    for file in files {
+        let (samples, rate) = wav::read_mono(std::path::Path::new(&file))?;
+        match speaker::similarity_to_profile(
+            &mut embedder,
+            std::path::Path::new(&profile),
+            &samples,
+            rate,
+        ) {
+            Ok(s) => println!(
+                "{file}: windows {} min {:.3} median {:.3} max {:.3}",
+                s.windows, s.min, s.median, s.max
+            ),
+            Err(err) => println!("{file}: {err}"),
+        }
+    }
     Ok(())
 }
 

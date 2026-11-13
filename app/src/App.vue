@@ -28,6 +28,7 @@ import type {
   Quality,
   Settings,
   SettingsResult,
+  SpeakerSimilarity,
   Stats,
 } from "./types";
 
@@ -122,6 +123,7 @@ const takeToApply = ref<AbEntry | null>(null);
 const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
+const abSpeaker = ref<SpeakerSimilarity | null>(null);
 let slowStreak = 0;
 let slowWarnAt = 0;
 let quietMicWarned = false;
@@ -759,6 +761,7 @@ async function loadHistory() {
 
 async function loadAbMetrics() {
   abMetrics.value = null;
+  abSpeaker.value = null;
   abDelta.value = null;
   if (!abRaw.value) return;
   const match = /ab-(\d+)-raw/.exec(abRaw.value);
@@ -770,10 +773,24 @@ async function loadAbMetrics() {
   }
 }
 
+async function checkAbSpeaker() {
+  if (!abRaw.value) return;
+  const match = /ab-(\d+)-raw/.exec(abRaw.value);
+  if (!match) return;
+  abSpeaker.value = null;
+  error.value = "";
+  try {
+    abSpeaker.value = await invoke<SpeakerSimilarity>("ab_speaker", {
+      stamp: Number(match[1]),
+    });
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 watch(abRaw, () => {
   void loadAbMetrics();
 });
-
 function selectRecording(entry: AbEntry) {
   abRaw.value = entry.raw;
   abClean.value = entry.clean;
@@ -969,6 +986,7 @@ provide(APP_CONTEXT, {
   abRaw,
   abRunning,
   abSide,
+  abSpeaker,
   applyAutostart,
   applyPreset,
   askApplyTake,
@@ -983,6 +1001,7 @@ provide(APP_CONTEXT, {
   calibrateRoom,
   calibrating,
   capturingHotkey,
+  checkAbSpeaker,
   checkingModel,
   checkModel,
   deleteProfile,

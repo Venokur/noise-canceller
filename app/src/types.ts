@@ -155,6 +155,14 @@ export interface AbMetrics {
   longestDropoutS: number;
 }
 
+/** Similarity of the raw take's speech windows to the enrolled profile. */
+export interface SpeakerSimilarity {
+  windows: number;
+  min: number;
+  median: number;
+  max: number;
+}
+
 export interface SystemInfo {
   logicalCores: number;
   physicalCores: number;

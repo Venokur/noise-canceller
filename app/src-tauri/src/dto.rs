@@ -104,6 +104,26 @@ impl From<Stats> for StatsDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SpeakerSimilarityDto {
+    pub(crate) windows: u32,
+    pub(crate) min: f32,
+    pub(crate) median: f32,
+    pub(crate) max: f32,
+}
+
+impl From<noise_canceller_core::speaker::Similarity> for SpeakerSimilarityDto {
+    fn from(value: noise_canceller_core::speaker::Similarity) -> Self {
+        Self {
+            windows: value.windows,
+            min: value.min,
+            median: value.median,
+            max: value.max,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct StartResult {
     /// false when the engine was already running: the caller passed new devices
     /// or a new test mode, so it has to stop it and ask again

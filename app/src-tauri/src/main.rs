@@ -111,6 +111,20 @@ mod contract_tests {
     }
 
     #[test]
+    fn speaker_similarity_matches_types_ts() {
+        assert_same(
+            "SpeakerSimilarity",
+            json_keys(&SpeakerSimilarityDto {
+                windows: 0,
+                min: 0.0,
+                median: 0.0,
+                max: 0.0,
+            }),
+            ts_interface("SpeakerSimilarity"),
+        );
+    }
+
+    #[test]
     fn recording_and_profile_dtos_match_types_ts() {
         let quality = noise_canceller_core::profile::Quality {
             duration: 0.0,

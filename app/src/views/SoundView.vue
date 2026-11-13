@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -433,6 +433,18 @@ const noiseStage = computed(() => {
                   </b>
                   <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricDropout") }}</span>
                 </span>
+                <span
+                  v-if="abSpeaker"
+                  class="block w-[76px]"
+                  :title="t('sound.voiceSimilarity', {
+                    median: (abSpeaker.median * 100).toFixed(0),
+                    min: (abSpeaker.min * 100).toFixed(0),
+                    max: (abSpeaker.max * 100).toFixed(0),
+                  })"
+                >
+                  <b class="block text-[12.5px] font-normal">{{ (abSpeaker.median * 100).toFixed(0) }} %</b>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricVoice") }}</span>
+                </span>
               </div>
 
               <label class="flex items-center gap-2 text-[11.5px] whitespace-nowrap text-[var(--muted)]">
@@ -441,6 +453,9 @@ const noiseStage = computed(() => {
               </label>
               <button class="iconbtn" :title="t('sound.matchLevel')" @click="matchLevel">
                 <AppIcon name="sliders" :size="14" />
+              </button>
+              <button class="iconbtn" :title="t('sound.checkVoice')" @click="checkAbSpeaker">
+                <AppIcon name="mic" :size="14" />
               </button>
             </div>
           </div>

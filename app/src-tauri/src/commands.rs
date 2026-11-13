@@ -15,8 +15,8 @@ use noise_canceller_core::{devices, recordings};
 use tauri::{Manager, State};
 
 use crate::dto::{
-    AbEntry, AbMetricsDto, LastAb, ProfileScoreDto, SettingsResult, StartResult, StatsDto,
-    SystemInfo,
+    AbEntry, AbMetricsDto, LastAb, ProfileScoreDto, SettingsResult, SpeakerSimilarityDto,
+    StartResult, StatsDto, SystemInfo,
 };
 use crate::state::AppState;
 use crate::tray::register_hotkey;
@@ -735,6 +735,48 @@ pub(crate) fn ab_settings(state: State<'_, AppState>, stamp: u64) -> Result<Sett
             .to_string());
     }
     Ok(Settings::load(&path))
+}
+
+#[tauri::command(async)]
+pub(crate) async fn ab_speaker(
+    state: State<'_, AppState>,
+    stamp: u64,
+) -> Result<SpeakerSimilarityDto, String> {
+    let settings = state.settings_snapshot();
+    let lang = Lang::from_settings(&settings);
+    let profile = settings.profile_path.clone().ok_or_else(|| {
+        lang.text(
+            "для проверки голоса нужен записанный профиль",
+            "a recorded profile is needed to check the voice",
+        )
+        .to_string()
+    })?;
+    let model = noise_canceller_core::paths::speaker_model();
+    if !model.exists() {
+        return Err(lang
+            .text(
+                "модель проверки голоса не найдена",
+                "the speaker-check model is missing",
+            )
+            .to_string());
+    }
+    let raw = recordings::raw(stamp);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut embedder = noise_canceller_core::model::SpeakerEmbedder::new(&model, 2)
+            .map_err(|e| e.to_string())?;
+        let (samples, rate) =
+            noise_canceller_core::wav::read_mono(&raw).map_err(|e| e.to_string())?;
+        noise_canceller_core::speaker::similarity_to_profile(
+            &mut embedder,
+            std::path::Path::new(&profile),
+            &samples,
+            rate,
+        )
+        .map(SpeakerSimilarityDto::from)
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command(async)]
