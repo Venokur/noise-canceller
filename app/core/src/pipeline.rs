@@ -249,6 +249,7 @@ impl Pipeline {
         self.last_atten_db = 0.0;
         self.last_in_db = -120.0;
         self.speech_ref *= 0.99;
+        self.residual_cap *= 0.8;
     }
 
     /// Runs the chain on one 16 kHz block (already leveled and peak-limited).
