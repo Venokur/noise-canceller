@@ -146,6 +146,9 @@ struct Shared {
     speaker_confidence: Arc<AtomicU32>,
     /// momentary loudness of the output, LUFS
     lufs: Arc<AtomicU32>,
+    /// duck the output when the speaker confidence is low
+    speaker_guard: Arc<AtomicBool>,
+    speaker_threshold: Arc<AtomicU32>,
     /// frames the output device asked for in the last callback
     callback_frames: Arc<AtomicU32>,
     /// blocks where the model returned NaN/Inf and were zeroed
@@ -192,6 +195,10 @@ impl Shared {
             input_channel: Arc::new(AtomicI32::new(settings.input_channel)),
             speaker_confidence: Arc::new(AtomicU32::new((-1.0f32).to_bits())),
             lufs: Arc::new(AtomicU32::new((-120.0f32).to_bits())),
+            speaker_guard: Arc::new(AtomicBool::new(settings.speaker_guard)),
+            speaker_threshold: Arc::new(AtomicU32::new(
+                settings.speaker_threshold.clamp(0.05, 0.95).to_bits(),
+            )),
             callback_frames: Arc::new(AtomicU32::new(0)),
             bad_blocks: Arc::new(AtomicU32::new(0)),
         }
@@ -502,6 +509,13 @@ impl Engine {
         self.shared
             .input_channel
             .store(settings.input_channel, Ordering::Relaxed);
+        self.shared
+            .speaker_guard
+            .store(settings.speaker_guard, Ordering::Relaxed);
+        self.shared.speaker_threshold.store(
+            settings.speaker_threshold.clamp(0.05, 0.95).to_bits(),
+            Ordering::Relaxed,
+        );
         self.shared.settings_seq.fetch_add(1, Ordering::Relaxed);
     }
 

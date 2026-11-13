@@ -20,6 +20,7 @@ use crate::dsp::{Chain, InputFilter};
 use crate::pipeline::Pipeline;
 use crate::resample::Resampler;
 use crate::settings::{self, Settings};
+use crate::speaker::SpeakerGate;
 use crate::spectrum::Spectrum;
 use crate::state::LEVELER_GAIN_MAX_DB;
 
@@ -178,6 +179,7 @@ pub(super) struct Processor {
     input_voice: InputVoice,
     input_filter: InputFilter,
     speaker_in: Option<rtrb::Producer<f32>>,
+    speaker_gate: SpeakerGate,
     auto: AutoBuffer,
     max_suppression: f32,
     analyzer: Spectrum,
@@ -245,6 +247,7 @@ impl Processor {
             input_voice: InputVoice::new(),
             input_filter: InputFilter::new(MODEL_RATE as f32),
             speaker_in,
+            speaker_gate: SpeakerGate::new(out_rate as f32),
             auto: AutoBuffer {
                 enabled: settings.buffer_auto,
                 ms: buffer_ms,
@@ -475,6 +478,20 @@ impl Processor {
                 stage.add(out.wet, &mut self.up_buf[..produced], air_amount, speaker);
             }
             self.chain.process(&mut self.up_buf[..produced]);
+            let confidence = f32::from_bits(self.shared.speaker_confidence.load(Ordering::Relaxed));
+            let threshold = f32::from_bits(self.shared.speaker_threshold.load(Ordering::Relaxed));
+            let guard = self.shared.speaker_guard.load(Ordering::Relaxed);
+            if guard {
+                self.speaker_gate.process(
+                    &mut self.up_buf[..produced],
+                    confidence,
+                    threshold,
+                    true,
+                    produced as f32 / self.out_rate.max(1) as f32 * 1000.0,
+                );
+            } else {
+                self.speaker_gate.reset();
+            }
             self.shared
                 .lufs
                 .store(self.chain.lufs().to_bits(), Ordering::Relaxed);

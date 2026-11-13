@@ -26,6 +26,8 @@ export interface Settings {
   vadGate: boolean;
   voiceIsolation: boolean;
   speakerCheck: boolean;
+  speakerGuard: boolean;
+  speakerThreshold: number;
   highPassEnabled: boolean;
   highPassHz: number;
   toneEnabled: boolean;

@@ -160,6 +160,64 @@ fn loudest_window(samples: &[f32], rate: u32, len: usize) -> &[f32] {
     &samples[best..best + len]
 }
 
+/// Smooth ducking driven by the confidence number.
+///
+/// The confidence updates once every 1.5 s, so a single low window must not cut
+/// a word: the gate waits 2.5 s of sustained "not the profile" before it ducks,
+/// and releases in 300 ms when the speaker comes back.
+pub struct SpeakerGate {
+    gain: f32,
+    low_ms: f32,
+    attack: f32,
+    release: f32,
+}
+
+impl SpeakerGate {
+    pub fn new(sample_rate: f32) -> Self {
+        Self {
+            gain: 1.0,
+            low_ms: 0.0,
+            attack: 1.0 - (-1000.0 / 10.0 / sample_rate).exp(),
+            release: 1.0 - (-1000.0 / 300.0 / sample_rate).exp(),
+        }
+    }
+
+    pub fn process(
+        &mut self,
+        block: &mut [f32],
+        confidence: f32,
+        threshold: f32,
+        enabled: bool,
+        block_ms: f32,
+    ) {
+        let low = enabled && confidence >= 0.0 && confidence < threshold;
+        if low {
+            self.low_ms = (self.low_ms + block_ms).min(5_000.0);
+        } else {
+            self.low_ms = (self.low_ms - block_ms * 2.0).max(0.0);
+        }
+        let target = if low && self.low_ms >= 2_500.0 {
+            0.125
+        } else {
+            1.0
+        };
+        let coef = if target < self.gain {
+            self.attack
+        } else {
+            self.release
+        };
+        for sample in block.iter_mut() {
+            self.gain += (target - self.gain) * coef;
+            *sample *= self.gain;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.gain = 1.0;
+        self.low_ms = 0.0;
+    }
+}
+
 /// Owns the background thread and its stop flag.
 pub struct GuardHandle {
     stop: Arc<AtomicBool>,
@@ -276,5 +334,24 @@ mod tests {
         assert!((cosine(&a, &a) - 1.0).abs() < 1e-6);
         assert!((cosine(&a, &b) + 1.0).abs() < 1e-6);
         assert!(cosine(&a, &[0.0, 0.0, 0.0]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_gate_waits_before_ducking_and_releases() {
+        let mut gate = super::SpeakerGate::new(48_000.0);
+        let mut last = 1.0f32;
+        for _ in 0..30 {
+            let mut block = vec![1.0f32; 4_800];
+            gate.process(&mut block, 0.1, 0.35, true, 100.0);
+            last = block[block.len() - 1];
+        }
+        assert!(last < 0.25, "a foreign voice was not ducked: {last}");
+
+        for _ in 0..10 {
+            let mut block = vec![1.0f32; 4_800];
+            gate.process(&mut block, 0.9, 0.35, true, 100.0);
+            last = block[block.len() - 1];
+        }
+        assert!(last > 0.9, "the gate did not release: {last}");
     }
 }

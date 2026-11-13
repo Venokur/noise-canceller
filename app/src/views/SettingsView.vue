@@ -83,6 +83,29 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   <AppSwitch v-model="settings.speakerCheck" @update:model-value="() => restartSoon()" />
                 </div>
               </div>
+              <div v-if="settings.voiceIsolation && settings.speakerCheck" :class="settingRow">
+                <AppLabel
+                  :text="t('settings.voice.speakerGuard')"
+                  :hint="t('settings.voice.speakerGuardHint')"
+                />
+                <div class="flex justify-end">
+                  <AppSwitch v-model="settings.speakerGuard" />
+                </div>
+              </div>
+              <div v-if="settings.voiceIsolation && settings.speakerCheck && settings.speakerGuard" :class="settingRow">
+                <AppLabel
+                  :text="t('settings.voice.speakerThreshold')"
+                  :hint="t('settings.voice.speakerThresholdHint')"
+                />
+                <AppSlider
+                  :label="t('settings.voice.speakerThreshold')"
+                  v-model="settings.speakerThreshold"
+                  :min="0.05"
+                  :max="0.95"
+                  :step="0.05"
+                  :format="(v) => `${Math.round(v * 100)} %`"
+                />
+              </div>
               <div v-if="settings.voiceIsolation" :class="settingRow">
                 <AppLabel
                   :text="t('settings.voice.strength')"

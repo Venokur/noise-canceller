@@ -105,6 +105,10 @@ pub struct Settings {
     /// embed the microphone once a second and compare it to the profile; the
     /// figure is diagnostic and does not duck anything yet
     pub speaker_check: bool,
+    /// duck the output when the confidence stays below the threshold
+    pub speaker_guard: bool,
+    /// 0..1 similarity below which the guard considers the voice foreign
+    pub speaker_threshold: f32,
 
     pub high_pass_enabled: bool,
     pub high_pass_hz: f32,
@@ -198,6 +202,8 @@ impl Default for Settings {
             vad_gate: true,
             voice_isolation: true,
             speaker_check: true,
+            speaker_guard: false,
+            speaker_threshold: 0.35,
 
             high_pass_enabled: true,
             high_pass_hz: 100.0,
@@ -282,6 +288,7 @@ impl Settings {
         self.tone_low_db = self.tone_low_db.clamp(TONE_LOW_MIN_DB, TONE_LOW_MAX_DB);
         self.tone_high_db = self.tone_high_db.clamp(-TONE_HIGH_MAX_DB, TONE_HIGH_MAX_DB);
         self.deess_db = self.deess_db.clamp(0.0, 12.0);
+        self.speaker_threshold = self.speaker_threshold.clamp(0.05, 0.95);
         self.air_amount = self.air_amount.clamp(0.0, 1.0);
         self.residual_mix = self.residual_mix.clamp(0.0, 1.0);
         // a settings file is user-editable, but the map has no reason to grow
