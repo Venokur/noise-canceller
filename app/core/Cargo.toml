@@ -16,4 +16,11 @@ hound.workspace = true
 ul_unas_rs = "0.1"
 # NovaSR: the optional "air" stage. `load-dynamic` reuses native/onnxruntime.dll,
 # which sherpa-onnx already ships, instead of linking a second copy.
-ort = { version = "=2.0.0-rc.10", features = ["load-dynamic"] }
+# `load-dynamic` is the only mode used: the app calls `ort::init_from` with the
+# `onnxruntime.dll` it ships in `native/`. The default features pull in
+# `download-binaries` and `copy-dylibs`, which makes `ort-sys` download a 1.22
+# runtime and then symlink/copy it into `target/*/examples`; on a clean Windows
+# machine without symlink rights that copy fails (the directory does not exist),
+# which is why CI clippy died inside `ort-sys` build.rs and never reached a
+# single lint.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }
