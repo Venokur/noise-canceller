@@ -348,7 +348,7 @@ cargo run -p noise-canceller-cli -- devices       # список устройс�
 powershell -File scripts\golden.ps1               # golden-тест, падает при дрейфе
 powershell -File scripts\bakeoff.ps1 -Count 3     # сравнить варианты тракта на сохранённых дублях
 powershell -File scripts\voxlock.ps1 -Atten       # матрица блок/потоки + тихий микрофон
-powershell -File scripts\licenses.ps1 -Check      # список лицензий не разъехался
+powershell -File scripts\licenses.ps1 -Check -Policy # список лицензий и allowlist
 ```
 
 Если что-то ведёт себя странно, сначала `data/app.log` (кнопка «Открыть лог» на
@@ -867,22 +867,36 @@ Scicom voice-isolator не берём: лицензия `other`, файла LICE
 | sherpa-onnx | Apache-2.0 © k2-fsa | текст лицензии |
 | ONNX Runtime | MIT © Microsoft | текст + копирайт |
 | Tauri, cpal, Vue, Tailwind | MIT / Apache-2.0 | в общем списке |
+| `tauri-plugin-dialog`, `tauri-plugin-fs`, `rfd`, `@tauri-apps/plugin-dialog` | MIT / Apache-2.0 | текст + копирайт в `licenses/` |
 | Lucide (`@lucide/vue`), иконка приложения | ISC | текст + копирайт |
 
 Тексты лежат в `licenses/`, общий список — `THIRD_PARTY_NOTICES.md`, у него две
 таблицы с маркерами `inventory:rust` / `inventory:npm`; их собирает
 `scripts/licenses.ps1` из `cargo tree --target x86_64-pc-windows-msvc` и
-`package-lock.json`. Руками таблицы не правят, `-Check` падает при расхождении
-(его гоняет CI).
+`package-lock.json`. Руками таблицы не правят, `-Check` падает при расхождении.
+Модели и DLL ведутся отдельно в `MODEL_LICENSES.json` — с файлом, источником,
+лицензией и обязательным NOTICE.
+
+Политика (`licenses.ps1 -Policy`, гоняется в CI вместе с `-Check`): программа
+распространяется бесплатно, поэтому и зависимости, и веса моделей обязаны быть
+permissive и допускать перевыкладывание. Allowlist: MIT, MIT-0, Apache-2.0,
+BSD-2/3-Clause, ISC, Zlib, 0BSD, Unlicense, CC0-1.0, Unicode-3.0. `MPL-2.0`
+разрешён только пяти неизменённым крейтам из списка `mplAllowed`. Всё остальное
+(GPL/AGPL/LGPL/SSPL/BUSL, CC-BY-NC, `other`, `unknown`) валит сборку. Новый
+`.onnx` или DLL без строки в `MODEL_LICENSES.json` тоже валит проверку.
 
 Правила, чтобы не наступить:
 
 - новый компонент (модель, DLL, иконка, крейт) — строка в `THIRD_PARTY_NOTICES.md`,
-  текст в `licenses/`, файл в `package-portable.ps1` и в `bundle.resources`
-  (`tauri.conf.json`); потом `licenses.ps1`;
-- в Windows-сборке нет ни одной GPL/AGPL: 226 крейтов, все MIT / Apache-2.0 /
+  текст в `licenses/`, строка в `MODEL_LICENSES.json` для моделей/DLL, файл в
+  `package-portable.ps1` и в `bundle.resources` (`tauri.conf.json`); потом
+  `licenses.ps1 -Check -Policy`;
+- в Windows-сборке нет ни одной GPL/AGPL: 239 крейтов, все MIT / Apache-2.0 /
   BSD / ISC / Zlib / Unicode; `MPL-2.0` только у пяти неизменённых
   (`cssparser`, `selectors`, `dtoa-short`, `option-ext`, `cssparser-macros`);
+- **модели с CC-BY-NC не берём**, даже если программа бесплатная: NC-веса делают
+  некоммерческой всю сборку и конфликтуют с MIT-распространением. TEN-VAD
+  (Apache-2.0 + условия Agora) — только после отдельного юридического решения;
 - **VB-CABLE не кладём в сборку и не перевыкладываем**: только официальный архив
   с vb-audio.com по кнопке. Это donationware: личное использование бесплатно,
   профессиональное требует лицензии VB-Audio;

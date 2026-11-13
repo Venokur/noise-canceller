@@ -17,6 +17,10 @@
 | `novasr-NOTICE.txt` | NovaSR © Yatharth Sharma | Apache-2.0, §4(d) |
 | `onnxruntime-LICENSE.txt` | ONNX Runtime © Microsoft | MIT |
 | `lucide-LICENSE.txt` | Lucide © Lucide Icons and Contributors | ISC |
+| `rfd-LICENSE.txt` | rfd © Poly | MIT |
+| `tauri-plugin-dialog-LICENSE_*.txt` | tauri-plugin-dialog © Tauri Programme | Apache-2.0 / MIT |
+| `tauri-plugin-fs-LICENSE_*.txt` | tauri-plugin-fs © Tauri Programme | Apache-2.0 / MIT |
+| `tauri-plugin-dialog-js-LICENSE.spdx.txt` | @tauri-apps/plugin-dialog © Tauri Programme | Apache-2.0 / MIT |
 | `mit.txt` | крейты и npm-пакеты | MIT |
 
 Общая картина — в `THIRD_PARTY_NOTICES.md`. Список зависимостей в нём

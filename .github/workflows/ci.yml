@@ -69,9 +69,9 @@ jobs:
         working-directory: app
         run: npm run build
 
-      - name: License inventory
+      - name: License inventory and policy
         working-directory: app
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\licenses.ps1 -Check
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\licenses.ps1 -Check -Policy
 
       - name: Bundle config
         working-directory: app

@@ -177,7 +177,14 @@ mic 48k → 16k → выравнивание уровня → пиковый о�
 - sherpa-onnx — Apache-2.0 © k2-fsa;
 - ONNX Runtime — MIT © Microsoft;
 - cpal — Apache-2.0; Tauri — MIT/Apache-2.0; Vue — MIT; Tailwind — MIT;
+- `tauri-plugin-dialog`, `tauri-plugin-fs`, `rfd` — MIT/Apache-2.0 (диалоги
+  экспорта/импорта);
 - Lucide (`@lucide/vue`) — ISC, включая иконку приложения.
+
+Политика зависимостей и моделей — в [LICENSING.md](LICENSING.md). Она
+проверяется автоматически: `powershell -File scripts\licenses.ps1 -Check -Policy`
+в CI падает на GPL/AGPL, CC-BY-NC, `other`/`unknown` и на новый `.onnx` без
+строки в `MODEL_LICENSES.json`.
 
 **VB-CABLE** — отдельный продукт VB-Audio Software, в сборку не входит: кнопка
 установки скачивает официальный архив с vb-audio.com и запускает их установщик.

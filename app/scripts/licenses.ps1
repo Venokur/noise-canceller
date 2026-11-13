@@ -10,7 +10,8 @@
 # Only the table rows are generated; the header row lives in the markdown file,
 # so this script stays ASCII and works in Windows PowerShell 5.1 without a BOM.
 param(
-    [switch]$Check
+    [switch]$Check,
+    [switch]$Policy
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +29,101 @@ function New-Rows($rows) {
     }
     return ($out -join "`n")
 }
+
+# --- licence policy -----------------------------------------------------------
+#
+# The inventory above only records what is linked. This list decides what is
+# allowed to be linked at all: the app is distributed free under MIT, so every
+# dependency and every model must stay redistributable without a commercial or
+# copyleft obligation.
+$allowedLicenses = @(
+    'MIT', 'MIT-0', 'APACHE-2.0', 'BSD-2-CLAUSE', 'BSD-3-CLAUSE', 'ISC',
+    'ZLIB', '0BSD', 'UNLICENSE', 'CC0-1.0', 'UNICODE-3.0', 'UNICODE-DFS-2016'
+)
+# MPL-2.0 is file-level copyleft. The project already ships these five
+# unmodified crates; everything else needs a review before it is accepted.
+$mplAllowed = @('cssparser', 'cssparser-macros', 'selectors', 'dtoa-short', 'option-ext')
+
+function Test-LicenseTerm([string]$term, [string]$name) {
+    $term = $term.Trim()
+    if ([string]::IsNullOrWhiteSpace($term)) { return $false }
+    if ($term -eq 'MPL-2.0') { return ($mplAllowed -contains $name) }
+    return ($allowedLicenses -contains $term)
+}
+
+function Test-LicenseExpression([string]$expression, [string]$name) {
+    if ([string]::IsNullOrWhiteSpace($expression)) { return $false }
+    $value = $expression.ToUpperInvariant()
+    if ($value -match 'UNKNOWN|SEE PACKAGE|^OTHER$') { return $false }
+    # "Apache-2.0 WITH LLVM-exception" is still Apache-2.0 for our purpose
+    $value = $value -replace '\s+WITH\s+.*$', ''
+    # Parentheses only group OR/AND; flattening them is enough for the
+    # permissive expressions this project accepts.
+    $value = $value -replace '[()]', ''
+    # AND binds tighter: "(MIT OR Apache-2.0) AND Unicode-3.0" needs both
+    # groups, while every OR alternative inside a group is a choice.
+    $andParts = $value -split '\s+AND\s+'
+    if ($andParts.Count -gt 1) {
+        foreach ($andPart in $andParts) {
+            $any = $false
+            foreach ($alternative in ($andPart -split '\s+OR\s+|\s*/\s*')) {
+                if (Test-LicenseTerm $alternative $name) { $any = $true }
+            }
+            if (-not $any) { return $false }
+        }
+        return $true
+    }
+    foreach ($alternative in ($value -split '\s+OR\s+|\s*/\s*')) {
+        if (Test-LicenseTerm $alternative $name) { return $true }
+    }
+    return $false
+}
+
+function Test-ModelManifest([string]$repo, [string]$app) {
+    $problems = New-Object System.Collections.Generic.List[string]
+    $manifestPath = Join-Path $repo "MODEL_LICENSES.json"
+    if (-not (Test-Path $manifestPath)) {
+        $problems.Add("MODEL_LICENSES.json is missing")
+        return $problems
+    }
+    $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $listed = @{}
+    foreach ($model in $manifest.models) {
+        if (-not (Test-LicenseExpression $model.license $model.name)) {
+            $problems.Add("model '$($model.name)' has a disallowed licence: $($model.license)")
+        }
+        foreach ($file in @($model.files)) {
+            if ([string]::IsNullOrWhiteSpace($file)) { continue }
+            $listed[$file] = $true
+            if (-not (Test-Path (Join-Path $repo $file))) {
+                $problems.Add("model file is missing: $file")
+            }
+        }
+        if ($model.notice) {
+            if (-not (Test-Path (Join-Path $repo $model.notice))) {
+                $problems.Add("notice is missing: $($model.notice)")
+            }
+        }
+    }
+
+    # Every shipped .onnx and native DLL must be named in the manifest: a new
+    # model cannot arrive without its licence being reviewed.
+    $shipped = @()
+    foreach ($dir in @((Join-Path $app "models"), (Join-Path $app "native"))) {
+        if (Test-Path $dir) {
+            $shipped += Get-ChildItem $dir -Recurse -File |
+                Where-Object { $_.Extension -eq '.onnx' -or $_.Extension -eq '.dll' } |
+                ForEach-Object { $_.FullName.Substring($repo.Length + 1).Replace('\', '/') }
+        }
+    }
+    foreach ($file in $shipped) {
+        if (-not $listed.ContainsKey($file)) {
+            $problems.Add("shipped model/DLL is not in MODEL_LICENSES.json: $file")
+        }
+    }
+    return $problems
+}
+
 
 # --- Rust: crates linked into the Windows build -------------------------------
 $tree = & cargo tree --locked --target x86_64-pc-windows-msvc -e normal --prefix none -f "{p}|{l}" 2>$null
@@ -104,6 +200,34 @@ while ($queue.Count -gt 0) {
 $npmRows = New-Rows ($npm |
     Sort-Object name |
     ForEach-Object { , @($_.name, $_.version, $_.license) })
+
+# --- policy gate --------------------------------------------------------------
+$repo = Split-Path $app -Parent
+if ($Policy) {
+    $problems = New-Object System.Collections.Generic.List[string]
+    foreach ($crate in $rust.Values) {
+        if (-not (Test-LicenseExpression $crate.license $crate.name)) {
+            $problems.Add("crate '$($crate.name) $($crate.version)' has a disallowed licence: $($crate.license)")
+        }
+    }
+    foreach ($package in $npm) {
+        if (-not (Test-LicenseExpression $package.license $package.name)) {
+            $problems.Add("npm package '$($package.name)' has a disallowed licence: $($package.license)")
+        }
+    }
+    foreach ($problem in (Test-ModelManifest $repo $app)) {
+        $problems.Add($problem)
+    }
+    if ($problems.Count -gt 0) {
+        foreach ($problem in $problems) {
+            Write-Host ("LICENSE: " + $problem)
+        }
+        Write-Host ("licence policy failed: {0} problem(s)" -f $problems.Count)
+        exit 1
+    }
+    Write-Host ("licence policy OK: {0} crates, {1} npm packages, models checked" -f $rust.Count, $npm.Count)
+    if (-not $Check) { exit 0 }
+}
 
 # --- rewrite the blocks -------------------------------------------------------
 $text = [System.IO.File]::ReadAllText($notices, [System.Text.Encoding]::UTF8)

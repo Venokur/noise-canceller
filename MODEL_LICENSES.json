@@ -1,0 +1,64 @@
+{
+  "updated": "2026-11-13",
+  "models": [
+    {
+      "name": "VoxLock int8",
+      "files": [
+        "app/models/voxlock/enroll.onnx",
+        "app/models/voxlock/chunk_int8.onnx"
+      ],
+      "license": "Apache-2.0",
+      "notice": "licenses/voxlock-NOTICE.txt",
+      "source": "https://huggingface.co/arbazsiddiqui/voxlock"
+    },
+    {
+      "name": "GTCRN",
+      "files": ["app/models/denoise/gtcrn.onnx"],
+      "license": "MIT",
+      "notice": "licenses/gtcrn-LICENSE.txt",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models"
+    },
+    {
+      "name": "DPDFNet4",
+      "files": ["app/models/denoise/dpdfnet4.onnx"],
+      "license": "Apache-2.0",
+      "notice": "licenses/dpdfnet-LICENSE.txt",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models"
+    },
+    {
+      "name": "Silero VAD",
+      "files": ["app/models/denoise/silero_vad.onnx"],
+      "license": "MIT",
+      "notice": "licenses/silero-vad-LICENSE.txt",
+      "source": "https://github.com/snakers4/silero-vad"
+    },
+    {
+      "name": "NovaSR (air)",
+      "files": ["app/models/bwe/novasr.onnx"],
+      "license": "Apache-2.0",
+      "notice": "licenses/novasr-NOTICE.txt",
+      "source": "https://huggingface.co/TigreGotico/audiosronnx-novasr"
+    },
+    {
+      "name": "UL-UNAS DNS3 (weights compiled into ul_unas_rs)",
+      "files": [],
+      "license": "MIT",
+      "notice": "licenses/ulunas-LICENSE.txt",
+      "source": "https://crates.io/crates/ul_unas_rs"
+    },
+    {
+      "name": "sherpa-onnx C API",
+      "files": ["app/native/sherpa-onnx-c-api.dll"],
+      "license": "Apache-2.0",
+      "notice": "licenses/apache-2.0.txt",
+      "source": "https://github.com/k2-fsa/sherpa-onnx"
+    },
+    {
+      "name": "ONNX Runtime",
+      "files": ["app/native/onnxruntime.dll"],
+      "license": "MIT",
+      "notice": "licenses/onnxruntime-LICENSE.txt",
+      "source": "https://github.com/microsoft/onnxruntime"
+    }
+  ]
+}
