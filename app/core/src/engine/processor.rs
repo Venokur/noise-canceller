@@ -205,6 +205,7 @@ pub(super) struct Processor {
     ab_active: Arc<AtomicBool>,
     ab_folder: Arc<Mutex<Option<String>>>,
     ab_paths: Arc<Mutex<(Option<String>, Option<String>)>>,
+    ab_error: Arc<Mutex<Option<String>>>,
 }
 
 impl Processor {
@@ -232,6 +233,7 @@ impl Processor {
         let ab_active = shared.ab_active.clone();
         let ab_folder = shared.ab_folder.clone();
         let ab_paths = shared.ab_paths.clone();
+        let ab_error = shared.ab_error.clone();
 
         Self {
             shared,
@@ -280,6 +282,7 @@ impl Processor {
             ab_active,
             ab_folder,
             ab_paths,
+            ab_error,
         }
     }
 
@@ -547,6 +550,7 @@ impl Processor {
                 &self.ab_active,
                 &self.ab_folder,
                 &self.ab_paths,
+                &self.ab_error,
                 &self.up_buf[..produced],
             );
             self.publish(&mut out_prod, produced);
@@ -651,6 +655,7 @@ impl Processor {
             &self.ab_active,
             &self.ab_folder,
             &self.ab_paths,
+            &self.ab_error,
             &self.up_buf[..produced],
         );
         self.publish(out_prod, produced);

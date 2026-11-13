@@ -6,7 +6,7 @@ defineProps<{ text: string; hint?: string }>();
 
 <template>
   <span class="flex min-w-0 items-center gap-1.5 text-[13px] text-[var(--text)]">
-    <span class="truncate" :title="text">{{ text }}</span>
+    <span class="truncate" v-tooltip="text">{{ text }}</span>
     <AppHint v-if="hint" :text="hint" />
   </span>
 </template>

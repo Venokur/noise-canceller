@@ -1,23 +1,168 @@
 // What App.vue hands to the two screens.
 //
 // The shell owns the state, the timers and the engine calls; a view only renders
-// that state and calls these functions. Keeping the contract in one injected
-// object avoided threading eighty props through two levels and kept the split
-// from touching the logic.
-//
-// The index signature is intentionally loose: there is no `vue-tsc` in this repo
-// (TypeScript 7 is not supported by it yet), so precise signatures here would be
-// documentation that nothing checks. `settings`/`stats` are typed because they
-// are the two refs a view reads the most.
+// that state and calls these functions. The names are listed explicitly so an
+// editor (or a future `vue-tsc`) can flag a misspelled key; the types are
+// intentionally loose because there is no type checker for .vue files here
+// (TypeScript 7 is not supported by vue-tsc yet). `settings`/`stats` keep their
+// real types because they are the two refs a view reads the most.
 import type { InjectionKey, Ref } from "vue";
 
 import type { Settings, Stats } from "./types";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Loose = any;
+
 export interface AppContext {
   settings: Ref<Settings | null>;
   stats: Ref<Stats>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any;
+  abBlind: Loose;
+  abClean: Loose;
+  abDelta: Loose;
+  abFolder: Loose;
+  abMetrics: Loose;
+  abNormalize: Loose;
+  abProgress: Loose;
+  abRaw: Loose;
+  abRunning: Loose;
+  abSide: Loose;
+  abSpeaker: Loose;
+  abTargetSeconds: Loose;
+  abVisible: Loose;
+  abWaveform: Loose;
+  appUpdateStatus: Loose;
+  appVersion: Loose;
+  applyAutostart: Loose;
+  applyPreset: Loose;
+  askApplyTake: Loose;
+  autostart: Loose;
+  autoThreads: Loose;
+  btn: Loose;
+  btnGhost: Loose;
+  btnPrimary: Loose;
+  busy: Loose;
+  cancelHotkeyCapture: Loose;
+  cableMessage: Loose;
+  cableOk: Loose;
+  calibrateRoom: Loose;
+  calibrating: Loose;
+  capturingHotkey: Loose;
+  cleanRec: Loose;
+  cleanStarting: Loose;
+  customPresets: Loose;
+  deleteCustomPreset: Loose;
+  checkAbSpeaker: Loose;
+  checkAppUpdate: Loose;
+  checkingApp: Loose;
+  checkingConsistency: Loose;
+  checkingModel: Loose;
+  checkingSpeaker: Loose;
+  checkModel: Loose;
+  deleteProfile: Loose;
+  error: Loose;
+  evaluateProfileConsistency: Loose;
+  evaluateSpeakerThreshold: Loose;
+  evaluatingThreshold: Loose;
+  exportPresets: Loose;
+  exportSettings: Loose;
+  filterSettings: Loose;
+  formatStamp: Loose;
+  history: Loose;
+  hotkeyError: Loose;
+  importSettings: Loose;
+  importProfile: Loose;
+  importPresets: Loose;
+  inputDb: Loose;
+  inputChannels: Loose;
+  inputIsCable: Loose;
+  inputLevel: Loose;
+  inputOptions: Loose;
+  installCable: Loose;
+  installingCable: Loose;
+  loadError: Loose;
+  matchLevel: Loose;
+  measureRoom: Loose;
+  measuringRoom: Loose;
+  maxThreads: Loose;
+  micBusy: Loose;
+  micReady: Loose;
+  modelStatus: Loose;
+  openLicenses: Loose;
+  openLog: Loose;
+  openRecordings: Loose;
+  openSoundSettings: Loose;
+  outputDb: Loose;
+  outputLevel: Loose;
+  outputOptions: Loose;
+  pickInput: Loose;
+  pickOutput: Loose;
+  pickProfile: Loose;
+  playFile: Loose;
+  playAb: Loose;
+  playingKey: Loose;
+  playProfile: Loose;
+  presets: Loose;
+  presetName: Loose;
+  saveCustomPreset: Loose;
+  savingPreset: Loose;
+  applyCustomPreset: Loose;
+  probeHint: Loose;
+  probeLeft: Loose;
+  probeMic: Loose;
+  probeResult: Loose;
+  probing: Loose;
+  profileMeta: Loose;
+  profileOptions: Loose;
+  profileInfo: Loose;
+  profileMismatch: Loose;
+  profileWeak: Loose;
+  readouts: Loose;
+  ready: Loose;
+  reconnecting: Loose;
+  recording: Loose;
+  recordLeft: Loose;
+  recordProfile: Loose;
+  refreshDevicesManually: Loose;
+  refreshing: Loose;
+  refreshProfiles: Loose;
+  removeRecording: Loose;
+  renameProfile: Loose;
+  retryLoad: Loose;
+  resetSettings: Loose;
+  restartSoon: Loose;
+  running: Loose;
+  saveDiagnostics: Loose;
+  savingDiagnostics: Loose;
+  selectedInput: Loose;
+  selectedOutput: Loose;
+  selectedProfile: Loose;
+  selectRecording: Loose;
+  searching: Loose;
+  settingRow: Loose;
+  settingsQuery: Loose;
+  settingsSection: Loose;
+  settingsSections: Loose;
+  shortName: Loose;
+  shownSpectrum: Loose;
+  showWizard: Loose;
+  slowConfig: Loose;
+  speakerRecommendation: Loose;
+  spectrumLive: Loose;
+  startCleanRecord: Loose;
+  stopAbRecording: Loose;
+  stopCleanRecord: Loose;
+  startHotkeyCapture: Loose;
+  starting: Loose;
+  switchSection: Loose;
+  sysInfo: Loose;
+  t: Loose;
+  tab: Loose;
+  testMode: Loose;
+  testOutput: Loose;
+  toggleAb: Loose;
+  togglePower: Loose;
+  toggleTest: Loose;
+  u: Loose;
 }
 
 export const APP_CONTEXT: InjectionKey<AppContext> = Symbol("app-context");

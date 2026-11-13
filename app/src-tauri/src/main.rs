@@ -106,6 +106,7 @@ mod contract_tests {
             folder: None,
             raw: None,
             clean: None,
+            error: None,
         };
         assert_same("AbStatus", json_keys(&status), ts_interface("AbStatus"));
     }

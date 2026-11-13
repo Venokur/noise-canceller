@@ -13,10 +13,10 @@
 
 /** Playback side of the cable: what the app renders the cleaned voice into. */
 export function isCableOutput(name: string): boolean {
-  return /CABLE Input|VB-Audio|VB-CABLE/i.test(name);
+  return /CABLE Input|VB-Audio|VB-CABLE|virtual cable/i.test(name);
 }
 
 /** Capture side of the cable: using it as a microphone is a feedback loop. */
 export function isCableInput(name: string): boolean {
-  return /CABLE Output|VB-Audio|VB-CABLE/i.test(name);
+  return /CABLE Output|VB-Audio|VB-CABLE|virtual cable/i.test(name);
 }

@@ -22,6 +22,9 @@ pub struct AbStatus {
     pub folder: Option<String>,
     pub raw: Option<String>,
     pub clean: Option<String>,
+    /// Why the last take produced no files (disk full, read-only folder). The
+    /// window used to see `running: false` and silently drop the take.
+    pub error: Option<String>,
 }
 
 pub(super) fn ab_append_raw(ab: &Arc<Mutex<Option<AbBuffer>>>, samples: &[f32]) {
@@ -44,6 +47,7 @@ pub(super) fn ab_append_clean(
     active: &Arc<AtomicBool>,
     folder: &Arc<Mutex<Option<String>>>,
     paths: &Arc<Mutex<(Option<String>, Option<String>)>>,
+    error: &Arc<Mutex<Option<String>>>,
     samples: &[f32],
 ) {
     let mut guard = match ab.lock() {
@@ -72,6 +76,7 @@ pub(super) fn ab_append_clean(
     let active = active.clone();
     let folder = folder.clone();
     let paths = paths.clone();
+    let error = error.clone();
     std::thread::spawn(move || {
         match write_ab(&finished) {
             Ok((dir, raw, clean)) => {
@@ -81,10 +86,15 @@ pub(super) fn ab_append_clean(
                 if let Ok(mut slot) = paths.lock() {
                     *slot = (Some(raw), Some(clean));
                 }
+                if let Ok(mut slot) = error.lock() {
+                    *slot = None;
+                }
             }
             Err(err) => {
-                eprintln!("a/b write failed: {err}");
                 crate::log::info(&format!("a/b write failed: {err}"));
+                if let Ok(mut slot) = error.lock() {
+                    *slot = Some(err.to_string());
+                }
             }
         }
 

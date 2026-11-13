@@ -33,10 +33,50 @@ pub(crate) fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// The first settings snapshot has been applied (theme, language, devices).
+/// Show the window now, never on `PageLoadEvent::Finished`: that was early
+/// enough to flash the defaults before the settings arrived. WebView2 can also
+/// leave a white frame if it becomes visible before the first paint, so the
+/// size is nudged by a pixel once, exactly as the old page-load hook did.
+#[tauri::command]
+pub(crate) fn frontend_ready(app: tauri::AppHandle, state: State<'_, AppState>) {
+    if state.settings_snapshot().start_minimized {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        if let Ok(size) = window.inner_size() {
+            let _ = window.set_size(tauri::PhysicalSize::new(size.width + 1, size.height));
+            let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
+        }
+    }
+}
+
+/// Failures that happened before the window was ready to show a toast (a mute
+/// shortcut already taken by another program, a tray start that failed while
+/// the window was hidden). The window drains them once on mount.
+#[tauri::command]
+pub(crate) fn startup_notes() -> Vec<String> {
+    crate::tray::take_notes()
+}
+
+/// Check a captured chord with the same parser the global-shortcut plugin uses,
+/// so an unparseable combination is rejected while the user is still capturing
+/// instead of being saved and failing on the next start.
+#[tauri::command]
+pub(crate) fn validate_hotkey(hotkey: String) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::Shortcut;
+    hotkey
+        .parse::<Shortcut>()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 pub(crate) async fn check_app_update(state: State<'_, AppState>) -> Result<String, String> {
     const SCRIPT: &str =
-        "$r = Invoke-RestMethod 'https://api.github.com/repos/Venokur/noise-canceller/releases/latest'; $r.tag_name";
+        "$r = Invoke-RestMethod 'https://api.github.com/repos/Venokur/noise-canceller/releases/latest' -TimeoutSec 15; $r.tag_name";
     let lang = state
         .settings
         .lock()
@@ -85,10 +125,44 @@ pub(crate) fn clean_record_start(
     state: State<'_, AppState>,
     seconds: f32,
 ) -> Result<noise_canceller_core::engine::CleanRecordStatus, String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
+    if state
+        .with_engine(|engine| engine.clean_record_status().running)
+        .unwrap_or(false)
+    {
+        return Err(lang
+            .text(
+                "длинная запись уже идёт — остановите её перед новой",
+                "a long recording is already running — stop it before starting another",
+            )
+            .to_string());
+    }
     state
         .with_engine(|engine| engine.start_clean_recording(seconds))
-        .ok_or_else(|| "processing is not running".to_string())?
-        .map_err(|e| e.to_string())
+        .ok_or_else(|| {
+            lang.text("обработка не запущена", "processing is not running")
+                .to_string()
+        })?
+        .map_err(|e| {
+            let text = e.to_string();
+            if text.contains("already running") {
+                lang.text(
+                    "длинная запись уже идёт — остановите её перед новой",
+                    "a long recording is already running — stop it before starting another",
+                )
+                .to_string()
+            } else {
+                lang.fmt(
+                    "не удалось начать запись: {err}",
+                    "could not start the recording: {err}",
+                    &[("err", &text)],
+                )
+            }
+        })
 }
 
 #[tauri::command(async)]
@@ -106,6 +180,7 @@ pub(crate) fn clean_record_status(
             running: false,
             progress: 0.0,
             path: None,
+            error: None,
         })
 }
 
@@ -272,7 +347,7 @@ pub(crate) fn get_settings(state: State<'_, AppState>) -> Settings {
     state.settings_snapshot()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn set_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -288,7 +363,7 @@ pub(crate) fn set_settings(
 
     // the setting is saved either way: the old shortcut is gone, so a failed
     // registration has to reach the user instead of being swallowed
-    match apply_settings(&app, &state, settings, rearm) {
+    match apply_settings(&app, &state, settings, rearm)? {
         Some(message) if rearm => Err(message),
         _ => Ok(()),
     }
@@ -298,14 +373,29 @@ pub(crate) fn set_settings(
 /// the mute shortcut. Returns the registration error, if any: the caller decides
 /// whether it is an error (a shortcut the user just picked) or a note (a reset
 /// or an import that already went through).
+///
+/// A failed write is always an error: the old code ignored it, so a read-only
+/// or full disk made the window say "saved" while the next launch came back
+/// with the previous values.
 pub(crate) fn apply_settings(
     app: &tauri::AppHandle,
     state: &AppState,
     settings: Settings,
     rearm_hotkey: bool,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
+    let _apply = state
+        .apply_settings
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let previous_language = state.settings.lock().ok().map(|s| s.language.clone());
-    settings.save(&state.settings_path);
+    settings.save(&state.settings_path).map_err(|e| {
+        let lang = Lang::from_settings(&settings);
+        lang.fmt(
+            "не удалось сохранить настройки: {err}",
+            "could not save the settings: {err}",
+            &[("err", &e.to_string())],
+        )
+    })?;
     if let Ok(mut guard) = state.settings.lock() {
         *guard = settings.clone();
     }
@@ -313,13 +403,20 @@ pub(crate) fn apply_settings(
     // the tray was built with the old language: rename it before the window
     // redraws, so the two never disagree for longer than a save
     if previous_language.as_deref() != Some(settings.language.as_str()) {
-        crate::tray::relabel(app, lang);
+        // `set_settings` and the import/reset commands run on a worker thread
+        // now; the tray menu and the OSD window are main-thread objects
+        let handle = app.clone();
+        let language = settings.language.clone();
+        let _ = app.run_on_main_thread(move || {
+            crate::tray::relabel(&handle, lang);
+            crate::tray::notify_locale(&handle, &language);
+        });
     }
     state.with_engine(|engine| engine.update_settings(&settings));
     if rearm_hotkey {
-        register_hotkey(app, &settings.mute_hotkey, lang)
+        Ok(register_hotkey(app, &settings.mute_hotkey, lang))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -368,15 +465,36 @@ pub(crate) async fn record_profile(
 
 #[tauri::command(async)]
 pub(crate) async fn import_profile(
+    state: State<'_, AppState>,
     input: Option<String>,
     path: String,
 ) -> Result<noise_canceller_core::profile::Profile, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
+    let detail = tauri::async_runtime::spawn_blocking(move || {
         noise_canceller_core::profile::import(std::path::Path::new(&path), input.as_deref())
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    detail.map_err(|e| {
+        let text = e.to_string();
+        if text.contains("shorter than 3 seconds") {
+            lang.text(
+                "запись короче 3 секунд — профиль должен быть длиннее",
+                "the recording is shorter than 3 seconds — the profile must be longer",
+            )
+            .to_string()
+        } else {
+            lang.fmt(
+                "не удалось импортировать профиль: {err}",
+                "could not import the profile: {err}",
+                &[("err", &text)],
+            )
+        }
+    })
 }
 
 #[tauri::command(async)]
@@ -399,8 +517,19 @@ pub(crate) fn save_preset(
 }
 
 #[tauri::command(async)]
-pub(crate) fn delete_preset(name: String) -> Result<(), String> {
-    noise_canceller_core::presets::delete(&name).map_err(|e| e.to_string())
+pub(crate) fn delete_preset(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
+    noise_canceller_core::presets::delete(&name).map_err(|e| {
+        lang.fmt(
+            "не удалось удалить пресет: {err}",
+            "could not delete the preset: {err}",
+            &[("err", &e.to_string())],
+        )
+    })
 }
 
 #[tauri::command(async)]
@@ -499,13 +628,24 @@ pub(crate) fn rename_profile(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn ab_start(state: State<'_, AppState>, seconds: f32) -> Result<(), String> {
     let lang = state
         .settings
         .lock()
         .map(|s| Lang::from_settings(&s))
         .unwrap_or_default();
+    if state
+        .with_engine(|engine| engine.ab_status().running)
+        .unwrap_or(false)
+    {
+        return Err(lang
+            .text(
+                "запись A/B уже идёт — остановите её перед новой",
+                "an A/B take is already running — stop it before starting another",
+            )
+            .to_string());
+    }
     state
         .with_engine(|engine| engine.start_ab(seconds).map_err(|e| e.to_string()))
         .unwrap_or_else(|| {
@@ -513,6 +653,11 @@ pub(crate) fn ab_start(state: State<'_, AppState>, seconds: f32) -> Result<(), S
                 .text("движок не запущен", "the engine is not running")
                 .to_string())
         })
+}
+
+#[tauri::command(async)]
+pub(crate) fn ab_stop(state: State<'_, AppState>) {
+    state.with_engine(|engine| engine.stop_ab());
 }
 
 #[tauri::command]
@@ -626,7 +771,12 @@ fn powershell(script: &str) -> std::io::Result<std::process::Output> {
 }
 
 #[tauri::command]
-pub(crate) async fn install_cable() -> Result<String, String> {
+pub(crate) async fn install_cable(state: State<'_, AppState>) -> Result<String, String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     const SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:TEMP 'NoiseCancellerCable'
@@ -652,14 +802,26 @@ Start-Process -FilePath $exe.FullName -Verb RunAs -WorkingDirectory $exe.Directo
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if detail.is_empty() {
+            // a silent failure (policy, UAC refusal) used to produce an empty
+            // error string, so the window cleared the spinner and said nothing
+            Err(lang
+                .text(
+                    "установщик не запустился — скачайте VB-CABLE с vb-audio.com вручную",
+                    "the installer did not start — download VB-CABLE from vb-audio.com manually",
+                )
+                .to_string())
+        } else {
+            Err(detail)
+        }
     }
 }
 
 #[tauri::command]
 pub(crate) async fn check_model_update(state: State<'_, AppState>) -> Result<String, String> {
     const SCRIPT: &str =
-        "$m = Invoke-RestMethod 'https://huggingface.co/api/models/arbazsiddiqui/voxlock'; $m.sha";
+        "$m = Invoke-RestMethod 'https://huggingface.co/api/models/arbazsiddiqui/voxlock' -TimeoutSec 15; $m.sha";
 
     let lang = state
         .settings
@@ -872,7 +1034,7 @@ pub(crate) fn open_licenses(state: State<'_, AppState>) -> Result<(), String> {
         .to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn reset_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -881,7 +1043,7 @@ pub(crate) fn reset_settings(
     // resolve "auto" now: the window renders this snapshot, and an unresolved
     // language would show as an empty picker
     fresh.sanitize();
-    let warning = apply_settings(&app, &state, fresh.clone(), true);
+    let warning = apply_settings(&app, &state, fresh.clone(), true)?;
     noise_canceller_core::log::info("settings reset to defaults");
     Ok(SettingsResult {
         settings: fresh,
@@ -889,37 +1051,45 @@ pub(crate) fn reset_settings(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn export_settings(state: State<'_, AppState>, path: String) -> Result<String, String> {
     let settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
     let mut path = std::path::PathBuf::from(path);
     if path.extension().is_none() {
         path.set_extension("json");
     }
-    settings.save(&path);
+    settings.save(&path).map_err(|e| e.to_string())?;
     noise_canceller_core::log::info(&format!("settings exported to {}", path.display()));
     Ok(path.to_string_lossy().to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn import_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<SettingsResult, String> {
     let path = std::path::PathBuf::from(path);
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     if !path.exists() {
-        let lang = state
-            .settings
-            .lock()
-            .map(|s| Lang::from_settings(&s))
-            .unwrap_or_default();
         return Err(lang
             .text("файл настроек не найден", "the settings file was not found")
             .to_string());
     }
-    let settings = Settings::load(&path);
-    let warning = apply_settings(&app, &state, settings.clone(), true);
+    // unlike the startup load, an import must not fall back to defaults: the
+    // user picked this file, and a typo in it would silently reset everything
+    let settings = Settings::load_checked(&path).map_err(|e| {
+        lang.fmt(
+            "файл настроек не удалось прочитать: {err}",
+            "the settings file could not be read: {err}",
+            &[("err", &e.to_string())],
+        )
+    })?;
+    let warning = apply_settings(&app, &state, settings.clone(), true)?;
     noise_canceller_core::log::info(&format!("settings imported from {}", path.display()));
     Ok(SettingsResult { settings, warning })
 }
@@ -1027,7 +1197,36 @@ pub(crate) fn ab_settings(state: State<'_, AppState>, stamp: u64) -> Result<Sett
             )
             .to_string());
     }
-    Ok(Settings::load(&path))
+    Settings::load_checked(&path).map_err(|e| {
+        let lang = state
+            .settings
+            .lock()
+            .map(|s| Lang::from_settings(&s))
+            .unwrap_or_default();
+        lang.fmt(
+            "снимок настроек этого дубля повреждён: {err}",
+            "the settings snapshot for this take is damaged: {err}",
+            &[("err", &e.to_string())],
+        )
+    })
+}
+
+/// Peak envelope of a wav for the A/B card. Clamped so a truncated take (fewer
+/// samples than buckets) cannot slice past the end and panic the command.
+fn envelope(samples: &[f32], buckets: usize) -> Vec<f32> {
+    if samples.is_empty() {
+        return vec![0.0; buckets];
+    }
+    let step = (samples.len() as f32 / buckets as f32).max(1.0);
+    (0..buckets)
+        .map(|bucket| {
+            let start = ((bucket as f32 * step) as usize).min(samples.len() - 1);
+            let end = (((bucket + 1) as f32 * step) as usize).clamp(start + 1, samples.len());
+            samples[start..end]
+                .iter()
+                .fold(0.0f32, |max, value| max.max(value.abs()))
+        })
+        .collect()
 }
 
 #[tauri::command(async)]
@@ -1039,22 +1238,6 @@ pub(crate) fn ab_waveform(stamp: u64) -> Result<AbWaveformDto, String> {
         wav::read_mono(&recordings::clean(stamp)).map_err(|e| e.to_string())?;
     let duration = (raw.len() as f32 / raw_rate.max(1) as f32)
         .max(clean.len() as f32 / clean_rate.max(1) as f32);
-
-    fn envelope(samples: &[f32], buckets: usize) -> Vec<f32> {
-        if samples.is_empty() {
-            return vec![0.0; buckets];
-        }
-        let step = (samples.len() as f32 / buckets as f32).max(1.0);
-        (0..buckets)
-            .map(|bucket| {
-                let start = (bucket as f32 * step) as usize;
-                let end = (((bucket + 1) as f32 * step) as usize).min(samples.len());
-                samples[start..end.max(start + 1)]
-                    .iter()
-                    .fold(0.0f32, |max, value| max.max(value.abs()))
-            })
-            .collect()
-    }
 
     Ok(AbWaveformDto {
         duration,
@@ -1134,4 +1317,27 @@ pub(crate) fn prune_recordings(state: State<'_, AppState>) -> usize {
         .map(|s| s.keep_recordings as usize)
         .unwrap_or(20);
     recordings::prune(keep)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::envelope;
+
+    #[test]
+    fn a_short_wav_does_not_panic_the_waveform() {
+        for len in 0..300 {
+            let samples = vec![0.5f32; len];
+            let values = envelope(&samples, 240);
+            assert_eq!(values.len(), 240);
+            assert!(values.iter().all(|v| v.is_finite()));
+        }
+    }
+
+    #[test]
+    fn the_envelope_keeps_the_peak() {
+        let mut samples = vec![0.0f32; 480];
+        samples[123] = 0.9;
+        let values = envelope(&samples, 240);
+        assert!((values.iter().cloned().fold(0.0, f32::max) - 0.9).abs() < 1e-6);
+    }
 }

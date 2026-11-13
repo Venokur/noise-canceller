@@ -1,7 +1,16 @@
 <script setup lang="ts">
+import { computed, inject } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import AppIcon from "./AppIcon.vue";
+import { APP_CONTEXT } from "../appContext";
 import { t } from "../i18n";
+
+const ctx = inject(APP_CONTEXT, null);
+/// The close button hides the window to the tray by default: saying "Close"
+/// made the click look broken for a user who expected the process to end.
+const closeTitle = computed(() =>
+  ctx?.settings.value?.closeToTray ? t("window.hideToTray") : t("common.close"),
+);
 
 function minimize() {
   invoke("window_minimize");
@@ -17,7 +26,17 @@ function close() {
 
 function startDrag(event: MouseEvent) {
   if (event.button !== 0) return;
+  // the second press of a double click must not start a native drag, or the
+  // dblclick never reaches the maximize handler
+  if (event.detail > 1) return;
   invoke("window_drag");
+}
+
+/// Double-clicking the title bar is the standard Windows way to maximize; the
+/// handler must ignore the window buttons and the tabs.
+function onDoubleClick(event: MouseEvent) {
+  if ((event.target as HTMLElement).closest("button")) return;
+  invoke("window_toggle_maximize");
 }
 </script>
 
@@ -26,6 +45,7 @@ function startDrag(event: MouseEvent) {
     class="grid h-10 shrink-0 select-none items-center gap-4 border-b border-[var(--stroke)] pr-1.5 pl-3"
     style="grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)"
     @mousedown="startDrag"
+    @dblclick="onDoubleClick"
   >
     <div class="flex min-w-0 items-center gap-2.5">
       <AppIcon name="audio" :size="18" :stroke="1.9" class="text-[var(--accent)]" />
@@ -39,13 +59,31 @@ function startDrag(event: MouseEvent) {
     <div class="flex items-center justify-end gap-1">
       <slot name="actions" />
       <span class="mx-1 h-4 w-px bg-[var(--stroke)]"></span>
-      <button class="winbtn" :title="t('window.minimize')" @mousedown.stop @click.stop="minimize">
+      <button
+        class="winbtn"
+        :aria-label="t('window.minimize')"
+        v-tooltip="t('window.minimize')"
+        @mousedown.stop
+        @click.stop="minimize"
+      >
         <AppIcon name="minus" :size="12" :stroke="1.6" />
       </button>
-      <button class="winbtn" :title="t('window.maximize')" @mousedown.stop @click.stop="maximize">
+      <button
+        class="winbtn"
+        :aria-label="t('window.maximize')"
+        v-tooltip="t('window.maximize')"
+        @mousedown.stop
+        @click.stop="maximize"
+      >
         <AppIcon name="maximize" :size="10" :stroke="1.6" />
       </button>
-      <button class="winbtn close" :title="t('common.close')" @mousedown.stop @click.stop="close">
+      <button
+        class="winbtn close"
+        :aria-label="closeTitle"
+        v-tooltip="closeTitle"
+        @mousedown.stop
+        @click.stop="close"
+      >
         <AppIcon name="close" :size="12" :stroke="1.6" />
       </button>
     </div>

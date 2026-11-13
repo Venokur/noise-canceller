@@ -15,6 +15,10 @@ pub(crate) struct AppState {
     pub(crate) engine: Mutex<Option<Engine>>,
     pub(crate) settings: Mutex<Settings>,
     pub(crate) settings_path: PathBuf,
+    /// Serializes the whole apply step (save, memory, engine, hotkey). The
+    /// command runs on a worker thread now, and two overlapping slider saves
+    /// could otherwise reach the file and the engine out of order.
+    pub(crate) apply_settings: Mutex<()>,
     pub(crate) maximized: AtomicBool,
     /// Whether processing should be running. Shared by the window's auto-start
     /// poll and the tray: stopping from the tray must not be undone three

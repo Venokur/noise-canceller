@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, onUnmounted, ref } from "vue";
 import AppIcon from "../components/AppIcon.vue";
+import AppInput from "../components/AppInput.vue";
 import AppSelect from "../components/AppSelect.vue";
 import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, cleanRec, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, measureRoom, measuringRoom, micReady, openRecordings, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, startCleanRecord, stats, stopCleanRecord, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abTargetSeconds, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, checkingConsistency, checkingSpeaker, cleanRec, cleanStarting, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, measureRoom, measuringRoom, micBusy, micReady, openRecordings, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, startCleanRecord, stats, stopCleanRecord, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const renaming = ref(false);
 const nameDraft = ref("");
@@ -43,9 +44,15 @@ const format = computed(() => {
   const rateText = rate
     ? `${(rate / 1000).toFixed(rate % 1000 === 0 ? 0 : 1)} ${u.khz}`
     : "—";
-  const channels = stats.value.inChannels;
+  // when the engine is stopped `stats` has no format yet; the selected device
+  // still knows its channel count, and "mono" was a lie for a stereo interface
+  const channels = stats.value.running ? stats.value.inChannels : inputChannels.value;
   const channelText =
-    channels > 1 ? t("sound.channels", { n: channels }) : t("sound.mono");
+    channels > 1
+      ? t("sound.channels", { n: channels })
+      : channels === 1
+        ? t("sound.mono")
+        : "—";
   return `${rateText} · ${channelText}`;
 });
 
@@ -62,6 +69,20 @@ function wavePoints(values: number[], height = 24): string {
 
 /// The trash sits next to "play", so a stray click used to delete the profile
 /// outright. The first click only arms the button for three seconds.
+const confirmTake = ref<number | null>(null);
+let takeTimer: number | undefined;
+function removeTake(entry: { stamp: number; raw: string; clean: string }) {
+  if (confirmTake.value !== entry.stamp) {
+    confirmTake.value = entry.stamp;
+    if (takeTimer) window.clearTimeout(takeTimer);
+    takeTimer = window.setTimeout(() => (confirmTake.value = null), 3000);
+    return;
+  }
+  if (takeTimer) window.clearTimeout(takeTimer);
+  confirmTake.value = null;
+  void removeRecording(entry);
+}
+
 const confirmDelete = ref(false);
 let confirmTimer: number | undefined;
 function askDeleteProfile() {
@@ -77,12 +98,13 @@ function askDeleteProfile() {
 }
 onUnmounted(() => {
   if (confirmTimer) window.clearTimeout(confirmTimer);
+  if (takeTimer) window.clearTimeout(takeTimer);
 });
 
 /// Which denoiser actually sits after VoxLock: the chain has to name the one
 /// the user picked, not the model it used to ship with.
 const noiseStage = computed(() => {
-  switch (settings.residualDenoise) {
+  switch (settings.value?.residualDenoise) {
     case "dpdfnet":
       return "DPDFNet";
     case "ulunas":
@@ -104,7 +126,14 @@ const noiseStage = computed(() => {
                 class="power"
                 :data-on="running"
                 :disabled="busy || starting || (!micReady && !running)"
-                :title="
+                v-tooltip="
+                  running
+                    ? t('sound.powerOff')
+                    : micReady
+                      ? t('sound.powerOn')
+                      : t('sound.powerNoMic')
+                "
+                :aria-label="
                   running
                     ? t('sound.powerOff')
                     : micReady
@@ -126,7 +155,7 @@ const noiseStage = computed(() => {
             >
               <div class="min-w-0">
                 <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">{{ t("sound.input") }}</div>
-                <div class="truncate text-[13px]" :title="selectedInput">
+                <div class="truncate text-[13px]" v-tooltip="selectedInput">
                   {{ shortName(selectedInput) || t("common.none") }}
                 </div>
                 <div class="mt-[7px] flex items-center gap-2">
@@ -155,7 +184,7 @@ const noiseStage = computed(() => {
 
               <div class="min-w-0">
                 <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">{{ t("sound.output") }}</div>
-                <div class="truncate text-[13px]" :title="testMode ? testOutput : 'CABLE Input'">
+                <div class="truncate text-[13px]" v-tooltip="testMode ? testOutput : 'CABLE Input'">
                   {{ testMode ? shortName(testOutput) || t("common.outputDevice") : "CABLE Input" }}
                 </div>
                 <div class="mt-[7px] flex items-center gap-2">
@@ -227,7 +256,7 @@ const noiseStage = computed(() => {
               <AppSelect
                 :model-value="selectedInput"
                 :options="inputOptions"
-                :disabled="reconnecting || starting"
+                :disabled="reconnecting || starting || micBusy || abRunning"
                 :placeholder="t('sound.noDevices')"
                 @update:model-value="pickInput"
               />
@@ -237,7 +266,7 @@ const noiseStage = computed(() => {
               <AppSelect
                 :model-value="selectedOutput"
                 :options="outputOptions"
-                :disabled="reconnecting || starting"
+                :disabled="reconnecting || starting || micBusy || abRunning"
                 :placeholder="t('sound.noDevices')"
                 @update:model-value="pickOutput"
               />
@@ -249,6 +278,7 @@ const noiseStage = computed(() => {
               <AppSelect
                 :model-value="String(settings.inputChannel)"
                 :options="channelOptions"
+                :disabled="abRunning || micBusy"
                 @update:model-value="(value: string) => (settings!.inputChannel = Number(value))"
               />
             </div>
@@ -262,21 +292,21 @@ const noiseStage = computed(() => {
               <AppIcon name="refresh" :size="14" :class="{ spin: refreshing }" />
               {{ refreshing ? t("sound.refreshing") : t("common.refresh") }}
             </button>
-            <button :class="btnGhost" :disabled="probing || calibrating" @click="probeMic">
+            <button :class="btnGhost" :disabled="micBusy || !micReady" @click="probeMic">
               <AppIcon name="mic" :size="14" />
               {{
                 probing ? (probeLeft > 0 ? t("wizard.listening", { s: probeLeft }) : t("wizard.listen")) : t("wizard.probe")
               }}
             </button>
-            <button :class="btnGhost" :disabled="calibrating || probing || !micReady" @click="calibrateRoom">
+            <button :class="btnGhost" :disabled="micBusy || !micReady" @click="calibrateRoom">
               <AppIcon :name="calibrating ? 'spinner' : 'sliders'" :size="14" :class="{ spin: calibrating }" />
               {{ calibrating ? t("calibrate.running") : t("calibrate.start") }}
             </button>
-            <button :class="btnGhost" :disabled="measuringRoom || probing || calibrating || !micReady" @click="measureRoom">
+            <button :class="btnGhost" :disabled="micBusy || !micReady" @click="measureRoom">
               <AppIcon :name="measuringRoom ? 'spinner' : 'gauge'" :size="14" :class="{ spin: measuringRoom }" />
               {{ measuringRoom ? t("sound.roomMeasuring") : t("sound.roomMeasure") }}
             </button>
-            <button :class="btnGhost" :title="t('sound.windowsSoundHint')" @click="openSoundSettings">
+            <button :class="btnGhost" v-tooltip="t('sound.windowsSoundHint')" @click="openSoundSettings">
               <AppIcon name="settings" :size="14" />
               {{ t("sound.windowsSound") }}
             </button>
@@ -301,7 +331,7 @@ const noiseStage = computed(() => {
               <AppSlider
                 :label="t('sound.outputVolume')"
                 v-model="settings.outputGainDb"
-                :min="-18"
+                :min="-24"
                 :max="18"
                 :step="0.5"
                 :format="(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} ${u.db}`"
@@ -323,36 +353,44 @@ const noiseStage = computed(() => {
           </div>
           <div class="flex items-center gap-2">
             <div class="min-w-0 flex-1">
-              <AppSelect v-model="selectedProfile" :options="profileOptions" @update:model-value="pickProfile" />
+              <AppSelect
+                v-model="selectedProfile"
+                :options="profileOptions"
+                :disabled="abRunning || micBusy || cleanRec.running"
+                @update:model-value="pickProfile"
+              />
             </div>
             <button
               class="iconbtn"
-              :disabled="!selectedProfile"
-              :title="t('sound.renameProfile')"
+              :disabled="!selectedProfile || abRunning || micBusy || cleanRec.running"
+              :aria-label="t('sound.renameProfile')"
+              v-tooltip="t('sound.renameProfile')"
               @click="startRename"
             >
               <AppIcon name="pencil" :size="14" />
             </button>
             <button
               class="iconbtn"
-              :disabled="!selectedProfile"
-              :title="t('sound.checkConsistency')"
+              :disabled="!selectedProfile || checkingConsistency || abRunning || micBusy || cleanRec.running"
+              :aria-label="t('sound.checkConsistency')"
+              v-tooltip="t('sound.checkConsistency')"
               @click="evaluateProfileConsistency(selectedProfile)"
             >
-              <AppIcon name="activity" :size="14" />
+              <AppIcon :name="checkingConsistency ? 'spinner' : 'activity'" :size="14" :class="{ spin: checkingConsistency }" />
             </button>
             <button
               class="iconbtn"
-              :disabled="recording"
-              :title="t('sound.importProfile')"
+              :disabled="micBusy || abRunning || cleanRec.running"
+              :aria-label="t('sound.importProfile')"
+              v-tooltip="t('sound.importProfile')"
               @click="importProfile"
             >
               <AppIcon name="file" :size="14" />
             </button>
             <button
               :class="btnPrimary"
-              :disabled="recording || !micReady"
-              :title="micReady ? t('wizard.recordTitle') : t('sound.profileRecordNeedMic')"
+              :disabled="micBusy || abRunning || cleanRec.running || !micReady"
+              v-tooltip="micReady ? t('wizard.recordTitle') : t('sound.profileRecordNeedMic')"
               @click="recordProfile"
             >
               <span v-if="recording" class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
@@ -361,8 +399,9 @@ const noiseStage = computed(() => {
             </button>
             <button
               class="iconbtn"
-              :disabled="!selectedProfile"
-              :title="playingKey === 'profile' ? t('sound.stop') : t('sound.playProfile')"
+              :disabled="!selectedProfile || micBusy || abRunning || cleanRec.running"
+              :aria-label="playingKey === 'profile' ? t('sound.stop') : t('sound.playProfile')"
+              v-tooltip="playingKey === 'profile' ? t('sound.stop') : t('sound.playProfile')"
               @click="playProfile"
             >
               <AppIcon :name="playingKey === 'profile' ? 'stop' : 'play'" :size="14" />
@@ -370,15 +409,16 @@ const noiseStage = computed(() => {
             <button
               class="iconbtn danger"
               :class="confirmDelete ? 'ring-2 ring-[var(--danger)]' : ''"
-              :disabled="!selectedProfile"
-              :title="confirmDelete ? t('sound.deleteProfileConfirm') : t('sound.deleteProfile')"
+              :disabled="!selectedProfile || abRunning || micBusy || cleanRec.running"
+              :aria-label="confirmDelete ? t('sound.deleteProfileConfirm') : t('sound.deleteProfile')"
+              v-tooltip="confirmDelete ? t('sound.deleteProfileConfirm') : t('sound.deleteProfile')"
               @click="askDeleteProfile"
             >
               <AppIcon name="trash" :size="14" />
             </button>
           </div>
           <div v-if="renaming" class="mt-2 flex items-center gap-2">
-            <input
+            <AppInput
               v-model="nameDraft"
               maxlength="48"
               class="h-[32px] min-w-0 flex-1 rounded-[8px] border border-[var(--stroke)] bg-[var(--surface)] px-2.5 text-[12.5px] outline-none focus:border-[var(--accent)]"
@@ -386,10 +426,20 @@ const noiseStage = computed(() => {
               @keydown.enter="saveRename"
               @keydown.esc="renaming = false"
             />
-            <button class="iconbtn" :title="t('common.save')" @click="saveRename">
+            <button
+              class="iconbtn"
+              :aria-label="t('common.save')"
+              v-tooltip="t('common.save')"
+              @click="saveRename"
+            >
               <AppIcon name="check" :size="14" />
             </button>
-            <button class="iconbtn" :title="t('common.cancel')" @click="renaming = false">
+            <button
+              class="iconbtn"
+              :aria-label="t('common.cancel')"
+              v-tooltip="t('common.cancel')"
+              @click="renaming = false"
+            >
               <AppIcon name="close" :size="14" />
             </button>
           </div>
@@ -412,7 +462,11 @@ const noiseStage = computed(() => {
               : t("sound.profileConsistency", { value: (profileInfo.consistency * 100).toFixed(0) }) }}
           </p>
           <div class="mt-2.5 flex items-center gap-2.5 text-[12.5px] text-[var(--muted)]">
-            <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />
+            <AppSwitch
+              v-model="settings.autoProfile"
+              :disabled="abRunning || micBusy || cleanRec.running"
+              @update:model-value="refreshProfiles"
+            />
             <span>{{ t("sound.autoProfile") }}</span>
           </div>
         </section>
@@ -421,7 +475,10 @@ const noiseStage = computed(() => {
         <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
           <div class="mb-2.5 flex items-center gap-2.5">
             <h2 class="text-[15px] font-semibold tracking-[-0.01em]">{{ t("sound.ab") }}</h2>
-            <label class="ml-auto flex items-center gap-1.5 text-[11.5px] whitespace-nowrap text-[var(--muted)]" :title="t('sound.blindHint')">
+            <label
+              class="ml-auto flex items-center gap-1.5 text-[11.5px] whitespace-nowrap text-[var(--muted)]"
+              v-tooltip="t('sound.blindHint')"
+            >
               <AppSwitch v-model="abBlind" />
               {{ t("sound.blind") }}
             </label>
@@ -431,6 +488,7 @@ const noiseStage = computed(() => {
                 :key="sec"
                 class="segbtn"
                 :data-on="settings.abSeconds === sec"
+                :disabled="abRunning"
                 @click="settings.abSeconds = sec"
               >
                 {{ sec }} {{ u.s }}
@@ -442,14 +500,14 @@ const noiseStage = computed(() => {
               <span class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
               {{
                 abRunning
-                  ? t("wizard.recording", { s: Math.round(abProgress * (settings?.abSeconds ?? 30)) })
+                  ? t("sound.abStopCountdown", { s: Math.round(abProgress * (abTargetSeconds || settings?.abSeconds || 30)) })
                   : t("sound.abRecord", { s: settings?.abSeconds ?? 30 })
               }}
             </button>
             <button
               :class="testMode ? btn : btnPrimary"
               :disabled="busy || starting || (!micReady && !testMode)"
-              :title="micReady || testMode ? '' : t('sound.noMicFound')"
+              v-tooltip="micReady || testMode ? '' : t('sound.noMicFound')"
               @click="toggleTest"
             >
               <AppIcon
@@ -465,7 +523,7 @@ const noiseStage = computed(() => {
                     : t("sound.test")
               }}
             </button>
-            <span class="text-[11.5px] text-[var(--muted)]">{{ t("sound.abHint") }}</span>
+            <span class="text-[11.5px] text-[var(--muted)]">{{ abRunning ? t("sound.abStopHint") : t("sound.abHint") }}</span>
           </div>
           <div v-if="abRunning" class="mt-2 h-0.5 overflow-hidden rounded-full bg-[var(--stroke)]">
             <div class="h-full rounded-full bg-[var(--danger)]" :style="{ width: abProgress * 100 + '%' }"></div>
@@ -477,13 +535,13 @@ const noiseStage = computed(() => {
           <div
             v-if="abRaw && abClean"
             class="mt-3 rounded-[11px] border border-[var(--stroke)] bg-[var(--surface)] px-3 py-2.5"
-            :title="abFolder || undefined"
           >
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div class="flex gap-1.5">
                 <button
                   class="playbtn"
                   :data-on="playingKey === 'pair' && abSide === abVisible.a"
+                  :disabled="micBusy || cleanRec.running"
                   @click="playAb(abVisible.a)"
                 >
                   <AppIcon :name="playingKey === 'pair' && abSide === abVisible.a ? 'stop' : 'play'" :size="12" />
@@ -492,6 +550,7 @@ const noiseStage = computed(() => {
                 <button
                   class="playbtn"
                   :data-on="playingKey === 'pair' && abSide === abVisible.b"
+                  :disabled="micBusy || cleanRec.running"
                   @click="playAb(abVisible.b)"
                 >
                   <AppIcon :name="playingKey === 'pair' && abSide === abVisible.b ? 'stop' : 'play'" :size="12" />
@@ -504,11 +563,22 @@ const noiseStage = computed(() => {
                   <AppSwitch v-model="abNormalize" />
                   {{ t("sound.normalize") }}
                 </label>
-                <button class="iconbtn" :title="t('sound.matchLevel')" @click="matchLevel">
+                <button
+                  class="iconbtn"
+                  :aria-label="t('sound.matchLevel')"
+                  v-tooltip="t('sound.matchLevel')"
+                  @click="matchLevel"
+                >
                   <AppIcon name="sliders" :size="14" />
                 </button>
-                <button class="iconbtn" :title="t('sound.checkVoice')" @click="checkAbSpeaker">
-                  <AppIcon name="mic" :size="14" />
+                <button
+                  class="iconbtn"
+                  :disabled="checkingSpeaker || abRunning"
+                  :aria-label="t('sound.checkVoice')"
+                  v-tooltip="t('sound.checkVoice')"
+                  @click="checkAbSpeaker"
+                >
+                  <AppIcon :name="checkingSpeaker ? 'spinner' : 'mic'" :size="14" :class="{ spin: checkingSpeaker }" />
                 </button>
               </div>
             </div>
@@ -543,7 +613,7 @@ const noiseStage = computed(() => {
               </span>
               <span
                 class="min-w-0"
-                :title="abSpeaker
+                v-tooltip="abSpeaker
                   ? t('sound.voiceSimilarity', {
                       median: (abSpeaker.median * 100).toFixed(0),
                       min: (abSpeaker.min * 100).toFixed(0),
@@ -576,17 +646,18 @@ const noiseStage = computed(() => {
               :key="entry.stamp"
               class="stamp group"
               :data-on="abRaw === entry.raw"
-              :title="entry.raw"
             >
               <button class="h-full cursor-pointer px-2" @click="selectRecording(entry)">
                 {{ formatStamp(entry.stamp) }}
               </button>
               <button
-                class="mr-0.5 grid h-4 w-4 cursor-pointer place-items-center rounded text-[var(--muted)] opacity-0 transition hover:text-[var(--danger)] group-hover:opacity-100"
-                :title="t('sound.deleteTake')"
-                @click="removeRecording(entry)"
+                class="mr-0.5 grid h-4 w-4 cursor-pointer place-items-center rounded transition hover:text-[var(--danger)]"
+                :class="confirmTake === entry.stamp ? 'text-[var(--danger)] opacity-100' : 'text-[var(--muted)] opacity-0 group-hover:opacity-100'"
+                :aria-label="confirmTake === entry.stamp ? t('sound.deleteTakeConfirm') : t('sound.deleteTake')"
+                v-tooltip="confirmTake === entry.stamp ? t('sound.deleteTakeConfirm') : t('sound.deleteTake')"
+                @click="removeTake(entry)"
               >
-                <AppIcon name="close" :size="10" />
+                <AppIcon :name="confirmTake === entry.stamp ? 'check' : 'close'" :size="10" />
               </button>
             </div>
           </div>
@@ -621,7 +692,7 @@ const noiseStage = computed(() => {
             <button
               v-if="!cleanRec.running"
               :class="btnGhost"
-              :disabled="!running"
+              :disabled="!running || cleanStarting"
               @click="startCleanRecord(cleanMinutes * 60)"
             >
               <AppIcon name="record" :size="14" />
@@ -640,7 +711,7 @@ const noiseStage = computed(() => {
           <div v-if="cleanRec.running" class="mt-2 h-0.5 overflow-hidden rounded-full bg-[var(--stroke)]">
             <div class="h-full rounded-full bg-[var(--accent)]" :style="{ width: cleanRec.progress * 100 + '%' }"></div>
           </div>
-          <p v-if="cleanRec.path" class="mt-2 truncate font-mono text-[11px] text-[var(--muted)]" :title="cleanRec.path">
+          <p v-if="cleanRec.path" class="mt-2 truncate font-mono text-[11px] text-[var(--muted)]">
             {{ cleanRec.path }}
           </p>
         </section>

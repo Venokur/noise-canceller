@@ -16,6 +16,27 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::state::AppState;
 
+/// Notes produced outside the window (startup hotkey failure, a tray start that
+/// failed while the window was hidden). The window drains them on mount and
+/// also listens for `app-note`, so a failure is never only in app.log.
+static NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn note(app: &tauri::AppHandle, text: String) {
+    if let Ok(mut notes) = NOTES.lock() {
+        if notes.len() < 8 {
+            notes.push(text.clone());
+        }
+    }
+    let _ = app.emit("app-note", text);
+}
+
+pub(crate) fn take_notes() -> Vec<String> {
+    NOTES
+        .lock()
+        .map(|mut notes| notes.drain(..).collect())
+        .unwrap_or_default()
+}
+
 /// Tray menu kept in state: showing it ourselves places it at the cursor,
 /// going down. Every label is stored, because the language can change while the
 /// app runs and the items have to be renamed in place.
@@ -31,8 +52,20 @@ struct TrayState {
 
 pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        // the window may have been minimized with the title-bar button: `show`
+        // alone leaves it minimized, so the tray "Open" looked dead
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+/// The mute overlay is a second webview that loaded the settings once at
+/// startup. After a language switch it has to learn the new one, otherwise it
+/// keeps saying "Microphone muted" in the old language until the app restarts.
+pub(crate) fn notify_locale(app: &tauri::AppHandle, language: &str) {
+    if let Some(osd) = app.get_webview_window("osd") {
+        let _ = osd.emit("locale-changed", language.to_string());
     }
 }
 
@@ -83,6 +116,25 @@ pub(crate) fn toggle_processing(app: &tauri::AppHandle) {
         .map(|slot| slot.is_some())
         .unwrap_or(false);
     if running {
+        // a take owns the engine: stopping it from the tray would silently
+        // discard an A/B pair or a long recording
+        let take = state
+            .with_engine(|engine| {
+                engine.ab_status().running || engine.clean_record_status().running
+            })
+            .unwrap_or(false);
+        if take {
+            let lang = Lang::from_settings(&state.settings_snapshot());
+            note(
+                app,
+                lang.text(
+                    "идёт запись — остановите её в окне приложения",
+                    "a recording is running — stop it in the app window",
+                )
+                .to_string(),
+            );
+            return;
+        }
         let engine = state.engine.lock().ok().and_then(|mut slot| slot.take());
         state.wanted.store(false, Ordering::Relaxed);
         if let Some(mut engine) = engine {
@@ -130,6 +182,15 @@ pub(crate) fn toggle_processing(app: &tauri::AppHandle) {
                 noise_canceller_core::log::info(&format!(
                     "tray: could not start processing: {err}"
                 ));
+                let lang = Lang::from_settings(&state.settings_snapshot());
+                note(
+                    &handle,
+                    lang.fmt(
+                        "не удалось включить обработку: {err}",
+                        "could not start processing: {err}",
+                        &[("err", &err.to_string())],
+                    ),
+                );
             }
         }
         let refresh = handle.clone();
@@ -445,9 +506,11 @@ pub(crate) fn install(
     }
     builder.build(app)?;
 
-    register_hotkey(app.handle(), start_hotkey, lang);
+    if let Some(warning) = register_hotkey(app.handle(), start_hotkey, lang) {
+        note(app.handle(), warning);
+    }
     // the window is created hidden: restore its size and center it while the
-    // page is loading; `on_page_load` shows it after the first paint
+    // page is loading; `frontend_ready` shows it after the settings are applied
     restore_window(app.handle());
     if !start_minimized {
         // safety net: a broken page must still be visible and closable

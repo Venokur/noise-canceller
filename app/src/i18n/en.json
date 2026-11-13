@@ -9,14 +9,11 @@
   "common.refresh": "Refresh",
   "common.auto": "auto",
   "common.open": "Open",
-
   "window.minimize": "Minimize",
   "window.maximize": "Maximize",
-
   "status.error": "Error",
   "status.starting": "Starting the model…",
   "status.working": "Running",
-
   "nav.sound": "Sound",
   "nav.settings": "Settings",
   "nav.lightTheme": "Light theme",
@@ -27,30 +24,24 @@
   "osd.mutedHint": "The other side cannot hear you",
   "osd.live": "Microphone live",
   "osd.liveHint": "Processing goes to the cable",
-
   "readout.latency": "Latency",
   "readout.load": "Load",
   "readout.suppression": "Suppression",
-
   "preset.home": "Home",
   "preset.office": "Office",
   "preset.street": "Street",
   "preset.stream": "Stream",
-
   "section.voice": "Voice",
   "section.clean": "Signal cleanup",
   "section.latency": "Latency and load",
   "section.control": "Controls",
   "section.diag": "Diagnostics",
   "section.app": "Application",
-
   "model.status": "VoxLock model · int8 · bundled",
   "model.check": "Check for updates",
   "model.checking": "Checking…",
   "model.label": "VoxLock model",
-
   "route.noMic": "no microphone",
-
   "probe.hint.clip": "clipping — lower the microphone gain",
   "probe.hint.quiet": "the microphone is quiet — raise the gain",
   "probe.hint.noSpeech": "almost no speech",
@@ -66,7 +57,6 @@
   "toast.calibrateSpeakText": "In your normal voice, at the same distance as in a call.",
   "toast.calibrated": "Settings matched",
   "toast.calibratedText": "The room is {room}; the “{preset}” preset is applied. Every value stays editable.",
-
   "toast.hotkeyTitle": "Shortcut not registered",
   "toast.settingsSaved": "Settings saved",
   "toast.reportSaved": "Report saved",
@@ -88,14 +78,12 @@
   "toast.micGoneTitle": "The microphone disconnected",
   "toast.micGoneText": "Waiting for the device to return.",
   "toast.micBack": "The microphone is back",
-
   "error.abInterrupted": "Recording interrupted: processing stopped.",
   "error.engineRestart": "the engine did not restart — close and reopen the app",
   "error.cableAsMic": "The virtual cable is selected instead of a microphone — the app will hear its own output. Choose a real microphone.",
   "error.noMic": "No microphone found. Connect one and press “Refresh”.",
   "error.processingStopped": "Processing stopped — restarting the engine…",
   "error.deviceLost": "The device disconnected. Waiting for it to return…",
-
   "wizard.title": "Set up in three steps",
   "wizard.subtitle": "You can skip it and come back later: “Settings” → “Setup wizard”.",
   "wizard.step1": "Virtual microphone",
@@ -117,14 +105,12 @@
   "wizard.quality": "Score {score}/100 · SNR {snr} dB",
   "wizard.skip": "Skip",
   "wizard.done": "Done",
-
   "confirm.resetTitle": "Reset the settings?",
   "confirm.resetText": "Everything returns to factory values: devices, profile, level and sound processing. A/B takes and voice profiles stay on disk.",
   "confirm.reset": "Reset",
   "confirm.takeTitle": "Apply the take settings?",
   "confirm.takeText": "The current processing parameters will be replaced with those of take {stamp}. Devices and profile switch too.",
   "confirm.takeApply": "Apply",
-
   "sound.powerOff": "Turn processing off",
   "sound.powerOn": "Turn processing on",
   "sound.powerNoMic": "No microphone — choose one under “Devices”",
@@ -213,7 +199,6 @@
   "sound.openFolder": "Open the folder",
   "sound.deleteTake": "Delete the take",
   "sound.noMicFound": "No microphone found",
-
   "settings.search": "Search settings",
   "settings.advanced": "Advanced",
   "settings.presets": "Presets",
@@ -233,7 +218,6 @@
   "settings.theme.system": "Follow Windows",
   "settings.theme.dark": "Dark",
   "settings.theme.light": "Light",
-
   "settings.voice.onlyMine": "Keep only my voice",
   "settings.voice.onlyMineHint": "VoxLock lets only your voice through. Off — the plain denoiser stays: easier on the CPU and no profile needed.",
   "settings.voice.speakerCheck": "Check the speaker",
@@ -261,7 +245,6 @@
   "settings.voice.deessHint": "Ducks only the 5 kHz band and above when “s” and “sh” jump forward, so presence and air can be raised without hiss.",
   "settings.voice.deessAmount": "Depth",
   "settings.voice.deessAmountHint": "How far the sibilance can be pulled down. 6 dB suits most voices; more if the recording lisps.",
-
   "settings.clean.leveling": "Quiet microphone boost",
   "settings.clean.levelingHint": "Raises a quiet microphone to −26 dBFS before the model. Affects intelligibility and how even the level is.",
   "settings.clean.inputGain": "Input gain",
@@ -313,7 +296,6 @@
   "settings.clean.loudnessOff": "Off",
   "settings.clean.loudnessStream": "−16 LUFS · streaming",
   "settings.clean.loudnessCall": "−20 LUFS · calls",
-
   "settings.latency.bufferAuto": "Buffer automatically",
   "settings.latency.bufferAutoHint": "Picks the smallest buffer without gaps: +20 ms on a miss, −10 ms after 90 s without misses. The value is remembered between launches.",
   "settings.latency.buffer": "Buffer",
@@ -333,14 +315,12 @@
   "settings.latency.recommended": "recommended",
   "settings.latency.why": "Up to four threads the processing time almost halves; above that it barely helps but takes cores away from a game.",
   "settings.latency.slow": "With a {block} ms block and {threads} threads the model cannot keep up in real time — the sound will break up. Use 60 ms or more threads.",
-
   "settings.control.mute": "Microphone mute",
   "settings.control.muteHint": "The global shortcut works from any program. “Hold” keeps the microphone on while the key is pressed (push-to-talk). Escape cancels the capture.",
   "settings.control.capture": "Press a shortcut…",
   "settings.control.mode": "Key mode",
   "settings.control.toggle": "Toggle",
   "settings.control.hold": "Hold (PTT)",
-
   "settings.diag.leveler": "Leveling gain",
   "settings.diag.threads": "Model threads",
   "settings.diag.resets": "Model resets",
@@ -370,7 +350,6 @@
   "settings.diag.thresholdHint": "Compares the latest A/B takes with the profile and suggests a threshold for “Duck a foreign voice”. One or two takes are enough.",
   "settings.diag.thresholdResult": "From {takes} takes: p5 {p5} %, median {median} %. Suggested threshold: {threshold} %.",
   "settings.diag.thresholdApply": "Apply",
-
   "settings.app.autostart": "Start with Windows",
   "settings.app.version": "App version",
   "settings.app.versionHint": "Version {version} is installed. The check goes to github.com when you press it.",
@@ -393,12 +372,32 @@
   "settings.app.import": "Import settings",
   "settings.app.reset": "Reset settings",
   "settings.app.exportHint": "Export writes the settings file wherever you choose; import reads it back and restarts processing if it is running.",
-
   "cable.downloading": "Downloading the driver…",
   "cable.installer": "The installer has started. Press “Install Driver” and allow the installation.",
   "cable.ready": "Done: the virtual microphone is available.",
   "cable.timeout": "The installation did not finish. Close the installer and run it again; if the driver is already in place, restart the computer.",
-
   "profile.meta": "{score} / 100 · speech {speech}% · SNR {snr} dB",
-  "profile.snr": "SNR {snr} dB"
+  "profile.snr": "SNR {snr} dB",
+  "common.loading": "Loading…",
+  "common.retry": "Retry",
+  "toast.abBusyTitle": "A/B take in progress",
+  "toast.abBusyText": "Wait for it to finish or stop it — a restart would abort the take.",
+  "toast.micBusyTitle": "Microphone is busy",
+  "toast.micBusyText": "Wait for the check or the profile take to finish.",
+  "toast.abStoppedTitle": "A/B take stopped",
+  "toast.abStoppedText": "The take was not saved.",
+  "toast.noteTitle": "Warning",
+  "error.abWriteFailed": "Could not write the A/B take",
+  "error.cleanRecordFailed": "Could not write the long recording",
+  "sound.abStopCountdown": "Stop recording · {s} s",
+  "sound.abStopHint": "Press the button again to stop the recording.",
+  "sound.deleteTakeConfirm": "Press again to delete the take",
+  "settings.presetsDeleteConfirm": "Press again to delete the preset",
+  "settings.control.badKey": "That chord is not supported — use a letter, a digit or F1–F24 with Ctrl/Alt/Shift.",
+  "window.hideToTray": "Hide to tray",
+  "toast.busyTitle": "Recording in progress",
+  "toast.busyText": "Wait for the take or the microphone check to finish.",
+  "toast.reconnectText": "Wait until the devices are reconnected.",
+  "toast.cleanBusyTitle": "A long recording is running",
+  "toast.cleanBusyText": "Stop it with the button in the Long recording section."
 }

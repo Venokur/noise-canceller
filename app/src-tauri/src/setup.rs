@@ -13,7 +13,9 @@ pub(crate) fn run() {
     let settings_path = paths::data_dir().join("settings.json");
     let settings = Settings::load(&settings_path);
     // persist a migrated file once, so the next start reads the tuned values
-    settings.save(&settings_path);
+    if let Err(err) = settings.save(&settings_path) {
+        noise_canceller_core::log::info(&format!("settings write failed: {err}"));
+    }
     let start_minimized = settings.start_minimized;
     let start_hotkey = settings.mute_hotkey.clone();
     // the tray is created before the window: its labels need the language now,
@@ -47,27 +49,12 @@ pub(crate) fn run() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
-        // WebView2 can show a white frame if the window becomes visible before
-        // the page has painted. Keep it hidden until the first page has loaded,
-        // then show it and nudge the size once so the compositor commits.
-        .on_page_load({
-            let show = !start_minimized;
-            move |webview, payload| {
-                if !show
-                    || webview.label() != "main"
-                    || !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
-                {
-                    return;
-                }
-                let window = webview.window();
-                let _ = window.show();
-                let _ = window.set_focus();
-                if let Ok(size) = window.inner_size() {
-                    let _ = window.set_size(tauri::PhysicalSize::new(size.width + 1, size.height));
-                    let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
-                }
-            }
-        })
+        // The window is created hidden and is shown by the `frontend_ready`
+        // command once the first settings snapshot (theme, language, devices)
+        // has been applied. Showing it on `PageLoadEvent::Finished` was early
+        // enough that a light-theme or English window flashed the dark/Russian
+        // defaults for a frame. The three-second fallback in `tray::install`
+        // still shows a window whose frontend never calls the command.
         .setup(move |app| {
             // The mute overlay: a second transparent window, created hidden and
             // shown by the tray/hotkey code for a moment. Failure is not fatal:
@@ -105,6 +92,7 @@ pub(crate) fn run() {
             engine: std::sync::Mutex::new(None),
             settings: std::sync::Mutex::new(settings),
             settings_path,
+            apply_settings: std::sync::Mutex::new(()),
             maximized: std::sync::atomic::AtomicBool::new(false),
             wanted: std::sync::atomic::AtomicBool::new(true),
             restore_rect: std::sync::Mutex::new(None),
@@ -158,6 +146,7 @@ pub(crate) fn run() {
             crate::commands::profile_consistency,
             crate::commands::speaker_recommendation,
             crate::commands::ab_start,
+            crate::commands::ab_stop,
             crate::commands::ab_status,
             crate::commands::last_ab,
             crate::commands::default_devices,
@@ -184,6 +173,9 @@ pub(crate) fn run() {
             crate::commands::check_model_update,
             crate::commands::check_app_update,
             crate::commands::app_version,
+            crate::commands::frontend_ready,
+            crate::commands::startup_notes,
+            crate::commands::validate_hotkey,
             crate::commands::play_profile,
             crate::commands::play_ab_pair,
             crate::commands::set_ab_side,

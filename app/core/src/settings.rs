@@ -343,14 +343,18 @@ impl Settings {
         }
     }
 
-    pub fn load(path: &std::path::Path) -> Self {
-        let mut settings: Self = std::fs::read_to_string(path)
-            .ok()
-            // Notepad and PowerShell write a BOM; serde rejects it and the whole
-            // file silently loads as defaults, which looks like "my settings
-            // were reset" and also drops the learned-gain migration
-            .and_then(|text| serde_json::from_str(text.trim_start_matches('\u{feff}')).ok())
-            .unwrap_or_default();
+    /// Reads and migrates a settings file.
+    ///
+    /// `Err` means the file exists but is unreadable or malformed. Loading such
+    /// a file as defaults is right on startup (with a backup), but an import
+    /// must report the error instead of replacing every setting with the
+    /// factory values.
+    pub fn load_checked(path: &std::path::Path) -> anyhow::Result<Self> {
+        // Notepad and PowerShell write a BOM; serde rejects it and the whole
+        // file silently loads as defaults, which looks like "my settings were
+        // reset" and also drops the learned-gain migration
+        let text = std::fs::read_to_string(path)?;
+        let mut settings: Self = serde_json::from_str(text.trim_start_matches('\u{feff}'))?;
 
         // a settings file written before the tuning pass still holds the old
         // defaults; bump them, but leave values the user changed alone
@@ -481,21 +485,53 @@ impl Settings {
         }
 
         settings.sanitize();
-        settings
+        Ok(settings)
     }
 
-    pub fn save(&self, path: &std::path::Path) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(text) = serde_json::to_string_pretty(self) {
-            // write-then-rename: a crash in the middle must not leave a
-            // truncated settings file that loads as defaults
-            let tmp = path.with_extension("json.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, path);
+    /// Startup load: a missing file is a first run; a malformed one is moved
+    /// aside first, so the user's file is never silently replaced by defaults
+    /// (the old file is still there for a manual fix).
+    pub fn load(path: &std::path::Path) -> Self {
+        match Self::load_checked(path) {
+            Ok(settings) => settings,
+            Err(err) => {
+                if path.exists() {
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let backup = path.with_extension(format!("json.bad-{stamp}"));
+                    if std::fs::rename(path, &backup).is_ok() {
+                        crate::log::info(&format!(
+                            "settings file is unreadable ({err}); moved to {}",
+                            backup.display()
+                        ));
+                    } else {
+                        crate::log::info(&format!("settings file is unreadable: {err}"));
+                    }
+                }
+                Self::default()
             }
         }
+    }
+
+    /// Writes the settings atomically: write-then-rename, so a crash in the
+    /// middle cannot leave a truncated file. The error is returned because a
+    /// full or read-only disk must reach the window instead of looking saved.
+    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        // `set_settings` is called from the async command thread, and an import
+        // can run at the same time: two writers sharing `settings.json.tmp`
+        // would corrupt the file, so writes are serialized.
+        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string_pretty(self)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, text)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
     }
 }
 
@@ -640,6 +676,28 @@ mod tests {
         assert_eq!(settings.tone_low_db, 0.0);
         assert_eq!(settings.tone_high_db, 0.0);
         assert_eq!(settings.air_amount, 0.10);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_broken_file_is_an_error_and_is_moved_aside_on_startup() {
+        let dir = std::env::temp_dir().join(format!("nc-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "{not json").unwrap();
+
+        // an import must see the error instead of silently applying defaults
+        assert!(super::Settings::load_checked(&path).is_err());
+
+        // a startup keeps the user's file for a manual fix
+        let settings = super::Settings::load(&path);
+        assert_eq!(settings.theme, super::Settings::default().theme);
+        assert!(!path.exists());
+        assert!(std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".json.bad-")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

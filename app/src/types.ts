@@ -144,6 +144,8 @@ export interface AbStatus {
   folder: string | null;
   raw: string | null;
   clean: string | null;
+  /** why the take wrote no files (disk full, read-only folder) */
+  error: string | null;
 }
 
 export interface LastAb {
@@ -183,6 +185,7 @@ export interface CleanRecordStatus {
   running: boolean;
   progress: number;
   path: string | null;
+  error: string | null;
 }
 
 /** Similarity of the raw take's speech windows to the enrolled profile. */

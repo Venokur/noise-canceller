@@ -7,7 +7,7 @@
 // neutral colours, a single primary action, Escape cancels and focus starts on
 // the safe button.
 
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { t } from "../i18n";
 
@@ -34,9 +34,18 @@ const root = ref<HTMLElement | null>(null);
 const cancelButton = ref<HTMLButtonElement | null>(null);
 const confirmButton = ref<HTMLButtonElement | null>(null);
 
+let previousFocus: HTMLElement | null = null;
+
 onMounted(() => {
+  previousFocus = document.activeElement as HTMLElement | null;
   if (props.focus === "confirm") confirmButton.value?.focus();
   else cancelButton.value?.focus();
+});
+
+onUnmounted(() => {
+  // the dialog closed by a click or Escape: the keyboard user has to land back
+  // on the control that opened it, not at the top of the page
+  previousFocus?.focus?.();
 });
 
 function onKeydown(event: KeyboardEvent) {

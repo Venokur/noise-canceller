@@ -497,7 +497,21 @@ input[type="range"].slider::-webkit-slider-thumb:hover {
 }
 
 input[type="range"].slider:focus-visible {
+  /* the base rule above sets `outline: none` with higher specificity, so the
+     global :focus-visible ring never appeared on a slider */
+  outline: 2px solid var(--accent);
   outline-offset: 6px;
+}
+
+/* ---------- custom tooltip ---------- */
+.tip-enter-active,
+.tip-leave-active {
+  transition: opacity 120ms ease;
+}
+
+.tip-enter-from,
+.tip-leave-to {
+  opacity: 0;
 }
 
 /* ---------- transitions ---------- */

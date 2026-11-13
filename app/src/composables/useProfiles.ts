@@ -42,11 +42,25 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
   watch(selectedProfile, () => void loadProfileMeta());
 
   async function refreshProfiles() {
-    profiles.value = await invoke<string[]>("list_profiles");
+    try {
+      profiles.value = await invoke<string[]>("list_profiles");
+    } catch (e) {
+      // also runs as a template event handler (`autoProfile` switch), where a
+      // rejected promise would otherwise be an unhandled rejection
+      error.value = String(e);
+      return;
+    }
     try {
       profileScores.value = (await invoke<ProfileScore[] | null>("profile_scores")) ?? [];
     } catch {
       profileScores.value = [];
+    }
+    const previous = selectedProfile.value;
+    // a file deleted outside the app must not stay selected: the engine would
+    // try to load it on the next start
+    if (selectedProfile.value && !profiles.value.includes(selectedProfile.value)) {
+      selectedProfile.value = "";
+      if (settings.value) settings.value.profilePath = null;
     }
     const best = [...profileScores.value].sort((a, b) => b.score - a.score)[0];
     // a profile bound to this microphone wins over "pick the best": a headset
@@ -59,11 +73,20 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
       selectedProfile.value = best.path;
       settings.value.profilePath = best.path;
     } else if (!selectedProfile.value && settings.value?.profilePath) {
-      selectedProfile.value = settings.value.profilePath;
+      // the file may have been deleted outside the app: a stale path made the
+      // engine fail at start with "file not found"
+      if (profiles.value.includes(settings.value.profilePath)) {
+        selectedProfile.value = settings.value.profilePath;
+      } else if (settings.value) {
+        settings.value.profilePath = null;
+      }
     } else if (!selectedProfile.value && profiles.value.length) {
       selectedProfile.value = profiles.value[0];
       if (settings.value) settings.value.profilePath = profiles.value[0];
     }
+    // a different profile was selected by the best-score / device rule: the
+    // quality figure belongs to the take that was just recorded, not to this one
+    if (selectedProfile.value !== previous) profileQuality.value = null;
     await loadProfileMeta();
   }
 
@@ -114,7 +137,11 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
     if (!settings.value || !selectedProfile.value) return;
     settings.value.profilePath = selectedProfile.value;
     profileQuality.value = null;
-    await restart();
+    try {
+      await restart();
+    } catch (e) {
+      error.value = String(e);
+    }
   }
 
   async function renameProfile(name: string) {
@@ -143,8 +170,12 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
         }
       }
       selectedProfile.value = "";
+      profileQuality.value = null;
+      profileInfo.value = null;
       if (settings.value) settings.value.profilePath = null;
       await refreshProfiles();
+      // the running engine still holds the embeddings of the deleted file
+      await restart();
     } catch (e) {
       error.value = String(e);
     }

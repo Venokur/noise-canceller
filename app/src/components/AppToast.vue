@@ -25,7 +25,7 @@ const tint = (kind: string): string => {
 <template>
   <div
     class="pointer-events-auto flex w-full items-start gap-2.5 rounded-xl border border-[var(--stroke)] bg-[var(--surface)] px-3 py-2.5 shadow-[0_16px_36px_-22px_rgba(0,0,0,0.7)]"
-    role="status"
+    :role="kind === 'warn' ? 'alert' : 'status'"
   >
     <span class="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-full" :class="tint(kind)"></span>
     <div class="min-w-0 flex-1">
@@ -41,7 +41,8 @@ const tint = (kind: string): string => {
     </div>
     <button
       class="-mt-0.5 -mr-1 grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--surface-alt)] hover:text-[var(--text)]"
-      :title="t('common.close')"
+      :aria-label="t('common.close')"
+      v-tooltip="t('common.close')"
       @click="emit('close')"
     >
       <AppIcon name="close" :size="12" />

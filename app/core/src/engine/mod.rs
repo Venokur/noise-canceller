@@ -61,6 +61,9 @@ pub struct CleanRecordStatus {
     /// 0..1
     pub progress: f32,
     pub path: Option<String>,
+    /// Why the take could not be written. The window used to show the path of a
+    /// file that the writer never created.
+    pub error: Option<String>,
 }
 
 pub struct Stats {
@@ -131,6 +134,8 @@ struct Shared {
     ab_active: Arc<AtomicBool>,
     ab_folder: Arc<Mutex<Option<String>>>,
     ab_paths: Arc<Mutex<(Option<String>, Option<String>)>>,
+    /// why the last A/B take wrote no files
+    ab_error: Arc<Mutex<Option<String>>>,
     spectrum: Arc<Mutex<[f32; BANDS]>>,
     settings_seq: Arc<AtomicU32>,
     wet: Arc<AtomicU32>,
@@ -172,6 +177,8 @@ struct Shared {
     clean_rec_active: Arc<AtomicBool>,
     clean_rec_progress: Arc<AtomicU32>,
     clean_rec_path: Arc<Mutex<Option<String>>>,
+    /// why the last clean take wrote no file
+    clean_rec_error: Arc<Mutex<Option<String>>>,
     clean_rec_target: Arc<AtomicU32>,
     clean_rec_rate: Arc<AtomicU32>,
     /// frames the output device asked for in the last callback
@@ -197,6 +204,7 @@ impl Shared {
             ab_active: Arc::new(AtomicBool::new(false)),
             ab_folder: Arc::new(Mutex::new(None)),
             ab_paths: Arc::new(Mutex::new((None, None))),
+            ab_error: Arc::new(Mutex::new(None)),
             spectrum: Arc::new(Mutex::new([0.0; BANDS])),
             settings_seq: Arc::new(AtomicU32::new(1)),
             wet: Arc::new(AtomicU32::new(1.0f32.to_bits())),
@@ -230,6 +238,7 @@ impl Shared {
             clean_rec_active: Arc::new(AtomicBool::new(false)),
             clean_rec_progress: Arc::new(AtomicU32::new(0)),
             clean_rec_path: Arc::new(Mutex::new(None)),
+            clean_rec_error: Arc::new(Mutex::new(None)),
             clean_rec_target: Arc::new(AtomicU32::new(0)),
             clean_rec_rate: Arc::new(AtomicU32::new(48_000)),
             callback_frames: Arc::new(AtomicU32::new(0)),
@@ -547,13 +556,18 @@ impl Engine {
         if let Ok(mut slot) = self.shared.clean_rec_path.lock() {
             *slot = Some(path.to_string_lossy().to_string());
         }
+        if let Ok(mut slot) = self.shared.clean_rec_error.lock() {
+            *slot = None;
+        }
         let active = self.shared.clean_rec_active.clone();
+        let active_flag = active.clone();
         let progress = self.shared.clean_rec_progress.clone();
         let path_slot = self.shared.clean_rec_path.clone();
+        let error_slot = self.shared.clean_rec_error.clone();
         let rate = self.out_rate;
         active.store(true, Ordering::Relaxed);
 
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("nc-clean-rec".into())
             .spawn(move || {
                 let spec = WavSpec {
@@ -566,6 +580,9 @@ impl Engine {
                     Ok(writer) => writer,
                     Err(err) => {
                         crate::log::info(&format!("clean recording: {err}"));
+                        if let Ok(mut slot) = error_slot.lock() {
+                            *slot = Some(err.to_string());
+                        }
                         active.store(false, Ordering::Relaxed);
                         return;
                     }
@@ -605,17 +622,32 @@ impl Engine {
                 while let Ok(value) = consumer.pop() {
                     let _ = writer.write_sample((value.clamp(-1.0, 1.0) * 32767.0) as i16);
                 }
-                let _ = writer.finalize();
-                active.store(false, Ordering::Relaxed);
-                progress.store(1.0f32.to_bits(), Ordering::Relaxed);
-                if let Ok(mut slot) = path_slot.lock() {
+                if let Err(err) = writer.finalize() {
+                    crate::log::info(&format!("clean recording finalize: {err}"));
+                    if let Ok(mut slot) = error_slot.lock() {
+                        *slot = Some(err.to_string());
+                    }
+                } else if let Ok(mut slot) = path_slot.lock() {
                     *slot = Some(path.to_string_lossy().to_string());
                 }
+                active.store(false, Ordering::Relaxed);
+                progress.store(1.0f32.to_bits(), Ordering::Relaxed);
                 crate::log::info(&format!("clean recording saved: {}", path.display()));
-            })
-            .map_err(|e| anyhow!("clean recording thread: {e}"))?;
+            });
 
-        Ok(self.clean_record_status())
+        match spawned {
+            Ok(_) => Ok(self.clean_record_status()),
+            Err(err) => {
+                // the flag was set before the spawn: leaving it true made the
+                // engine report a running take forever, and every later start
+                // answered "already running"
+                active_flag.store(false, Ordering::Relaxed);
+                if let Ok(mut slot) = self.shared.clean_rec.lock() {
+                    slot.take();
+                }
+                Err(anyhow!("clean recording thread: {err}"))
+            }
+        }
     }
 
     pub fn stop_clean_recording(&self) {
@@ -632,10 +664,17 @@ impl Engine {
             .lock()
             .ok()
             .and_then(|slot| slot.clone());
+        let error = self
+            .shared
+            .clean_rec_error
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
         CleanRecordStatus {
             running: self.shared.clean_rec_active.load(Ordering::Relaxed),
             progress: f32::from_bits(self.shared.clean_rec_progress.load(Ordering::Relaxed)),
-            path,
+            path: if error.is_some() { None } else { path },
+            error,
         }
     }
 
@@ -782,6 +821,9 @@ impl Engine {
         if let Ok(mut slot) = self.shared.ab_paths.lock() {
             *slot = (None, None);
         }
+        if let Ok(mut slot) = self.shared.ab_error.lock() {
+            *slot = None;
+        }
         self.shared.ab_done.store(false, Ordering::Relaxed);
         self.shared.ab_active.store(true, Ordering::Relaxed);
         Ok(())
@@ -810,6 +852,12 @@ impl Engine {
             .lock()
             .map(|p| (p.0.clone(), p.1.clone()))
             .unwrap_or((None, None));
+        let error = self
+            .shared
+            .ab_error
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
 
         AbStatus {
             running: self.shared.ab_active.load(Ordering::Relaxed),
@@ -817,7 +865,27 @@ impl Engine {
             folder,
             raw,
             clean,
+            error,
         }
+    }
+
+    /// Aborts an A/B take: the buffer is dropped, no files are written, and the
+    /// next `ab_status` reports `running: false` right away.
+    pub fn stop_ab(&self) {
+        self.shared.ab_active.store(false, Ordering::Relaxed);
+        if let Ok(mut slot) = self.shared.ab.lock() {
+            slot.take();
+        }
+        if let Ok(mut slot) = self.shared.ab_paths.lock() {
+            *slot = (None, None);
+        }
+        if let Ok(mut slot) = self.shared.ab_folder.lock() {
+            *slot = None;
+        }
+        if let Ok(mut slot) = self.shared.ab_error.lock() {
+            *slot = None;
+        }
+        self.shared.ab_done.store(true, Ordering::Relaxed);
     }
 
     pub fn stop(&mut self) {

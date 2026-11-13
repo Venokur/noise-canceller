@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { inject } from "vue";
+import { computed, inject, onUnmounted, ref } from "vue";
 import AppIcon from "../components/AppIcon.vue";
+import AppInput from "../components/AppInput.vue";
 import AppLabel from "../components/AppLabel.vue";
 import AppSelect from "../components/AppSelect.vue";
 import AppSlider from "../components/AppSlider.vue";
@@ -8,7 +9,42 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, customPresets, deleteCustomPreset, error, evaluateSpeakerThreshold, evaluatingThreshold, exportPresets, exportSettings, importPresets, importSettings, maxThreads, modelStatus, openLicenses, openLog, presetName, presets, resetSettings, restartSoon, saveCustomPreset, saveDiagnostics, savingPreset, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+
+const { abRunning, applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, customPresets, deleteCustomPreset, error, evaluateSpeakerThreshold, evaluatingThreshold, exportPresets, exportSettings, hotkeyError, importPresets, importSettings, maxThreads, modelStatus, openLicenses, openLog, presetName, presets, resetSettings, restartSoon, saveCustomPreset, saveDiagnostics, savingDiagnostics, savingPreset, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+
+/// Deleting a saved preset is one small chip away from applying it: arm the
+/// button for three seconds like the profile trash does.
+const confirmPreset = ref<string | null>(null);
+let presetTimer: number | undefined;
+function removePreset(name: string) {
+  if (confirmPreset.value !== name) {
+    confirmPreset.value = name;
+    if (presetTimer) window.clearTimeout(presetTimer);
+    presetTimer = window.setTimeout(() => (confirmPreset.value = null), 3000);
+    return;
+  }
+  if (presetTimer) window.clearTimeout(presetTimer);
+  confirmPreset.value = null;
+  void deleteCustomPreset(name);
+}
+onUnmounted(() => {
+  if (presetTimer) window.clearTimeout(presetTimer);
+});
+
+/// An imported file may hold a loudness target that is not one of the three
+/// shipped choices; the select used to show a dash instead of the value.
+const loudnessOptions = computed(() => {
+  const options = [
+    { value: "0", label: t("settings.clean.loudnessOff") },
+    { value: "-16", label: t("settings.clean.loudnessStream") },
+    { value: "-20", label: t("settings.clean.loudnessCall") },
+  ];
+  const current = String(settings.value?.loudnessTargetDb ?? 0);
+  if (!options.some((option) => option.value === current)) {
+    options.push({ value: current, label: `${current} LUFS` });
+  }
+  return options;
+});
 </script>
 
 <template>
@@ -32,11 +68,11 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 class="flex h-[34px] flex-1 items-center gap-2 rounded-[9px] border border-[var(--stroke)] bg-[var(--surface)] px-2.5 text-[var(--muted)] transition-colors focus-within:border-[var(--accent)]"
               >
                 <AppIcon name="search" :size="14" />
-                <input
-                  :value="settingsQuery"
+                <AppInput
+                  :model-value="settingsQuery"
                   class="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
                   :placeholder="t('settings.search')"
-                  @input="filterSettings(($event.target as HTMLInputElement).value)"
+                  @update:model-value="filterSettings"
                 />
               </label>
               <label
@@ -71,18 +107,20 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
               >
                 <button class="cursor-pointer" @click="applyCustomPreset(preset)">{{ preset.name }}</button>
                 <button
-                  class="grid h-4 w-4 cursor-pointer place-items-center rounded text-[var(--muted)] hover:text-[var(--danger)]"
-                  :title="t('settings.presetsDelete')"
-                  @click="deleteCustomPreset(preset.name)"
+                  class="grid h-4 w-4 cursor-pointer place-items-center rounded transition"
+                  :class="confirmPreset === preset.name ? 'text-[var(--danger)]' : 'text-[var(--muted)] hover:text-[var(--danger)]'"
+                  :aria-label="confirmPreset === preset.name ? t('settings.presetsDeleteConfirm') : t('settings.presetsDelete')"
+                  v-tooltip="confirmPreset === preset.name ? t('settings.presetsDeleteConfirm') : t('settings.presetsDelete')"
+                  @click="removePreset(preset.name)"
                 >
-                  <AppIcon name="close" :size="10" />
+                  <AppIcon :name="confirmPreset === preset.name ? 'check' : 'close'" :size="10" />
                 </button>
               </div>
               <button v-if="!savingPreset" class="chip" @click="savingPreset = true">
                 + {{ t("settings.presetsSave") }}
               </button>
               <div v-else class="flex items-center gap-1">
-                <input
+                <AppInput
                   v-model="presetName"
                   maxlength="40"
                   class="h-[26px] w-[150px] rounded-[7px] border border-[var(--stroke)] bg-[var(--surface)] px-2 text-[11.5px] outline-none focus:border-[var(--accent)]"
@@ -90,10 +128,21 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                   @keydown.enter="saveCustomPreset"
                   @keydown.esc="savingPreset = false"
                 />
-                <button class="iconbtn" :title="t('common.save')" @click="saveCustomPreset">
+                <button
+                  class="iconbtn"
+                  :disabled="!presetName.trim()"
+                  :aria-label="t('common.save')"
+                  v-tooltip="t('common.save')"
+                  @click="saveCustomPreset"
+                >
                   <AppIcon name="check" :size="13" />
                 </button>
-                <button class="iconbtn" :title="t('common.cancel')" @click="savingPreset = false">
+                <button
+                  class="iconbtn"
+                  :aria-label="t('common.cancel')"
+                  v-tooltip="t('common.cancel')"
+                  @click="savingPreset = false"
+                >
                   <AppIcon name="close" :size="13" />
                 </button>
               </div>
@@ -166,7 +215,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                   :label="t('settings.voice.maxSuppression')"
                   v-model="settings.maxSuppressionDb"
                   :min="0"
-                  :max="40"
+                  :max="48"
                   :step="1"
                   :format="(v) => (v <= 0 ? t('settings.voice.noLimit') : `${v} ${u.db}`)"
                 />
@@ -327,7 +376,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSlider
                   :label="t('settings.clean.gateThreshold')"
-                  v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} ${u.db}`" />
+                  v-model="settings.gateThresholdDb" :min="-80" :max="-20" :step="1" :format="(v) => `${v} ${u.db}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
@@ -354,7 +403,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSlider
                   :label="t('settings.clean.release')"
-                  v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} ${u.ms}`" />
+                  v-model="settings.gateReleaseMs" :min="20" :max="1000" :step="10" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
@@ -363,7 +412,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSlider
                   :label="t('settings.clean.hold')"
-                  v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} ${u.ms}`" />
+                  v-model="settings.gateHoldMs" :min="0" :max="1000" :step="10" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -379,7 +428,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSlider
                   :label="t('settings.clean.agcTarget')"
-                  v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} ${u.db}`" />
+                  v-model="settings.agcTargetDb" :min="-40" :max="-6" :step="1" :format="(v) => `${v} ${u.db}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
@@ -417,7 +466,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSlider
                   :label="t('sound.outputVolume')"
-                  v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
+                  v-model="settings.outputGainDb" :min="-24" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -426,11 +475,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSelect
                   :model-value="String(settings.loudnessTargetDb)"
-                  :options="[
-                    { value: '0', label: t('settings.clean.loudnessOff') },
-                    { value: '-16', label: t('settings.clean.loudnessStream') },
-                    { value: '-20', label: t('settings.clean.loudnessCall') },
-                  ]"
+                  :options="loudnessOptions"
                   @update:model-value="(value: string) => (settings!.loudnessTargetDb = Number(value))"
                 />
               </div>
@@ -476,7 +521,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 />
                 <AppSlider
                   :label="t('settings.latency.block')"
-                  v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} ${u.ms}`" />
+                  v-model="settings.chunkMs" :min="20" :max="200" :step="20" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -492,7 +537,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                     v-if="!settings.autoThreads"
                     :class="btnGhost"
                     class="!h-auto !px-2 !py-1"
-                    :title="t('settings.latency.autoHint')"
+                    v-tooltip="t('settings.latency.autoHint')"
                     @click="settings.denoiserThreads = autoThreads"
                   >
                     {{ autoThreads }}
@@ -539,12 +584,20 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                   :hint="t('settings.control.muteHint')"
                 />
                 <div class="flex items-center justify-end gap-2">
-                  <button :class="capturingHotkey ? btnPrimary : btn" @click="startHotkeyCapture">
+                  <button
+                    :class="capturingHotkey ? btnPrimary : btn"
+                    data-hotkey-capture
+                    v-tooltip="hotkeyError || t('settings.control.muteHint')"
+                    @click="startHotkeyCapture"
+                  >
                     <AppIcon name="mic" :size="14" />
                     {{ capturingHotkey ? t("settings.control.capture") : settings.muteHotkey }}
                   </button>
                 </div>
               </div>
+              <p v-if="hotkeyError" class="mt-1 text-[11.5px] leading-relaxed text-[var(--danger)]">
+                {{ hotkeyError }}
+              </p>
               <div :class="settingRow">
                 <AppLabel :text="t('settings.control.mode')" />
                 <AppSelect
@@ -572,7 +625,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 </span>
                 <span>{{ t("settings.diag.resets") }}</span>
                 <span>{{ stats.guardResets }}</span>
-                <span :title="t('settings.diag.underrunsHint')">
+                <span v-tooltip="t('settings.diag.underrunsHint')">
                   {{ t("settings.diag.underruns") }}
                 </span>
                 <span>
@@ -581,11 +634,11 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                     · ≈ {{ ((stats.underruns / stats.outRate) * 1000).toFixed(0) }} {{ u.ms }}</span
                   >
                 </span>
-                <span :title="t('settings.diag.overflowsHint')">
+                <span v-tooltip="t('settings.diag.overflowsHint')">
                   {{ t("settings.diag.overflows") }}
                 </span>
                 <span>{{ stats.overflows }}</span>
-                <span :title="t('settings.diag.captureDropsHint')">
+                <span v-tooltip="t('settings.diag.captureDropsHint')">
                   {{ t("settings.diag.captureDrops") }}
                 </span>
                 <span>{{ stats.captureDrops }}</span>
@@ -599,13 +652,13 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 <span :class="stats.outputPeakDb > -1 ? 'text-[var(--danger)]' : ''">
                   {{ stats.outputPeakDb > -100 ? stats.outputPeakDb.toFixed(0) + " " + u.db : "—" }}
                 </span>
-                <span :title="t('settings.diag.lufsHint')">{{ t("settings.diag.lufs") }}</span>
+                <span v-tooltip="t('settings.diag.lufsHint')">{{ t("settings.diag.lufs") }}</span>
                 <span>{{ stats.lufs > -100 ? stats.lufs.toFixed(0) + " LUFS" : "—" }}</span>
-                <span :title="t('settings.diag.truePeakHint')">{{ t("settings.diag.truePeak") }}</span>
+                <span v-tooltip="t('settings.diag.truePeakHint')">{{ t("settings.diag.truePeak") }}</span>
                 <span :class="stats.truePeakDb > -1 ? 'text-[var(--danger)]' : ''">
                   {{ stats.truePeakDb > -100 ? stats.truePeakDb.toFixed(1) + " dBTP" : "—" }}
                 </span>
-                <span :title="t('settings.diag.speakerHint')">{{ t("settings.diag.speaker") }}</span>
+                <span v-tooltip="t('settings.diag.speakerHint')">{{ t("settings.diag.speaker") }}</span>
                 <span :class="stats.speakerConfidence >= 0 && stats.speakerConfidence < 0.5 ? 'text-[var(--danger)]' : ''">
                   {{
                     stats.speakerConfidence >= 0
@@ -613,7 +666,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                       : "—"
                   }}
                 </span>
-                <span :title="t('settings.diag.clockHint')">
+                <span v-tooltip="t('settings.diag.clockHint')">
                   {{ t("settings.diag.clock") }}
                 </span>
                 <span>
@@ -629,14 +682,19 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                   <AppIcon name="file" :size="14" />
                   {{ t("settings.diag.log") }}
                 </button>
-                <button :class="btnGhost" :title="t('settings.diag.reportHint')" @click="saveDiagnostics">
-                  <AppIcon name="file" :size="14" />
+                <button
+                  :class="btnGhost"
+                  :disabled="savingDiagnostics"
+                  v-tooltip="t('settings.diag.reportHint')"
+                  @click="saveDiagnostics"
+                >
+                  <AppIcon :name="savingDiagnostics ? 'spinner' : 'file'" :size="14" :class="{ spin: savingDiagnostics }" />
                   {{ t("settings.diag.report") }}
                 </button>
                 <button
                   :class="btnGhost"
-                  :title="t('settings.diag.thresholdHint')"
-                  :disabled="evaluatingThreshold"
+                  v-tooltip="t('settings.diag.thresholdHint')"
+                  :disabled="evaluatingThreshold || abRunning"
                   @click="evaluateSpeakerThreshold"
                 >
                   <AppIcon :name="evaluatingThreshold ? 'spinner' : 'activity'" :size="14" :class="{ spin: evaluatingThreshold }" />
@@ -728,7 +786,7 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                 <AppLabel :text="t('settings.app.keepAb')" :hint="t('settings.app.keepAbHint')" />
                 <AppSlider
                   :label="t('settings.app.keepAb')"
-                  v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
+                  v-model="settings.keepRecordings" :min="1" :max="100" :step="1" :format="(v) => `${v}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel

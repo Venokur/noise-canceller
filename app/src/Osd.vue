@@ -8,6 +8,7 @@ import { isLang, setLocale, t } from "./i18n";
 
 const muted = ref(false);
 let unlisten: UnlistenFn | null = null;
+let unlistenLocale: UnlistenFn | null = null;
 
 onMounted(async () => {
   try {
@@ -16,13 +17,23 @@ onMounted(async () => {
   } catch {
     /* the OSD is cosmetic, keep the default language */
   }
-  unlisten = await listen<boolean>("mute-changed", (event) => {
-    muted.value = event.payload;
-  });
+  try {
+    unlisten = await listen<boolean>("mute-changed", (event) => {
+      muted.value = event.payload;
+    });
+    // the main window owns the language switch; this second webview has to be
+    // told, or it keeps its startup language until the app restarts
+    unlistenLocale = await listen<string>("locale-changed", (event) => {
+      if (isLang(event.payload)) setLocale(event.payload);
+    });
+  } catch {
+    /* no event bridge: the overlay simply does not update */
+  }
 });
 
 onUnmounted(() => {
   unlisten?.();
+  unlistenLocale?.();
 });
 </script>
 

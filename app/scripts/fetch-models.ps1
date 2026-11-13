@@ -64,13 +64,33 @@ Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recong
 $libsTar = Join-Path $tmp "sherpa-onnx-libs.tar.bz2"
 Get-File "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release-lib.tar.bz2" $libsTar
 
-if (-not (Test-Path (Join-Path $native "sherpa-onnx-c-api.dll"))) {
+# The archive also carries sherpa-onnx-cxx-api.dll and
+# onnxruntime_providers_shared.dll. This app loads only the C API and the
+# ONNX Runtime core; the extra DLLs would still be counted as "shipped" by
+# scripts\licenses.ps1 and fail the policy unless they are listed. Keep an
+# explicit allow-list, and also drop leftovers from an older fetch or a
+# restored CI cache.
+$wanted = @("sherpa-onnx-c-api.dll", "onnxruntime.dll")
+$missing = @($wanted | Where-Object { -not (Test-Path (Join-Path $native $_)) })
+if ($missing.Count -gt 0) {
     Write-Host "extract native libs"
     tar -xjf $libsTar -C $tmp
-    $dir = Get-ChildItem $tmp -Directory | Where-Object { $_.Name -like "sherpa-onnx-*" } | Select-Object -First 1
-    Get-ChildItem $dir.FullName -Recurse -Filter "*.dll" | ForEach-Object {
-        Copy-Item $_.FullName $native -Force
+    # `$tmp` may still hold the extracted VoxLock folder: find the library
+    # directory by the DLL itself, not by the first `sherpa-onnx-*` name.
+    $srcDir = Get-ChildItem $tmp -Recurse -File -Filter "sherpa-onnx-c-api.dll" |
+        Select-Object -First 1 -ExpandProperty Directory
+    if (-not $srcDir) { throw "sherpa-onnx archive did not contain sherpa-onnx-c-api.dll" }
+    foreach ($name in $wanted) {
+        $src = Get-ChildItem $srcDir.FullName -File -Filter $name | Select-Object -First 1
+        if (-not $src) { throw "native file not found in the archive: $name" }
+        Copy-Item $src.FullName (Join-Path $native $name) -Force
     }
+}
+Get-ChildItem $native -File | Where-Object {
+    $_.Extension -eq ".dll" -and $wanted -notcontains $_.Name
+} | ForEach-Object {
+    Write-Host "drop  $($_.Name)"
+    Remove-Item $_.FullName -Force
 }
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue

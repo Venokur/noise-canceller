@@ -9,14 +9,11 @@
   "common.refresh": "Обновить",
   "common.auto": "авто",
   "common.open": "Открыть",
-
   "window.minimize": "Свернуть",
   "window.maximize": "Развернуть",
-
   "status.error": "Ошибка",
   "status.starting": "Запуск модели…",
   "status.working": "Работает",
-
   "nav.sound": "Звук",
   "nav.settings": "Настройки",
   "nav.lightTheme": "Светлая тема",
@@ -27,30 +24,24 @@
   "osd.mutedHint": "Собеседники вас не слышат",
   "osd.live": "Микрофон включён",
   "osd.liveHint": "Обработка идёт в кабель",
-
   "readout.latency": "Задержка",
   "readout.load": "Нагрузка",
   "readout.suppression": "Подавление",
-
   "preset.home": "Дом",
   "preset.office": "Офис",
   "preset.street": "Улица",
   "preset.stream": "Стрим",
-
   "section.voice": "Голос",
   "section.clean": "Чистка сигнала",
   "section.latency": "Задержка и нагрузка",
   "section.control": "Управление",
   "section.diag": "Диагностика",
   "section.app": "Приложение",
-
   "model.status": "Модель VoxLock · int8 · встроена",
   "model.check": "Проверить обновления",
   "model.checking": "Проверяю…",
   "model.label": "Модель VoxLock",
-
   "route.noMic": "микрофон не выбран",
-
   "probe.hint.clip": "есть перегруз, убавьте ручку микрофона",
   "probe.hint.quiet": "микрофон тихий, поднимите ручку",
   "probe.hint.noSpeech": "речи почти не слышно",
@@ -66,7 +57,6 @@
   "toast.calibrateSpeakText": "Обычным голосом, на том же расстоянии, как в звонке.",
   "toast.calibrated": "Настройки подобраны",
   "toast.calibratedText": "Комната {room}; применён пресет «{preset}». Все значения можно поправить вручную.",
-
   "toast.hotkeyTitle": "Хоткей не зарегистрирован",
   "toast.settingsSaved": "Настройки сохранены",
   "toast.reportSaved": "Отчёт сохранён",
@@ -88,14 +78,12 @@
   "toast.micGoneTitle": "Микрофон отключился",
   "toast.micGoneText": "Ждём, пока устройство вернётся.",
   "toast.micBack": "Микрофон снова на связи",
-
   "error.abInterrupted": "Запись прервана: обработка остановилась.",
   "error.engineRestart": "движок не перезапустился — закройте и откройте приложение",
   "error.cableAsMic": "Выбран виртуальный кабель вместо микрофона — так приложение слышит собственный выход. Выберите настоящий микрофон.",
   "error.noMic": "Микрофон не найден. Подключите микрофон и нажмите «Обновить».",
   "error.processingStopped": "Обработка остановилась — перезапускаю движок…",
   "error.deviceLost": "Устройство отключилось. Ждём подключения…",
-
   "wizard.title": "Настройка за три шага",
   "wizard.subtitle": "Можно пропустить и вернуться позже: «Настройки» → «Мастер настройки».",
   "wizard.step1": "Виртуальный микрофон",
@@ -117,14 +105,12 @@
   "wizard.quality": "Оценка {score}/100 · SNR {snr} дБ",
   "wizard.skip": "Пропустить",
   "wizard.done": "Готово",
-
   "confirm.resetTitle": "Сбросить настройки?",
   "confirm.resetText": "Все параметры вернутся к заводским: устройства, профиль, громкость и обработка звука. Записи A/B и профили голоса останутся на диске.",
   "confirm.reset": "Сбросить",
   "confirm.takeTitle": "Применить настройки дубля?",
   "confirm.takeText": "Текущие параметры обработки будут заменены теми, с которыми записан дубль {stamp}. Устройства и профиль тоже переключатся.",
   "confirm.takeApply": "Применить",
-
   "sound.powerOff": "Выключить обработку",
   "sound.powerOn": "Включить обработку",
   "sound.powerNoMic": "Микрофон не найден — выберите его в разделе «Устройства»",
@@ -213,7 +199,6 @@
   "sound.openFolder": "Открыть папку",
   "sound.deleteTake": "Удалить запись",
   "sound.noMicFound": "Микрофон не найден",
-
   "settings.search": "Поиск по настройкам",
   "settings.advanced": "Дополнительно",
   "settings.presets": "Пресеты",
@@ -233,7 +218,6 @@
   "settings.theme.system": "Как в системе",
   "settings.theme.dark": "Тёмная",
   "settings.theme.light": "Светлая",
-
   "settings.voice.onlyMine": "Оставлять только мой голос",
   "settings.voice.onlyMineHint": "VoxLock пропускает только ваш голос. Выключено — остаётся обычный шумодав: легче процессору и профиль не нужен.",
   "settings.voice.speakerCheck": "Проверять говорящего",
@@ -261,7 +245,6 @@
   "settings.voice.deessHint": "Приглушает только полосу 5 кГц и выше, когда «с» и «ш» вырываются вперёд. Позволяет поднимать разборчивость и воздух без свиста.",
   "settings.voice.deessAmount": "Глубина",
   "settings.voice.deessAmountHint": "Насколько сильно де-эссер может придавить шипящие. 6 дБ хватает для большинства голосов; больше — если запись «цыкает».",
-
   "settings.clean.leveling": "Усиление тихого микрофона",
   "settings.clean.levelingHint": "Поднимает тихий микрофон до −26 dBFS перед моделью. Влияет на разборчивость и ровность громкости.",
   "settings.clean.inputGain": "Усиление входа",
@@ -313,7 +296,6 @@
   "settings.clean.loudnessOff": "Выключено",
   "settings.clean.loudnessStream": "−16 LUFS · стрим",
   "settings.clean.loudnessCall": "−20 LUFS · звонки",
-
   "settings.latency.bufferAuto": "Буфер автоматически",
   "settings.latency.bufferAutoHint": "Подбирает минимальный буфер без пропусков: при пропуске +20 мс, после 90 с без пропусков −10 мс. Значение запоминается между запусками.",
   "settings.latency.buffer": "Буфер",
@@ -333,14 +315,12 @@
   "settings.latency.recommended": "рекомендуется",
   "settings.latency.why": "До четырёх потоков время обработки падает почти вдвое, выше — почти не помогает, но забирает ядра у игры.",
   "settings.latency.slow": "На блоке {block} мс с {threads} поток(ами) модель не успевает за реальным временем — звук будет рваться. Поставьте 60 мс или больше потоков.",
-
   "settings.control.mute": "Выключение микрофона",
   "settings.control.muteHint": "Глобальное сочетание работает из любой программы. «Удержание» — пока клавиша нажата, микрофон включён (push-to-talk). Escape отменяет запись сочетания.",
   "settings.control.capture": "Нажмите сочетание…",
   "settings.control.mode": "Режим клавиши",
   "settings.control.toggle": "Переключение",
   "settings.control.hold": "Удержание (PTT)",
-
   "settings.diag.leveler": "Усиление выравнивания",
   "settings.diag.threads": "Потоков модели",
   "settings.diag.resets": "Сбросов модели",
@@ -370,7 +350,6 @@
   "settings.diag.thresholdHint": "Сравнивает последние A/B-записи с профилем и предлагает порог для «Приглушать чужой голос». Нужны хотя бы одна-две записи.",
   "settings.diag.thresholdResult": "По {takes} дублям: p5 {p5} %, медиана {median} %. Рекомендуемый порог — {threshold} %.",
   "settings.diag.thresholdApply": "Применить",
-
   "settings.app.autostart": "Запускать с Windows",
   "settings.app.version": "Версия приложения",
   "settings.app.versionHint": "Установлена версия {version}. Проверка идёт на github.com по нажатию.",
@@ -393,12 +372,32 @@
   "settings.app.import": "Импорт настроек",
   "settings.app.reset": "Сбросить настройки",
   "settings.app.exportHint": "Экспорт сохраняет файл настроек в выбранное место; импорт открывает его и перезапускает обработку, если она включена.",
-
   "cable.downloading": "Скачиваю драйвер…",
   "cable.installer": "Установщик запущен. Нажмите «Install Driver» и разрешите установку.",
   "cable.ready": "Готово: виртуальный микрофон найден.",
   "cable.timeout": "Установка не завершена. Закройте установщик и запустите ещё раз; если драйвер уже встал, перезагрузите компьютер.",
-
   "profile.meta": "{score} / 100 · речь {speech}% · SNR {snr} дБ",
-  "profile.snr": "SNR {snr} дБ"
+  "profile.snr": "SNR {snr} дБ",
+  "common.loading": "Загружаю…",
+  "common.retry": "Повторить",
+  "toast.abBusyTitle": "Идёт запись A/B",
+  "toast.abBusyText": "Дождитесь конца или остановите запись — перезапуск прервёт дубль.",
+  "toast.micBusyTitle": "Микрофон занят",
+  "toast.micBusyText": "Дождитесь конца проверки или записи профиля.",
+  "toast.abStoppedTitle": "Запись A/B остановлена",
+  "toast.abStoppedText": "Дубль не сохранён.",
+  "toast.noteTitle": "Предупреждение",
+  "error.abWriteFailed": "Не удалось записать дубль A/B",
+  "error.cleanRecordFailed": "Не удалось записать длинную запись",
+  "sound.abStopCountdown": "Остановить запись · {s} с",
+  "sound.abStopHint": "Нажмите кнопку ещё раз, чтобы остановить запись.",
+  "sound.deleteTakeConfirm": "Нажмите ещё раз, чтобы удалить дубль",
+  "settings.presetsDeleteConfirm": "Нажмите ещё раз, чтобы удалить пресет",
+  "settings.control.badKey": "Это сочетание не поддерживается — нужна буква, цифра или F1–F24 с Ctrl/Alt/Shift.",
+  "window.hideToTray": "Свернуть в трей",
+  "toast.busyTitle": "Идёт запись",
+  "toast.busyText": "Дождитесь окончания записи или проверки микрофона.",
+  "toast.reconnectText": "Дождитесь, пока устройства переподключатся.",
+  "toast.cleanBusyTitle": "Идёт длинная запись",
+  "toast.cleanBusyText": "Остановите её кнопкой в разделе «Длинная запись»."
 }
