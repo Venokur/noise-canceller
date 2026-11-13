@@ -41,6 +41,34 @@ pub struct Profile {
     pub quality: Quality,
 }
 
+/// Sidecar written next to every profile: which microphone it was recorded on
+/// and when. Without it a profile recorded on a headset was silently applied to
+/// a desk microphone, where VoxLock stops recognising the same voice.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMeta {
+    pub device: String,
+    pub created: u64,
+    pub score: i32,
+    pub snr_db: f32,
+    pub app_version: String,
+}
+
+fn meta_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.with_extension("json")
+}
+
+pub fn read_meta(path: &std::path::Path) -> Option<ProfileMeta> {
+    let text = std::fs::read_to_string(meta_path(path)).ok()?;
+    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+}
+
+fn write_meta(path: &std::path::Path, meta: &ProfileMeta) {
+    if let Ok(text) = serde_json::to_string_pretty(meta) {
+        let _ = std::fs::write(meta_path(path), text);
+    }
+}
+
 /// Records a short take and grades it without saving a profile. Used by the
 /// "check microphone" button: the user speaks once and sees whether the level
 /// and the signal-to-noise ratio are sane.
@@ -188,6 +216,17 @@ pub fn record(input_name: Option<&str>, seconds: f32, lang: Lang) -> Result<Prof
     }
     writer.finalize()?;
 
+    write_meta(
+        &path,
+        &ProfileMeta {
+            device: input_name.unwrap_or("").to_string(),
+            created: stamp,
+            score: quality.score,
+            snr_db: quality.snr_db,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+    );
+
     Ok(Profile {
         path: path.to_string_lossy().to_string(),
         quality,
@@ -282,6 +321,9 @@ pub fn delete(path: &str) -> Result<()> {
     if !p.starts_with(paths::profiles_dir()) {
         return Err(anyhow!("refusing to delete outside the profiles folder"));
     }
-    std::fs::remove_file(p)?;
+    std::fs::remove_file(&p)?;
+    // the sidecar is not a profile on its own, but leaving it behind would
+    // orphan a device/date record after every deletion
+    let _ = std::fs::remove_file(meta_path(&p));
     Ok(())
 }

@@ -124,6 +124,7 @@ pub(crate) fn run() {
             crate::commands::default_devices,
             crate::commands::system_info,
             crate::commands::profile_scores,
+            crate::commands::profile_meta,
             crate::commands::ab_level_delta,
             crate::commands::ab_metrics,
             crate::commands::prune_recordings,

@@ -139,6 +139,8 @@
   "sound.deleteProfile": "Удалить профиль",
   "sound.deleteProfileConfirm": "Нажмите ещё раз, чтобы удалить",
   "sound.profileWeak": "Профиль слабый: модель будет хуже узнавать голос. Запишите новый — 15 секунд в тишине.",
+  "sound.profileOtherMic": "Профиль записан на другом микрофоне ({device}) — модель может не узнать ваш голос. Запишите новый на этом микрофоне.",
+  "sound.profileRecordedOn": "Профиль записан на: {device}",
   "sound.autoProfile": "Выбирать лучший профиль автоматически",
   "sound.ab": "Проверка A/B",
   "sound.abRecord": "Записать A/B ({s} с)",

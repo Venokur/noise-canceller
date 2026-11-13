@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileMeta, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -312,6 +312,12 @@ const noiseStage = computed(() => {
           </div>
           <p v-if="profileWeak" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
             {{ t("sound.profileWeak") }}
+          </p>
+          <p v-if="profileMismatch" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
+            {{ t("sound.profileOtherMic", { device: profileInfo?.device ?? "" }) }}
+          </p>
+          <p v-else-if="profileInfo?.device" class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
+            {{ t("sound.profileRecordedOn", { device: profileInfo.device }) }}
           </p>
           <div class="mt-2.5 flex items-center gap-2.5 text-[12.5px] text-[var(--muted)]">
             <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />

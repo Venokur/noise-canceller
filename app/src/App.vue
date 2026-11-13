@@ -76,12 +76,15 @@ const {
   activeProfileScore,
   profileWeak,
   profileMeta,
+  profileInfo,
+  profileMismatch,
   refreshProfiles,
   pickProfile,
   deleteProfile,
 } = useProfiles({
   settings,
   error,
+  inputDevice: selectedInput,
   restart: async () => {
     if (!running.value) return;
     const test = testMode.value;
@@ -895,6 +898,8 @@ provide(APP_CONTEXT, {
   probing,
   profileMeta,
   profileOptions,
+  profileInfo,
+  profileMismatch,
   profileWeak,
   readouts,
   reconnecting,

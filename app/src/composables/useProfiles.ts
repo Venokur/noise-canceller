@@ -3,24 +3,43 @@
 // Split out of App.vue without changing behaviour. The only engine coupling is
 // switching the profile of a running engine, so that comes in as `restart`.
 
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
 import { shortName } from "../format";
 import { t } from "../i18n";
-import type { Quality, Settings, ProfileScore } from "../types";
+import type { Quality, Settings, ProfileMeta, ProfileScore } from "../types";
 
 interface ProfileDeps {
   settings: Ref<Settings | null>;
   error: Ref<string>;
+  /// the microphone currently selected, to warn when the profile was recorded
+  /// on a different one
+  inputDevice: Ref<string>;
   restart: () => Promise<void>;
 }
 
-export function useProfiles({ settings, error, restart }: ProfileDeps) {
+export function useProfiles({ settings, error, inputDevice, restart }: ProfileDeps) {
   const profiles = ref<string[]>([]);
   const selectedProfile = ref("");
   const profileQuality = ref<Quality | null>(null);
   const profileScores = ref<ProfileScore[]>([]);
+  const profileInfo = ref<ProfileMeta | null>(null);
+
+  async function loadProfileMeta() {
+    const path = selectedProfile.value;
+    if (!path) {
+      profileInfo.value = null;
+      return;
+    }
+    try {
+      profileInfo.value = await invoke<ProfileMeta | null>("profile_meta", { path });
+    } catch {
+      profileInfo.value = null;
+    }
+  }
+
+  watch(selectedProfile, () => void loadProfileMeta());
 
   async function refreshProfiles() {
     profiles.value = await invoke<string[]>("list_profiles");
@@ -33,15 +52,13 @@ export function useProfiles({ settings, error, restart }: ProfileDeps) {
     if (settings.value?.autoProfile && best) {
       selectedProfile.value = best.path;
       settings.value.profilePath = best.path;
-      return;
-    }
-    if (!selectedProfile.value && settings.value?.profilePath) {
+    } else if (!selectedProfile.value && settings.value?.profilePath) {
       selectedProfile.value = settings.value.profilePath;
-    }
-    if (!selectedProfile.value && profiles.value.length) {
+    } else if (!selectedProfile.value && profiles.value.length) {
       selectedProfile.value = profiles.value[0];
       if (settings.value) settings.value.profilePath = profiles.value[0];
     }
+    await loadProfileMeta();
   }
 
   const profileOptions = computed(() =>
@@ -60,6 +77,15 @@ export function useProfiles({ settings, error, restart }: ProfileDeps) {
   const profileWeak = computed(
     () => !!activeProfileScore.value && activeProfileScore.value.score < 55,
   );
+
+  /// A profile recorded on a headset does not match a desk microphone: the
+  /// model stops recognising the same voice, and the user blames the app.
+  const profileMismatch = computed(() => {
+    const info = profileInfo.value;
+    const device = inputDevice.value;
+    if (!info?.device || !device) return false;
+    return info.device !== device;
+  });
 
   /// Score and SNR of the profile in use, shown next to the section title.
   /// The score already sits in the picker label, so only the SNR is repeated
@@ -106,6 +132,9 @@ export function useProfiles({ settings, error, restart }: ProfileDeps) {
     activeProfileScore,
     profileWeak,
     profileMeta,
+    profileInfo,
+    profileMismatch,
+    loadProfileMeta,
     refreshProfiles,
     pickProfile,
     deleteProfile,

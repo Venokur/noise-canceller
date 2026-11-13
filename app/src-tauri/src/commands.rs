@@ -645,6 +645,11 @@ pub(crate) fn system_info(chunk_ms: f32) -> SystemInfo {
 }
 
 #[tauri::command(async)]
+pub(crate) fn profile_meta(path: String) -> Option<noise_canceller_core::profile::ProfileMeta> {
+    noise_canceller_core::profile::read_meta(std::path::Path::new(&path))
+}
+
+#[tauri::command(async)]
 pub(crate) fn profile_scores() -> Vec<ProfileScoreDto> {
     noise_canceller_core::profile::list()
         .into_iter()

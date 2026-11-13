@@ -110,6 +110,15 @@ export interface Profile {
   quality: Quality;
 }
 
+/** Sidecar of a profile: which microphone and when it was recorded. */
+export interface ProfileMeta {
+  device: string;
+  created: number;
+  score: number;
+  snrDb: number;
+  appVersion: string;
+}
+
 export interface AbStatus {
   running: boolean;
   progress: number;
