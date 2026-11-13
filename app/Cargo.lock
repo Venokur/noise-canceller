@@ -2326,6 +2326,7 @@ dependencies = [
  "anyhow",
  "hound",
  "noise-canceller-core",
+ "rtrb",
  "serde_json",
 ]
 

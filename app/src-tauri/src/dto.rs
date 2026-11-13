@@ -33,6 +33,7 @@ pub(crate) struct StatsDto {
     pub(crate) leveler_gain_db: f32,
     pub(crate) slew_ppm: f32,
     pub(crate) threads: u16,
+    pub(crate) speaker_confidence: f32,
     pub(crate) healthy: bool,
 }
 
@@ -63,6 +64,7 @@ impl Default for StatsDto {
             leveler_gain_db: 0.0,
             slew_ppm: 0.0,
             threads: 0,
+            speaker_confidence: -1.0,
             healthy: false,
         }
     }
@@ -94,6 +96,7 @@ impl From<Stats> for StatsDto {
             leveler_gain_db: s.leveler_gain_db,
             slew_ppm: s.slew_ppm,
             threads: s.threads,
+            speaker_confidence: s.speaker_confidence,
             healthy: s.healthy,
         }
     }

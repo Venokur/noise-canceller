@@ -177,6 +177,7 @@ pub(super) struct Processor {
     block: Vec<f32>,
     input_voice: InputVoice,
     input_filter: InputFilter,
+    speaker_in: Option<rtrb::Producer<f32>>,
     auto: AutoBuffer,
     max_suppression: f32,
     analyzer: Spectrum,
@@ -215,6 +216,7 @@ impl Processor {
         buffer_ms: f32,
         learned_buffer_ms: f32,
         saved_gain_db: f32,
+        speaker_in: Option<rtrb::Producer<f32>>,
     ) -> Self {
         let chunk_samples = super::block_samples(settings.chunk_ms);
         let chunk_ms = super::block_ms(chunk_samples);
@@ -242,6 +244,7 @@ impl Processor {
             block: vec![0.0f32; chunk_samples],
             input_voice: InputVoice::new(),
             input_filter: InputFilter::new(MODEL_RATE as f32),
+            speaker_in,
             auto: AutoBuffer {
                 enabled: settings.buffer_auto,
                 ms: buffer_ms,
@@ -302,6 +305,13 @@ impl Processor {
             // DC and subsonic rumble never reach the leveler or the model: a
             // desk thump used to lift the gain and clip the model input.
             self.input_filter.process(&mut self.block);
+            if let Some(producer) = self.speaker_in.as_mut() {
+                // best effort: the guard is diagnostic, a full ring must never
+                // hold up the audio path
+                for sample in self.block.iter() {
+                    let _ = producer.push(*sample);
+                }
+            }
             let in_voice = self.input_voice.update(&self.block);
 
             // silence costs nothing: skip the model and emit a clean zero block

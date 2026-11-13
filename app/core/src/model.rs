@@ -45,6 +45,14 @@ struct OnlineConfig {
 }
 
 #[repr(C)]
+struct SpeakerEmbeddingConfig {
+    model: *const c_char,
+    num_threads: i32,
+    debug: i32,
+    provider: *const c_char,
+}
+
+#[repr(C)]
 struct DenoisedAudio {
     samples: *const f32,
     n: i32,
@@ -96,6 +104,17 @@ type VadDetectedFn = unsafe extern "C" fn(*const c_void) -> i32;
 type VadResetFn = unsafe extern "C" fn(*const c_void);
 type DenoiserResetFn = unsafe extern "C" fn(*const c_void);
 
+type SpkCreateFn = unsafe extern "C" fn(*const SpeakerEmbeddingConfig) -> *const c_void;
+type SpkDestroyFn = unsafe extern "C" fn(*const c_void);
+type SpkDimFn = unsafe extern "C" fn(*const c_void) -> i32;
+type SpkStreamFn = unsafe extern "C" fn(*const c_void) -> *const c_void;
+type SpkReadyFn = unsafe extern "C" fn(*const c_void, *const c_void) -> i32;
+type SpkComputeFn = unsafe extern "C" fn(*const c_void, *const c_void) -> *const f32;
+type SpkFreeFn = unsafe extern "C" fn(*const f32);
+type StreamAcceptFn = unsafe extern "C" fn(*const c_void, i32, *const f32, i32);
+type StreamFinishFn = unsafe extern "C" fn(*const c_void);
+type StreamDestroyFn = unsafe extern "C" fn(*const c_void);
+
 struct Api {
     _lib: Library,
     create: CreateFn,
@@ -111,6 +130,16 @@ struct Api {
     vad_detected: VadDetectedFn,
     vad_reset: VadResetFn,
     denoiser_reset: DenoiserResetFn,
+    spk_create: SpkCreateFn,
+    spk_destroy: SpkDestroyFn,
+    spk_dim: SpkDimFn,
+    spk_stream: SpkStreamFn,
+    spk_ready: SpkReadyFn,
+    spk_compute: SpkComputeFn,
+    spk_free: SpkFreeFn,
+    stream_accept: StreamAcceptFn,
+    stream_finish: StreamFinishFn,
+    stream_destroy: StreamDestroyFn,
 }
 
 static API: OnceLock<Api> = OnceLock::new();
@@ -151,6 +180,16 @@ fn api() -> Result<&'static Api> {
         let vad_detected = *lib.get(b"SherpaOnnxVoiceActivityDetectorDetected\0")?;
         let vad_reset = *lib.get(b"SherpaOnnxVoiceActivityDetectorReset\0")?;
         let denoiser_reset = *lib.get(b"SherpaOnnxOnlineSpeechDenoiserReset\0")?;
+        let spk_create = *lib.get(b"SherpaOnnxCreateSpeakerEmbeddingExtractor\0")?;
+        let spk_destroy = *lib.get(b"SherpaOnnxDestroySpeakerEmbeddingExtractor\0")?;
+        let spk_dim = *lib.get(b"SherpaOnnxSpeakerEmbeddingExtractorDim\0")?;
+        let spk_stream = *lib.get(b"SherpaOnnxSpeakerEmbeddingExtractorCreateStream\0")?;
+        let spk_ready = *lib.get(b"SherpaOnnxSpeakerEmbeddingExtractorIsReady\0")?;
+        let spk_compute = *lib.get(b"SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding\0")?;
+        let spk_free = *lib.get(b"SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding\0")?;
+        let stream_accept = *lib.get(b"SherpaOnnxOnlineStreamAcceptWaveform\0")?;
+        let stream_finish = *lib.get(b"SherpaOnnxOnlineStreamInputFinished\0")?;
+        let stream_destroy = *lib.get(b"SherpaOnnxDestroyOnlineStream\0")?;
 
         let api = Api {
             _lib: lib,
@@ -167,6 +206,16 @@ fn api() -> Result<&'static Api> {
             vad_detected,
             vad_reset,
             denoiser_reset,
+            spk_create,
+            spk_destroy,
+            spk_dim,
+            spk_stream,
+            spk_ready,
+            spk_compute,
+            spk_free,
+            stream_accept,
+            stream_finish,
+            stream_destroy,
         };
 
         let _ = API.set(api);
@@ -530,6 +579,88 @@ impl Drop for Denoiser {
 /// Silero voice activity detector from the same sherpa-onnx library.
 /// It tells whether the block contains speech, which is what the output gate
 /// and the level control should follow instead of a plain level threshold.
+/// Speaker embedding through the sherpa C API.
+///
+/// Reuses the same `models/voxlock/enroll.onnx` that VoxLock already ships
+/// (Apache-2.0, listed in `MODEL_LICENSES.json`): a separate verification model
+/// is only needed if this file turns out not to be a standalone extractor.
+pub struct SpeakerEmbedder {
+    handle: *const c_void,
+    dim: usize,
+}
+
+unsafe impl Send for SpeakerEmbedder {}
+
+impl SpeakerEmbedder {
+    pub fn new(model: &Path, threads: u16) -> Result<Self> {
+        let api = api()?;
+        let model_c = CString::new(
+            crate::paths::native_safe(model)
+                .to_string_lossy()
+                .as_bytes(),
+        )?;
+        let config = SpeakerEmbeddingConfig {
+            model: model_c.as_ptr(),
+            num_threads: threads.max(1) as i32,
+            debug: 0,
+            provider: ptr::null(),
+        };
+        let handle = unsafe { (api.spk_create)(&config) };
+        if handle.is_null() {
+            return Err(anyhow!("SpeakerEmbeddingExtractor::create returned NULL"));
+        }
+        let dim = unsafe { (api.spk_dim)(handle) }.max(0) as usize;
+        if dim == 0 {
+            unsafe { (api.spk_destroy)(handle) };
+            return Err(anyhow!("speaker embedding model reports dimension 0"));
+        }
+        Ok(Self { handle, dim })
+    }
+
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+
+    /// One embedding for the whole slice. A 1.5-2 s window is enough for
+    /// ECAPA-style models; shorter audio is rejected instead of embedded.
+    pub fn embed(&mut self, samples: &[f32], rate: u32) -> Result<Vec<f32>> {
+        let api = api()?;
+        if samples.is_empty() {
+            return Err(anyhow!("no samples to embed"));
+        }
+        let stream = unsafe { (api.spk_stream)(self.handle) };
+        if stream.is_null() {
+            return Err(anyhow!("speaker embedding stream is NULL"));
+        }
+
+        unsafe {
+            (api.stream_accept)(stream, rate as i32, samples.as_ptr(), samples.len() as i32);
+            (api.stream_finish)(stream);
+            if (api.spk_ready)(self.handle, stream) == 0 {
+                (api.stream_destroy)(stream);
+                return Err(anyhow!("not enough audio for a speaker embedding"));
+            }
+            let ptr = (api.spk_compute)(self.handle, stream);
+            if ptr.is_null() {
+                (api.stream_destroy)(stream);
+                return Err(anyhow!("speaker embedding is NULL"));
+            }
+            let vector = std::slice::from_raw_parts(ptr, self.dim).to_vec();
+            (api.spk_free)(ptr);
+            (api.stream_destroy)(stream);
+            Ok(vector)
+        }
+    }
+}
+
+impl Drop for SpeakerEmbedder {
+    fn drop(&mut self) {
+        if let Ok(api) = api() {
+            unsafe { (api.spk_destroy)(self.handle) };
+        }
+    }
+}
+
 pub struct Vad {
     handle: *const c_void,
     pending: Vec<f32>,

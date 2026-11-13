@@ -89,6 +89,9 @@ pub struct Stats {
     pub slew_ppm: f32,
     /// threads the model actually started with (auto or manual)
     pub threads: u16,
+    /// 0..1 similarity of the last window to the enrolled profile; negative
+    /// means "unknown" (no profile, silence, or the model is off)
+    pub speaker_confidence: f32,
     /// false when the processor thread died (panic) while the streams live on
     pub healthy: bool,
 }
@@ -137,6 +140,8 @@ struct Shared {
     capture_drops: Arc<AtomicU32>,
     /// capture channel: -1 mixes all channels, 0.. picks one
     input_channel: Arc<AtomicI32>,
+    /// similarity of the live voice to the profile, f32 bits; negative = unknown
+    speaker_confidence: Arc<AtomicU32>,
     /// frames the output device asked for in the last callback
     callback_frames: Arc<AtomicU32>,
     /// blocks where the model returned NaN/Inf and were zeroed
@@ -181,6 +186,7 @@ impl Shared {
             pulled: Arc::new(AtomicU64::new(0)),
             capture_drops: Arc::new(AtomicU32::new(0)),
             input_channel: Arc::new(AtomicI32::new(settings.input_channel)),
+            speaker_confidence: Arc::new(AtomicU32::new((-1.0f32).to_bits())),
             callback_frames: Arc::new(AtomicU32::new(0)),
             bad_blocks: Arc::new(AtomicU32::new(0)),
         }
@@ -266,6 +272,7 @@ pub struct Engine {
     in_channels: u16,
     out_rate: u32,
     threads: u16,
+    speaker: Option<crate::speaker::GuardHandle>,
 }
 
 impl Engine {
@@ -351,6 +358,28 @@ impl Engine {
             Ordering::Relaxed,
         );
 
+        // Speaker confidence: a second opinion about who is talking. The model
+        // is optional; without it (or without a profile) the meter stays "—".
+        let mut speaker_in = None;
+        let mut speaker = None;
+        if settings.speaker_check && settings.voice_isolation {
+            if let Some(profile) = voice.as_ref().filter(|path| path.exists()) {
+                if paths::speaker_model().exists() {
+                    let (producer, consumer) = rtrb::RingBuffer::<f32>::new(16_000 * 4);
+                    speaker = Some(crate::speaker::spawn(
+                        paths::speaker_model(),
+                        profile.clone(),
+                        consumer,
+                        shared.speaker_confidence.clone(),
+                        shared.running.clone(),
+                    ));
+                    speaker_in = Some(producer);
+                } else {
+                    crate::log::info("speaker: campplus_en.onnx is missing, confidence is off");
+                }
+            }
+        }
+
         // the auto buffer is learned between sessions: start from the stored
         // value (`data/state.json`), otherwise from the manual one; the ring is
         // prefilled to it
@@ -400,6 +429,7 @@ impl Engine {
             buffer_ms,
             learned_buffer_ms,
             learned.leveler_gain_db,
+            speaker_in,
         );
         let processor = thread::Builder::new()
             .name("voxlock-processor".into())
@@ -438,6 +468,7 @@ impl Engine {
             in_channels,
             out_rate,
             threads,
+            speaker,
         })
     }
 
@@ -513,6 +544,9 @@ impl Engine {
             leveler_gain_db: f32::from_bits(self.shared.leveler_gain.load(Ordering::Relaxed)),
             slew_ppm: f32::from_bits(self.shared.slew_ppm.load(Ordering::Relaxed)),
             threads: self.threads,
+            speaker_confidence: f32::from_bits(
+                self.shared.speaker_confidence.load(Ordering::Relaxed),
+            ),
             healthy: self.healthy(),
         }
     }
@@ -621,6 +655,9 @@ impl Engine {
         ));
         self.input.take();
         self.output.take();
+        if let Some(mut speaker) = self.speaker.take() {
+            speaker.stop();
+        }
         if let Some(handle) = self.processor.take() {
             let _ = handle.join();
         }
@@ -998,6 +1035,7 @@ mod tests {
             50.0,
             50.0,
             0.0,
+            None,
         );
 
         let (mut input, input_cons) = rtrb::RingBuffer::<f32>::new(chunk * 16);

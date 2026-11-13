@@ -13,6 +13,7 @@
       "required": false,
       "note": "optional air stage: the engine logs and continues when it is absent"
     },
+    { "source": "models/speaker/campplus.onnx", "dest": "models/speaker/campplus.onnx" },
     { "source": "native/sherpa-onnx-c-api.dll", "dest": "native/sherpa-onnx-c-api.dll" },
     { "source": "native/onnxruntime.dll", "dest": "native/onnxruntime.dll" }
   ]

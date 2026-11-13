@@ -99,6 +99,9 @@ pub struct Settings {
     pub vad_gate: bool,
     /// keep only the enrolled speaker; off = plain noise suppression
     pub voice_isolation: bool,
+    /// embed the microphone once a second and compare it to the profile; the
+    /// figure is diagnostic and does not duck anything yet
+    pub speaker_check: bool,
 
     pub high_pass_enabled: bool,
     pub high_pass_hz: f32,
@@ -190,6 +193,7 @@ impl Default for Settings {
             residual_mix: 1.0,
             vad_gate: true,
             voice_isolation: true,
+            speaker_check: true,
 
             high_pass_enabled: true,
             high_pass_hz: 100.0,

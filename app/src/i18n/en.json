@@ -193,6 +193,8 @@
 
   "settings.voice.onlyMine": "Keep only my voice",
   "settings.voice.onlyMineHint": "VoxLock lets only your voice through. Off — the plain denoiser stays: easier on the CPU and no profile needed.",
+  "settings.voice.speakerCheck": "Check the speaker",
+  "settings.voice.speakerCheckHint": "Once a second, compares the voice with the profile and shows the similarity in Diagnostics. It only measures for now — the output is not ducked. Costs a little CPU and a 28 MB model.",
   "settings.voice.strength": "Isolation strength",
   "settings.voice.strengthHint": "How much of the model's cleaned signal reaches the output. 1.00 is the strongest isolation; below that it sounds more natural but the background is louder.",
   "settings.voice.maxSuppression": "Suppression limit",
@@ -296,6 +298,8 @@
   "settings.diag.captureDropsHint": "Microphone samples lost to an overflowing input ring. Zero is normal.",
   "settings.diag.inputPeak": "Input peak",
   "settings.diag.outputPeak": "Output peak",
+  "settings.diag.speaker": "Profile similarity",
+  "settings.diag.speakerHint": "How close the microphone voice is to the recorded profile (0–100 %). Computed once a second over a 2-second window. It only measures for now — the output is not ducked. “—” means silence, no profile, or the check is off.",
   "settings.diag.clock": "Clock drift",
   "settings.diag.clockHint": "Adaptation to the drift between the microphone and output clocks. 0 ppm means the converter runs exactly and neither tempo nor timbre changes.",
   "settings.diag.log": "Open the log",

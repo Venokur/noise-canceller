@@ -55,6 +55,7 @@ const stats = ref<Stats>({
   levelerGainDb: 0,
   slewPpm: 0,
   threads: 0,
+  speakerConfidence: -1,
   healthy: false,
   suppressionDb: 0,
   speech: false,

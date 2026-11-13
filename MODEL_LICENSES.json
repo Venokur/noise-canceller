@@ -40,6 +40,13 @@
       "source": "https://huggingface.co/TigreGotico/audiosronnx-novasr"
     },
     {
+      "name": "3D-Speaker CAM++ zh/en advanced (speaker confidence)",
+      "files": ["app/models/speaker/campplus.onnx"],
+      "license": "Apache-2.0",
+      "notice": "licenses/3dspeaker-LICENSE.txt",
+      "source": "https://github.com/modelscope/3D-Speaker"
+    },
+    {
       "name": "UL-UNAS DNS3 (weights compiled into ul_unas_rs)",
       "files": [],
       "license": "MIT",

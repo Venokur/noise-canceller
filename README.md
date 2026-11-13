@@ -113,7 +113,9 @@ git push origin v0.2.1
 portable\
   noise-canceller.exe
   models\voxlock\     enroll.onnx, chunk_int8.onnx
-  models\denoise\     gtcrn.onnx, silero_vad.onnx
+  models\denoise\     gtcrn.onnx, dpdfnet4.onnx, silero_vad.onnx
+  models\bwe\         novasr.onnx
+  models\speaker\     campplus.onnx
   native\             sherpa-onnx-c-api.dll, onnxruntime.dll
   licenses\           тексты лицензий моделей, DLL и иконок
   LICENSE.txt         MIT для самой программы
@@ -174,6 +176,7 @@ mic 48k → 16k → выравнивание уровня → пиковый о�
 - GTCRN — MIT © Rong Xiaobin;
 - Silero VAD — MIT © Silero Team;
 - NovaSR («Воздух») — Apache-2.0 © Yatharth Sharma (с NOTICE);
+- 3D-Speaker CAM++ (проверка говорящего) — Apache-2.0 © ModelScope;
 - sherpa-onnx — Apache-2.0 © k2-fsa;
 - ONNX Runtime — MIT © Microsoft;
 - cpal — Apache-2.0; Tauri — MIT/Apache-2.0; Vue — MIT; Tailwind — MIT;

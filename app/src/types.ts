@@ -24,6 +24,7 @@ export interface Settings {
   residualMix: number;
   vadGate: boolean;
   voiceIsolation: boolean;
+  speakerCheck: boolean;
   highPassEnabled: boolean;
   highPassHz: number;
   toneEnabled: boolean;
@@ -88,6 +89,7 @@ export interface Stats {
   levelerGainDb: number;
   slewPpm: number;
   threads: number;
+  speakerConfidence: number;
   healthy: boolean;
 }
 

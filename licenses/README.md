@@ -15,6 +15,7 @@
 | `silero-vad-LICENSE.txt` | Silero VAD © Silero Team | MIT |
 | `novasr-LICENSE.txt` | NovaSR © Yatharth Sharma | Apache-2.0 |
 | `novasr-NOTICE.txt` | NovaSR © Yatharth Sharma | Apache-2.0, §4(d) |
+| `3dspeaker-LICENSE.txt` | 3D-Speaker CAM++ © ModelScope | Apache-2.0 |
 | `onnxruntime-LICENSE.txt` | ONNX Runtime © Microsoft | MIT |
 | `lucide-LICENSE.txt` | Lucide © Lucide Icons and Contributors | ISC |
 | `rfd-LICENSE.txt` | rfd © Poly | MIT |

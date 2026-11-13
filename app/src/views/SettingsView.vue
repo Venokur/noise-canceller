@@ -76,6 +76,15 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               </div>
               <div v-if="settings.voiceIsolation" :class="settingRow">
                 <AppLabel
+                  :text="t('settings.voice.speakerCheck')"
+                  :hint="t('settings.voice.speakerCheckHint')"
+                />
+                <div class="flex justify-end">
+                  <AppSwitch v-model="settings.speakerCheck" @update:model-value="() => restartSoon()" />
+                </div>
+              </div>
+              <div v-if="settings.voiceIsolation" :class="settingRow">
+                <AppLabel
                   :text="t('settings.voice.strength')"
                   :hint="t('settings.voice.strengthHint')"
                 />
@@ -500,6 +509,14 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 <span>{{ t("settings.diag.outputPeak") }}</span>
                 <span :class="stats.outputPeakDb > -1 ? 'text-[var(--danger)]' : ''">
                   {{ stats.outputPeakDb > -100 ? stats.outputPeakDb.toFixed(0) + " " + u.db : "—" }}
+                </span>
+                <span :title="t('settings.diag.speakerHint')">{{ t("settings.diag.speaker") }}</span>
+                <span :class="stats.speakerConfidence >= 0 && stats.speakerConfidence < 0.5 ? 'text-[var(--danger)]' : ''">
+                  {{
+                    stats.speakerConfidence >= 0
+                      ? (stats.speakerConfidence * 100).toFixed(0) + " %"
+                      : "—"
+                  }}
                 </span>
                 <span :title="t('settings.diag.clockHint')">
                   {{ t("settings.diag.clock") }}

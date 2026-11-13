@@ -12,6 +12,7 @@ pub mod profile;
 pub mod recordings;
 pub mod resample;
 pub mod settings;
+pub mod speaker;
 pub mod spectrum;
 pub mod state;
 pub mod wav;

@@ -96,7 +96,7 @@ function Copy-Runtime {
     # with the build. The allow-list is the manifest, not a second list here.
     $allowed = @{}
     foreach ($file in $runtimeFiles) { $allowed[($file.dest -replace '/', '\')] = $true }
-    foreach ($dir in @("models\voxlock", "models\denoise", "models\bwe", "native")) {
+    foreach ($dir in @("models\voxlock", "models\denoise", "models\bwe", "models\speaker", "native")) {
         $full = Join-Path $Out $dir
         if (-not (Test-Path $full)) { continue }
         Get-ChildItem $full -File | ForEach-Object {

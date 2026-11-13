@@ -54,6 +54,7 @@ VB-CABLE — donationware: для личного и некоммерческог
 | DPDFNet4 | Apache-2.0 | текст |
 | Silero VAD | MIT | текст |
 | NovaSR | Apache-2.0 | текст + `novasr-NOTICE.txt` |
+| 3D-Speaker CAM++ | Apache-2.0 | текст |
 | UL-UNAS | MIT | текст |
 | sherpa-onnx | Apache-2.0 | текст |
 | ONNX Runtime | MIT | текст |

@@ -126,6 +126,15 @@ pub fn bwe_model() -> PathBuf {
         .join("novasr.onnx")
 }
 
+/// Speaker verification model: `models/speaker/campplus.onnx`.
+pub fn speaker_model() -> PathBuf {
+    denoise_dir()
+        .parent()
+        .map(|p| p.join("speaker"))
+        .unwrap_or_else(|| PathBuf::from("models").join("speaker"))
+        .join("campplus.onnx")
+}
+
 /// sherpa-onnx opens files with narrow CRT calls, so non-ASCII paths fail.
 /// Returns the 8.3 short form when needed.
 #[cfg(windows)]

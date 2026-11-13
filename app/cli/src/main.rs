@@ -33,6 +33,8 @@ fn main() -> Result<()> {
         "denoise" => denoise_file(),
         "replay" => replay_file(),
         "metrics" => metrics_file(),
+        "speaker" => speaker_check(),
+        "speaker-live" => speaker_live(),
         other => Err(anyhow!("unknown mode: {other} (use selftest|devices)")),
     }
 }
@@ -81,6 +83,100 @@ fn metrics_file() -> Result<()> {
             std::process::exit(1);
         }
     }
+    Ok(())
+}
+
+/// Speaker embeddings and cosine similarity for one or two wav files.
+///
+/// This is a research/diagnostic command: it proves whether the shipped
+/// `enroll.onnx` works as a standalone extractor before the app grows a live
+/// speaker-verification guard.
+fn speaker_check() -> Result<()> {
+    use noise_canceller_core::model::SpeakerEmbedder;
+
+    let files: Vec<String> = std::env::args()
+        .skip(2)
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+    if files.is_empty() {
+        return Err(anyhow!("usage: nc speaker <wav> [wav2]"));
+    }
+
+    let model = std::env::var("NC_SPEAKER_MODEL")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| paths::speaker_model());
+    println!("model: {}", model.display());
+    let mut embedder = SpeakerEmbedder::new(&model, 2)?;
+    println!("dim={}", embedder.dim());
+
+    let mut vectors = Vec::new();
+    for file in &files {
+        let vector = noise_canceller_core::speaker::embedding_from_wav(
+            &mut embedder,
+            std::path::Path::new(file),
+        )?;
+        let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+        println!("{file}: norm {norm:.3}");
+        vectors.push(vector);
+    }
+
+    if vectors.len() >= 2 {
+        let a = &vectors[0];
+        let b = &vectors[1];
+        let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+        let na = a.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let nb = b.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let cosine = dot / (na * nb).max(1e-9);
+        println!("cosine: {cosine:.4}");
+    }
+    Ok(())
+}
+
+fn speaker_live() -> Result<()> {
+    use noise_canceller_core::speaker;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let profile = std::env::args()
+        .nth(2)
+        .ok_or_else(|| anyhow!("usage: nc speaker-live <profile.wav> <sample.wav>"))?;
+    let sample = std::env::args()
+        .nth(3)
+        .ok_or_else(|| anyhow!("usage: nc speaker-live <profile.wav> <sample.wav>"))?;
+
+    let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(16_000 * 4);
+    let confidence = Arc::new(AtomicU32::new((-1.0f32).to_bits()));
+    let running = Arc::new(AtomicBool::new(true));
+    let mut guard = speaker::spawn(
+        paths::speaker_model(),
+        std::path::PathBuf::from(&profile),
+        consumer,
+        confidence.clone(),
+        running.clone(),
+    );
+
+    let (samples, rate) = wav::read_mono(std::path::Path::new(&sample))?;
+    let samples = if rate == 16_000 {
+        samples
+    } else {
+        let mut resampler = Resampler::new(rate, 16_000);
+        let mut out = vec![0.0f32; resampler.max_output(samples.len()) + 64];
+        let count = resampler.process(&samples, &mut out);
+        out.truncate(count);
+        out
+    };
+
+    for block in samples.chunks(1_024) {
+        for value in block {
+            let _ = producer.push(*value);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let value = f32::from_bits(confidence.load(Ordering::Relaxed));
+    println!("confidence: {value:.3}");
+    running.store(false, Ordering::Relaxed);
+    guard.stop();
     Ok(())
 }
 
