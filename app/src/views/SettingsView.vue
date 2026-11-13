@@ -141,6 +141,22 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   :label="t('settings.voice.presence')"
                   v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
               </div>
+              <div :class="settingRow">
+                <AppLabel
+                  :text="t('settings.voice.deess')"
+                  :hint="t('settings.voice.deessHint')"
+                />
+                <div class="flex justify-end"><AppSwitch v-model="settings.deessEnabled" /></div>
+              </div>
+              <div v-if="settings.deessEnabled" :class="settingRow">
+                <AppLabel
+                  :text="t('settings.voice.deessAmount')"
+                  :hint="t('settings.voice.deessAmountHint')"
+                />
+                <AppSlider
+                  :label="t('settings.voice.deessAmount')"
+                  v-model="settings.deessDb" :min="0" :max="12" :step="1" :format="(v) => `${v} ${u.db}`" />
+              </div>
             </div>
 
             <!-- clean -->
@@ -167,6 +183,20 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                     { value: 'ulunas', label: t('settings.clean.residualUlunas') },
                   ]"
                   @update:model-value="() => restartSoon()"
+                />
+              </div>
+              <div v-if="settings.residualDenoise !== 'off'" :class="settingRow">
+                <AppLabel
+                  :text="t('settings.clean.residualMix')"
+                  :hint="t('settings.clean.residualMixHint')"
+                />
+                <AppSlider
+                  :label="t('settings.clean.residualMix')"
+                  v-model="settings.residualMix"
+                  :min="0"
+                  :max="1"
+                  :step="0.05"
+                  :format="(v) => `${Math.round(v * 100)} %`"
                 />
               </div>
               <div :class="settingRow">

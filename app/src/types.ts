@@ -21,6 +21,7 @@ export interface Settings {
   inputLeveling: boolean;
   residualDenoise: string;
   residualOrder: string;
+  residualMix: number;
   vadGate: boolean;
   voiceIsolation: boolean;
   highPassEnabled: boolean;
@@ -28,6 +29,8 @@ export interface Settings {
   toneEnabled: boolean;
   toneLowDb: number;
   toneHighDb: number;
+  deessEnabled: boolean;
+  deessDb: number;
   airAmount: number;
   gateEnabled: boolean;
   gateThresholdDb: number;

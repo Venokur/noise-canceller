@@ -407,6 +407,84 @@ impl InputFilter {
     }
 }
 
+/// Split-band de-esser: only the 5 kHz-and-up part is ducked when it gets
+/// louder than `threshold_db`. The presence shelf lives at 3 kHz and the "air"
+/// stage above 8 kHz, so a loud `s` can outrun the voice; this keeps the top
+/// smooth without touching the body.
+pub struct DeEsser {
+    lp1: Biquad,
+    lp2: Biquad,
+    env: f64,
+    gain: f64,
+    threshold: f64,
+    floor: f64,
+    attack: f64,
+    release: f64,
+    smooth: f64,
+}
+
+impl DeEsser {
+    pub fn new() -> Self {
+        Self {
+            lp1: Biquad::default(),
+            lp2: Biquad::default(),
+            env: 0.0,
+            gain: 1.0,
+            threshold: 0.0,
+            floor: 0.0,
+            attack: 0.0,
+            release: 0.0,
+            smooth: 0.0,
+        }
+    }
+
+    pub fn configure(&mut self, sample_rate: f64, threshold_db: f64, max_db: f64) {
+        // 4th-order low-pass at 5 kHz. The high band is `x - low`, not a
+        // separate high-pass: subtracting the complementary band and adding it
+        // back keeps the phase intact, so only the sibilance moves.
+        self.lp1.low_pass(sample_rate as f32, 5_000.0, 0.5412);
+        self.lp2.low_pass(sample_rate as f32, 5_000.0, 1.3066);
+        self.threshold = 10f64.powf(threshold_db / 20.0);
+        self.floor = 10f64.powf(-max_db.max(0.0) / 20.0);
+        self.attack = 1.0 - (-1000.0 / 1.0 / sample_rate).exp();
+        self.release = 1.0 - (-1000.0 / 80.0 / sample_rate).exp();
+        self.smooth = 1.0 - (-1000.0 / 5.0 / sample_rate).exp();
+    }
+
+    pub fn process(&mut self, x: f64) -> f64 {
+        let low = self.lp2.process(self.lp1.process(x));
+        let high = x - low;
+        let abs = high.abs();
+        let coef = if abs > self.env {
+            self.attack
+        } else {
+            self.release
+        };
+        self.env += (abs - self.env) * coef;
+
+        let target = if self.threshold > 1e-9 && self.env > self.threshold {
+            (self.threshold / self.env).max(self.floor)
+        } else {
+            1.0
+        };
+        self.gain += (target - self.gain) * self.smooth;
+        low + high * self.gain
+    }
+
+    pub fn reset(&mut self) {
+        self.lp1.reset();
+        self.lp2.reset();
+        self.env = 0.0;
+        self.gain = 1.0;
+    }
+}
+
+impl Default for DeEsser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Limiter {
     gain: f64,
     ceiling: f64,
@@ -465,6 +543,9 @@ pub struct Chain {
     tone_high: Biquad,
     /// transient (keyboard click, knock) suppressor state
     click_gain: f64,
+    deess: DeEsser,
+    deess_enabled: bool,
+    deess_db: f32,
     click_hold: u32,
     click_attack: f64,
     click_release: f64,
@@ -518,6 +599,9 @@ impl Chain {
             safety: Limiter::default(),
             tone_low: Biquad::default(),
             tone_high: Biquad::default(),
+            deess: DeEsser::new(),
+            deess_enabled: false,
+            deess_db: 6.0,
             click_gain: 1.0,
             click_hold: 0,
             click_attack: 0.0,
@@ -553,6 +637,8 @@ impl Chain {
         self.tone_enabled = settings.tone_enabled;
         self.tone_low_db = settings.tone_low_db;
         self.tone_high_db = settings.tone_high_db;
+        self.deess_enabled = settings.deess_enabled;
+        self.deess_db = settings.deess_db;
         self.gate_enabled = settings.gate_enabled;
         self.agc_enabled = settings.agc_enabled;
         self.limiter_enabled = settings.limiter_enabled;
@@ -605,6 +691,10 @@ impl Chain {
                 Self::TONE_HIGH_HZ,
                 self.tone_high_db as f64,
             );
+        }
+        if self.deess_enabled {
+            self.deess
+                .configure(sample_rate as f64, -36.0, self.deess_db as f64);
         }
         // 30 ms crossfade between "no level change" and the AGC output
         self.agc_mix_coef = 1.0 - (-1000.0 / 30.0 / sample_rate as f64).exp();
@@ -699,6 +789,9 @@ impl Chain {
             }
             if self.tone_high_active {
                 x = self.tone_high.process(x);
+            }
+            if self.deess_enabled {
+                x = self.deess.process(x);
             }
             if self.limiter_enabled {
                 x = self.limiter.process(x, sr);
@@ -1078,6 +1171,31 @@ mod tests {
             rumble < voice - 18.0,
             "20 Hz was not removed: {rumble:.1} vs {voice:.1} dBFS"
         );
+    }
+
+    #[test]
+    fn the_deesser_ducks_sibilance_and_leaves_the_body() {
+        let mut chain = Chain::new();
+        let settings = Settings {
+            high_pass_enabled: false,
+            gate_enabled: false,
+            agc_enabled: false,
+            limiter_enabled: false,
+            tone_enabled: false,
+            deess_enabled: true,
+            deess_db: 6.0,
+            output_gain_db: 0.0,
+            ..Settings::default()
+        };
+        chain.configure(&settings, 48_000);
+
+        let sibilance = tone_change_db(&mut chain, 7_000.0);
+        let body = tone_change_db(&mut chain, 1_000.0);
+        assert!(
+            (-7.0..=-3.0).contains(&sibilance),
+            "7 kHz moved by {sibilance:.1} dB"
+        );
+        assert!(body.abs() < 0.5, "1 kHz moved by {body:.1} dB");
     }
 
     #[test]

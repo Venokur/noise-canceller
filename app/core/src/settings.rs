@@ -91,6 +91,10 @@ pub struct Settings {
     pub residual_denoise: String,
     /// "after" (VoxLock then denoise) or "before" (denoise then VoxLock)
     pub residual_order: String,
+    /// how much of the residual stage reaches the output, 0..1. 1.0 is the
+    /// shipped behaviour; lower values keep more quiet syllables at the cost of
+    /// leaving more noise.
+    pub residual_mix: f32,
     /// Silero VAD drives the output gate instead of a level threshold
     pub vad_gate: bool,
     /// keep only the enrolled speaker; off = plain noise suppression
@@ -105,6 +109,10 @@ pub struct Settings {
     pub tone_enabled: bool,
     pub tone_low_db: f32,
     pub tone_high_db: f32,
+    /// split-band de-esser after the tone shelves, before the limiter
+    pub deess_enabled: bool,
+    /// maximum reduction of the 5 kHz band, dB
+    pub deess_db: f32,
     /// 0..1 amount of synthesized "air" above 8 kHz. The 16 kHz model has no
     /// content there; 0 leaves the output bit-exact. A build without the
     /// optional model simply logs and skips the stage.
@@ -179,6 +187,7 @@ impl Default for Settings {
 
             residual_denoise: "dpdfnet".into(),
             residual_order: "after".into(),
+            residual_mix: 1.0,
             vad_gate: true,
             voice_isolation: true,
 
@@ -187,6 +196,8 @@ impl Default for Settings {
             tone_enabled: true,
             tone_low_db: 0.0,
             tone_high_db: 0.0,
+            deess_enabled: false,
+            deess_db: 6.0,
             air_amount: 0.10,
             gate_enabled: true,
             gate_threshold_db: -50.0,
@@ -262,7 +273,9 @@ impl Settings {
         self.high_pass_hz = self.high_pass_hz.clamp(20.0, 300.0);
         self.tone_low_db = self.tone_low_db.clamp(TONE_LOW_MIN_DB, TONE_LOW_MAX_DB);
         self.tone_high_db = self.tone_high_db.clamp(-TONE_HIGH_MAX_DB, TONE_HIGH_MAX_DB);
+        self.deess_db = self.deess_db.clamp(0.0, 12.0);
         self.air_amount = self.air_amount.clamp(0.0, 1.0);
+        self.residual_mix = self.residual_mix.clamp(0.0, 1.0);
         self.comfort_noise_db = self.comfort_noise_db.clamp(-90.0, -30.0);
         self.ab_seconds = self.ab_seconds.clamp(5.0, 60.0);
         self.keep_recordings = self.keep_recordings.clamp(1, 100);
@@ -509,6 +522,14 @@ mod tests {
             settings.chunk_ms
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_residual_mix_keeps_the_shipped_behaviour() {
+        // older settings files have no such field; serde must fill it from
+        // `Default`, not leave the f32 at 0 (which would disable DPDFNet)
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert!((settings.residual_mix - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

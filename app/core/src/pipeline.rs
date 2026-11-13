@@ -56,6 +56,7 @@ pub struct Pipeline {
     wet: Vec<f32>,
     chunk: usize,
     max_suppression: f32,
+    residual_mix: f32,
     cap_mix: f32,
     vad_gain: f32,
     vad_attack: f32,
@@ -203,6 +204,7 @@ impl Pipeline {
             wet: vec![0.0; chunk],
             chunk,
             max_suppression: settings.max_suppression_db.clamp(0.0, 48.0),
+            residual_mix: settings.residual_mix.clamp(0.0, 1.0),
             cap_mix: 0.0,
             vad_gain: 1.0,
             vad_attack: 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp(),
@@ -220,6 +222,10 @@ impl Pipeline {
     /// Settings that can change without rebuilding the models.
     pub fn set_max_suppression(&mut self, db: f32) {
         self.max_suppression = db.clamp(0.0, 48.0);
+    }
+
+    pub fn set_residual_mix(&mut self, mix: f32) {
+        self.residual_mix = mix.clamp(0.0, 1.0);
     }
 
     /// A block that never reached the model (a quiet room): keep the pre-roll
@@ -277,6 +283,7 @@ impl Pipeline {
             wet: wet_out,
             chunk,
             max_suppression,
+            residual_mix,
             cap_mix,
             vad_gain,
             vad_attack,
@@ -523,7 +530,17 @@ impl Pipeline {
                 res16.clear();
                 model.process(mix, res16);
                 after_stage.take(res16, after_out, Some(mix));
-                wet_out.copy_from_slice(after_out);
+                // 1.0 is the shipped behaviour and stays bit-exact; below 1.0
+                // the dry pre-denoise block comes back so quiet syllables are
+                // not eaten by an aggressive DPDFNet.
+                let wet_mix = *residual_mix;
+                if wet_mix >= 0.999 {
+                    wet_out.copy_from_slice(after_out);
+                } else {
+                    for i in 0..wet_out.len().min(mix.len()) {
+                        wet_out[i] = after_out[i] * wet_mix + mix[i] * (1.0 - wet_mix);
+                    }
+                }
             }
             None => wet_out.copy_from_slice(mix),
         }

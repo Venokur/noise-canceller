@@ -524,6 +524,7 @@ impl Processor {
             self.chain.configure(&current, self.out_rate);
             self.max_suppression = current.max_suppression_db.clamp(0.0, 48.0);
             self.pipeline.set_max_suppression(self.max_suppression);
+            self.pipeline.set_residual_mix(current.residual_mix);
             if current.buffer_auto {
                 if !self.auto.enabled {
                     // the learned value, kept in memory: this thread does not
