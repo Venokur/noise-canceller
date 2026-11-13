@@ -37,6 +37,7 @@ pub(crate) struct StatsDto {
     pub(crate) lufs: f32,
     pub(crate) true_peak_db: f32,
     pub(crate) healthy: bool,
+    pub(crate) wanted: bool,
 }
 
 impl Default for StatsDto {
@@ -70,6 +71,7 @@ impl Default for StatsDto {
             lufs: -120.0,
             true_peak_db: -120.0,
             healthy: false,
+            wanted: true,
         }
     }
 }
@@ -104,6 +106,7 @@ impl From<Stats> for StatsDto {
             lufs: s.lufs,
             true_peak_db: s.true_peak_db,
             healthy: s.healthy,
+            wanted: true,
         }
     }
 }

@@ -63,6 +63,7 @@ const stats = ref<Stats>({
   lufs: -120,
   truePeakDb: -120,
   healthy: false,
+  wanted: true,
   suppressionDb: 0,
   speech: false,
 });
@@ -169,10 +170,15 @@ let probeTimer: number | undefined;
 let spectrumTimer: number | undefined;
 let abMisses = 0;
 const deviceLost = ref(false);
-/// Whether processing *should* be running. The three-second device poll uses
-/// this instead of `!running`, otherwise auto-start fought the off button and
-/// started the engine again a moment after the user stopped it.
-const engineWanted = ref(true);
+/// Whether processing should be running. Shared with the tray through
+/// `set_engine_wanted`, so stopping from the tray is not undone by the poll.
+async function setEngineWanted(wanted: boolean) {
+  try {
+    await invoke("set_engine_wanted", { wanted });
+  } catch {
+    /* the flag is a UI/tray hint; the engine call reports the real error */
+  }
+}
 
 /// With no audio flowing the spectrum is a still, dim baseline: it marks the
 /// block as "waiting" instead of faking a signal.
@@ -403,7 +409,7 @@ async function startEngine(test: boolean) {
     return;
   }
   starting.value = true;
-  engineWanted.value = true;
+  void setEngineWanted(true);
   error.value = "";
   try {
     const voice = settings.value?.mode === "profile" ? settings.value?.profilePath ?? null : null;
@@ -434,7 +440,7 @@ async function startEngine(test: boolean) {
 }
 
 async function stopEngine() {
-  engineWanted.value = false;
+  void setEngineWanted(false);
   try {
     await invoke("stop");
   } catch (e) {
@@ -1369,7 +1375,7 @@ onMounted(async () => {
       if (
         settings.value?.autoStart &&
         cableOk.value &&
-        engineWanted.value &&
+        stats.value.wanted &&
         !running.value &&
         !starting.value &&
         !testMode.value &&

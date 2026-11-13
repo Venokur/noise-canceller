@@ -16,6 +16,10 @@ pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
     pub(crate) settings_path: PathBuf,
     pub(crate) maximized: AtomicBool,
+    /// Whether processing should be running. Shared by the window's auto-start
+    /// poll and the tray: stopping from the tray must not be undone three
+    /// seconds later by the window.
+    pub(crate) wanted: AtomicBool,
     /// where to put the window back when it leaves the maximized state
     pub(crate) restore_rect: Mutex<Option<(i32, i32, u32, u32)>>,
 }

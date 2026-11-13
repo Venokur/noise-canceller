@@ -23,6 +23,7 @@ struct TrayState {
     menu: Menu<tauri::Wry>,
     status: MenuItem<tauri::Wry>,
     profile: MenuItem<tauri::Wry>,
+    processing: MenuItem<tauri::Wry>,
     mute: CheckMenuItem<tauri::Wry>,
     open: MenuItem<tauri::Wry>,
     quit: MenuItem<tauri::Wry>,
@@ -70,6 +71,70 @@ pub(crate) fn apply_mute(app: &tauri::AppHandle, muted: bool) {
     }
     refresh_tray(app);
     show_osd(app, muted);
+}
+
+pub(crate) fn toggle_processing(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let running = state
+        .engine
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(false);
+    if running {
+        let engine = state.engine.lock().ok().and_then(|mut slot| slot.take());
+        state.wanted.store(false, Ordering::Relaxed);
+        if let Some(mut engine) = engine {
+            engine.stop();
+        }
+        refresh_tray(app);
+        return;
+    }
+
+    // Do not let the window's three-second auto-start race this thread: while
+    // the model loads `wanted` is false, and only a successful start turns it
+    // back on.
+    state.wanted.store(false, Ordering::Relaxed);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let state = handle.state::<AppState>();
+        let settings = state.settings_snapshot();
+        let input = if settings.input_device.is_empty() {
+            None
+        } else {
+            Some(settings.input_device.clone())
+        };
+        let voice = if settings.mode == "profile" {
+            settings.profile_path.as_ref().map(std::path::PathBuf::from)
+        } else {
+            None
+        };
+        match noise_canceller_core::engine::Engine::start(settings, input, None, voice, false) {
+            Ok(engine) => {
+                let mut slot = state.engine.lock().ok();
+                match slot.as_mut() {
+                    Some(slot) if slot.is_none() => {
+                        **slot = Some(engine);
+                        state.wanted.store(true, Ordering::Relaxed);
+                    }
+                    _ => {
+                        let mut engine = engine;
+                        engine.stop();
+                        state.wanted.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            Err(err) => {
+                state.wanted.store(false, Ordering::Relaxed);
+                noise_canceller_core::log::info(&format!(
+                    "tray: could not start processing: {err}"
+                ));
+            }
+        }
+        let refresh = handle.clone();
+        let _ = handle.run_on_main_thread(move || refresh_tray(&refresh));
+    });
 }
 
 pub(crate) fn toggle_mute(app: &tauri::AppHandle) {
@@ -171,6 +236,11 @@ fn refresh_tray(app: &tauri::AppHandle) {
         "Profile: {name}",
         &[("name", &profile)],
     ));
+    let _ = tray.processing.set_text(if running {
+        lang.text("Выключить обработку", "Stop processing")
+    } else {
+        lang.text("Включить обработку", "Start processing")
+    });
     let _ = tray.mute.set_checked(muted);
     if let Some(icon) = app.tray_by_id("main") {
         let text = if muted {
@@ -312,17 +382,32 @@ pub(crate) fn install(
         CheckMenuItemBuilder::with_id("mute", lang.text("Микрофон выключен", "Microphone muted"))
             .checked(false)
             .build(app)?;
+    let processing = MenuItemBuilder::with_id(
+        "processing",
+        lang.text("Включить обработку", "Start processing"),
+    )
+    .build(app)?;
     let open = MenuItemBuilder::with_id("open", lang.text("Открыть", "Open")).build(app)?;
     let quit = MenuItemBuilder::with_id("quit", lang.text("Выход", "Quit")).build(app)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
-        .items(&[&status, &profile, &sep1, &mute, &sep2, &open, &quit])
+        .items(&[
+            &status,
+            &profile,
+            &sep1,
+            &processing,
+            &mute,
+            &sep2,
+            &open,
+            &quit,
+        ])
         .build()?;
     app.manage(TrayState {
         menu: menu.clone(),
         status: status.clone(),
         profile: profile.clone(),
+        processing: processing.clone(),
         mute: mute.clone(),
         open: open.clone(),
         quit: quit.clone(),

@@ -213,9 +213,18 @@ pub(crate) fn stop(state: State<'_, AppState>) {
 
 #[tauri::command]
 pub(crate) fn stats(state: State<'_, AppState>) -> StatsDto {
-    state
+    let mut stats = state
         .with_engine(|engine| StatsDto::from(engine.stats()))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    stats.wanted = state.wanted.load(std::sync::atomic::Ordering::Relaxed);
+    stats
+}
+
+#[tauri::command]
+pub(crate) fn set_engine_wanted(state: State<'_, AppState>, wanted: bool) {
+    state
+        .wanted
+        .store(wanted, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[tauri::command]

@@ -98,6 +98,7 @@ pub(crate) fn run() {
             "open" => crate::tray::show_main(app),
             "quit" => crate::tray::quit_app(app),
             "mute" => crate::tray::toggle_mute(app),
+            "processing" => crate::tray::toggle_processing(app),
             _ => {}
         })
         .manage(AppState {
@@ -105,6 +106,7 @@ pub(crate) fn run() {
             settings: std::sync::Mutex::new(settings),
             settings_path,
             maximized: std::sync::atomic::AtomicBool::new(false),
+            wanted: std::sync::atomic::AtomicBool::new(true),
             restore_rect: std::sync::Mutex::new(None),
         })
         .on_window_event(|window, event| {
@@ -134,6 +136,7 @@ pub(crate) fn run() {
             crate::commands::start,
             crate::commands::stop,
             crate::commands::stats,
+            crate::commands::set_engine_wanted,
             crate::commands::get_settings,
             crate::commands::set_settings,
             crate::commands::record_profile,

@@ -98,6 +98,7 @@ export interface Stats {
   lufs: number;
   truePeakDb: number;
   healthy: boolean;
+  wanted: boolean;
 }
 
 export interface SettingsResult {
