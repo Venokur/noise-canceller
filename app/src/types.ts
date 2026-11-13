@@ -119,6 +119,7 @@ export interface Profile {
 
 /** Sidecar of a profile: which microphone and when it was recorded. */
 export interface ProfileMeta {
+  name: string;
   device: string;
   created: number;
   score: number;
@@ -148,6 +149,8 @@ export interface AbEntry {
 
 export interface ProfileScore {
   path: string;
+  name: string;
+  device: string;
   score: number;
   snrDb: number;
 }

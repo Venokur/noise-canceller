@@ -6,7 +6,20 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+
+const renaming = ref(false);
+const nameDraft = ref("");
+
+function startRename() {
+  nameDraft.value = profileInfo?.value?.name || "";
+  renaming.value = true;
+}
+
+async function saveRename() {
+  await renameProfile(nameDraft.value);
+  renaming.value = false;
+}
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -293,6 +306,14 @@ const noiseStage = computed(() => {
               <AppSelect v-model="selectedProfile" :options="profileOptions" @update:model-value="pickProfile" />
             </div>
             <button
+              class="iconbtn"
+              :disabled="!selectedProfile"
+              :title="t('sound.renameProfile')"
+              @click="startRename"
+            >
+              <AppIcon name="pencil" :size="14" />
+            </button>
+            <button
               :class="btnPrimary"
               :disabled="recording || !micReady"
               :title="micReady ? t('wizard.recordTitle') : t('sound.profileRecordNeedMic')"
@@ -318,6 +339,22 @@ const noiseStage = computed(() => {
               @click="askDeleteProfile"
             >
               <AppIcon name="trash" :size="14" />
+            </button>
+          </div>
+          <div v-if="renaming" class="mt-2 flex items-center gap-2">
+            <input
+              v-model="nameDraft"
+              maxlength="48"
+              class="h-[32px] min-w-0 flex-1 rounded-[8px] border border-[var(--stroke)] bg-[var(--surface)] px-2.5 text-[12.5px] outline-none focus:border-[var(--accent)]"
+              :placeholder="t('sound.renamePlaceholder')"
+              @keydown.enter="saveRename"
+              @keydown.esc="renaming = false"
+            />
+            <button class="iconbtn" :title="t('common.save')" @click="saveRename">
+              <AppIcon name="check" :size="14" />
+            </button>
+            <button class="iconbtn" :title="t('common.cancel')" @click="renaming = false">
+              <AppIcon name="close" :size="14" />
             </button>
           </div>
           <p v-if="profileWeak" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">

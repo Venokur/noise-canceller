@@ -208,6 +208,15 @@ pub(crate) fn delete_profile(path: String) -> Result<(), String> {
     noise_canceller_core::profile::delete(&path).map_err(|e| e.to_string())
 }
 
+#[tauri::command(async)]
+pub(crate) fn rename_profile(
+    path: String,
+    name: String,
+) -> Result<noise_canceller_core::profile::ProfileMeta, String> {
+    noise_canceller_core::profile::rename(std::path::Path::new(&path), &name)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub(crate) fn ab_start(state: State<'_, AppState>, seconds: f32) -> Result<(), String> {
     let lang = state
@@ -697,6 +706,8 @@ pub(crate) fn profile_scores() -> Vec<ProfileScoreDto> {
             let meta = noise_canceller_core::profile::read_meta(std::path::Path::new(&path));
             Some(ProfileScoreDto {
                 path,
+                name: meta.as_ref().map(|m| m.name.clone()).unwrap_or_default(),
+                device: meta.as_ref().map(|m| m.device.clone()).unwrap_or_default(),
                 score: meta.as_ref().map(|m| m.score).unwrap_or(quality.score),
                 snr_db: meta.as_ref().map(|m| m.snr_db).unwrap_or(quality.snr_db),
             })

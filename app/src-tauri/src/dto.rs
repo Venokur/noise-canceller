@@ -170,6 +170,8 @@ pub(crate) struct SystemInfo {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProfileScoreDto {
     pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) device: String,
     pub(crate) score: i32,
     pub(crate) snr_db: f32,
 }

@@ -118,6 +118,7 @@ pub(crate) fn run() {
             crate::commands::probe_spectrum,
             crate::commands::list_profiles,
             crate::commands::delete_profile,
+            crate::commands::rename_profile,
             crate::commands::ab_start,
             crate::commands::ab_status,
             crate::commands::last_ab,

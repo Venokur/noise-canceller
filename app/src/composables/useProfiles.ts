@@ -70,7 +70,7 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
   const profileOptions = computed(() =>
     profiles.value.map((path) => {
       const score = profileScores.value.find((s) => s.path === path);
-      const name = shortName(path);
+      const name = score?.name?.trim() || shortName(path);
       return { value: path, label: score ? `${name} · ${score.score}/100` : name };
     }),
   );
@@ -117,6 +117,21 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
     await restart();
   }
 
+  async function renameProfile(name: string) {
+    if (!selectedProfile.value || !name.trim()) return;
+    try {
+      const meta = await invoke<ProfileMeta>("rename_profile", {
+        path: selectedProfile.value,
+        name,
+      });
+      profileInfo.value = meta;
+      const score = profileScores.value.find((s) => s.path === selectedProfile.value);
+      if (score) score.name = meta.name;
+    } catch (e) {
+      error.value = String(e);
+    }
+  }
+
   async function deleteProfile() {
     if (!selectedProfile.value) return;
     try {
@@ -149,6 +164,7 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
     loadProfileMeta,
     refreshProfiles,
     pickProfile,
+    renameProfile,
     deleteProfile,
   };
 }

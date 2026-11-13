@@ -1,6 +1,7 @@
 {
   "common.close": "Закрыть",
   "common.cancel": "Отмена",
+  "common.save": "Сохранить",
   "common.continue": "Продолжить",
   "common.off": "Выключено",
   "common.none": "Не выбран",
@@ -155,6 +156,8 @@
   "sound.playProfile": "Прослушать профиль",
   "sound.deleteProfile": "Удалить профиль",
   "sound.deleteProfileConfirm": "Нажмите ещё раз, чтобы удалить",
+  "sound.renameProfile": "Переименовать профиль",
+  "sound.renamePlaceholder": "Например: гарнитура, стол, петличка",
   "sound.profileWeak": "Профиль слабый: модель будет хуже узнавать голос. Запишите новый — 15 секунд в тишине.",
   "sound.profileOtherMic": "Профиль записан на другом микрофоне ({device}) — модель может не узнать ваш голос. Запишите новый на этом микрофоне.",
   "sound.profileRecordedOn": "Профиль записан на: {device}",

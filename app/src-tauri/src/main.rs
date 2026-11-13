@@ -139,6 +139,8 @@ mod contract_tests {
             "ProfileScore",
             json_keys(&ProfileScoreDto {
                 path: String::new(),
+                name: String::new(),
+                device: String::new(),
                 score: 0,
                 snr_db: 0.0,
             }),

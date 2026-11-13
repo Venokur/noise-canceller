@@ -84,6 +84,7 @@ const {
   profileMismatch,
   refreshProfiles,
   pickProfile,
+  renameProfile,
   deleteProfile,
 } = useProfiles({
   settings,
@@ -1073,6 +1074,7 @@ provide(APP_CONTEXT, {
   refreshing,
   refreshProfiles,
   removeRecording,
+  renameProfile,
   resetSettings,
   restartSoon,
   running,

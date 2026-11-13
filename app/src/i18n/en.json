@@ -1,6 +1,7 @@
 {
   "common.close": "Close",
   "common.cancel": "Cancel",
+  "common.save": "Save",
   "common.continue": "Continue",
   "common.off": "Off",
   "common.none": "Not selected",
@@ -155,6 +156,8 @@
   "sound.playProfile": "Play the profile",
   "sound.deleteProfile": "Delete the profile",
   "sound.deleteProfileConfirm": "Click again to delete",
+  "sound.renameProfile": "Rename the profile",
+  "sound.renamePlaceholder": "For example: headset, desk, lavalier",
   "sound.profileWeak": "The profile is weak: the model will recognise the voice worse. Record a new one — 15 seconds in silence.",
   "sound.profileOtherMic": "The profile was recorded on another microphone ({device}); the model may not recognise your voice. Record a new one on this microphone.",
   "sound.profileRecordedOn": "Profile recorded on: {device}",

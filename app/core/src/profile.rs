@@ -47,11 +47,30 @@ pub struct Profile {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileMeta {
+    /// user-facing name; empty means "use the file name/date"
+    #[serde(default)]
+    pub name: String,
     pub device: String,
     pub created: u64,
     pub score: i32,
     pub snr_db: f32,
     pub app_version: String,
+}
+
+/// Renames a profile by rewriting its sidecar. An old profile without a
+/// sidecar gets one, so the name survives even though the wav did not change.
+pub fn rename(path: &std::path::Path, name: &str) -> Result<ProfileMeta> {
+    let mut meta = read_meta(path).unwrap_or_else(|| ProfileMeta {
+        name: String::new(),
+        device: String::new(),
+        created: 0,
+        score: 0,
+        snr_db: 0.0,
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+    });
+    meta.name = name.trim().chars().take(48).collect();
+    write_meta(path, &meta);
+    Ok(meta)
 }
 
 fn meta_path(path: &std::path::Path) -> std::path::PathBuf {
@@ -236,6 +255,7 @@ fn record_inner(
     write_meta(
         &path,
         &ProfileMeta {
+            name: String::new(),
             device: input_name.unwrap_or("").to_string(),
             created: stamp,
             score: quality.score,
