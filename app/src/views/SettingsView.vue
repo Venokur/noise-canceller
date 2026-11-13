@@ -201,6 +201,20 @@ const { applyAutostart, applyPreset, appUpdateStatus, appVersion, autostart, aut
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.inputLeveling" /></div>
               </div>
+              <div v-if="!settings.basicUi" :class="settingRow">
+                <AppLabel
+                  :text="t('settings.clean.inputGain')"
+                  :hint="t('settings.clean.inputGainHint')"
+                />
+                <AppSlider
+                  :label="t('settings.clean.inputGain')"
+                  v-model="settings.inputGainDb"
+                  :min="-12"
+                  :max="24"
+                  :step="1"
+                  :format="(v) => `${v > 0 ? '+' : ''}${v} ${u.db}`"
+                />
+              </div>
               <div :class="settingRow">
                 <AppLabel
                   :text="t('settings.clean.residual')"

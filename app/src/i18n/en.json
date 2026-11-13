@@ -240,6 +240,8 @@
 
   "settings.clean.leveling": "Quiet microphone boost",
   "settings.clean.levelingHint": "Raises a quiet microphone to −26 dBFS before the model. Affects intelligibility and how even the level is.",
+  "settings.clean.inputGain": "Input gain",
+  "settings.clean.inputGainHint": "Manual gain before leveling and the model. Raise it for a quiet microphone, lower it when the input clips. Works together with the automatic leveler.",
   "settings.clean.residual": "Residual noise",
   "settings.clean.residualHint": "The more aggressive the stage, the harder it pushes the background and other voices down — and the higher the load and the risk of eating quiet syllables. GTCRN is the balance, DPDFNet and UL-UNAS are stronger.",
   "settings.clean.residualOff": "Off",

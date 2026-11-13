@@ -144,6 +144,8 @@ struct Shared {
     capture_drops: Arc<AtomicU32>,
     /// capture channel: -1 mixes all channels, 0.. picks one
     input_channel: Arc<AtomicI32>,
+    /// manual input gain before the leveler, dB
+    input_gain: Arc<AtomicU32>,
     /// similarity of the live voice to the profile, f32 bits; negative = unknown
     speaker_confidence: Arc<AtomicU32>,
     /// momentary loudness of the output, LUFS
@@ -197,6 +199,7 @@ impl Shared {
             pulled: Arc::new(AtomicU64::new(0)),
             capture_drops: Arc::new(AtomicU32::new(0)),
             input_channel: Arc::new(AtomicI32::new(settings.input_channel)),
+            input_gain: Arc::new(AtomicU32::new(settings.input_gain_db.to_bits())),
             speaker_confidence: Arc::new(AtomicU32::new((-1.0f32).to_bits())),
             lufs: Arc::new(AtomicU32::new((-120.0f32).to_bits())),
             true_peak: Arc::new(AtomicU32::new((-120.0f32).to_bits())),
@@ -514,6 +517,9 @@ impl Engine {
         self.shared
             .input_channel
             .store(settings.input_channel, Ordering::Relaxed);
+        self.shared
+            .input_gain
+            .store(settings.input_gain_db.to_bits(), Ordering::Relaxed);
         self.shared
             .speaker_guard
             .store(settings.speaker_guard, Ordering::Relaxed);

@@ -315,6 +315,13 @@ impl Processor {
                     let _ = producer.push(*sample);
                 }
             }
+            let manual_gain_db = f32::from_bits(self.shared.input_gain.load(Ordering::Relaxed));
+            if manual_gain_db.abs() > 0.01 {
+                let factor = 10f32.powf(manual_gain_db / 20.0);
+                for sample in self.block.iter_mut() {
+                    *sample *= factor;
+                }
+            }
             let in_voice = self.input_voice.update(&self.block);
 
             // silence costs nothing: skip the model and emit a clean zero block

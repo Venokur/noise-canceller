@@ -19,6 +19,7 @@ export interface Settings {
   outputDevice: string;
   /** -1 mixes all capture channels, 0.. picks one */
   inputChannel: number;
+  inputGainDb: number;
   inputLeveling: boolean;
   residualDenoise: string;
   residualOrder: string;

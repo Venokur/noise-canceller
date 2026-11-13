@@ -89,6 +89,8 @@ pub struct Settings {
 
     /// keeps the model input at a usable level on quiet microphones
     pub input_leveling: bool,
+    /// manual gain before the leveler, dB; 0 = off
+    pub input_gain_db: f32,
 
     /// second denoiser after VoxLock: "off" | "gtcrn"
     pub residual_denoise: String,
@@ -196,6 +198,7 @@ impl Default for Settings {
             input_device: String::new(),
             output_device: String::new(),
             input_channel: -1,
+            input_gain_db: 0.0,
             input_leveling: true,
 
             residual_denoise: "dpdfnet".into(),
@@ -279,6 +282,7 @@ impl Settings {
         } else {
             self.input_channel.min(31)
         };
+        self.input_gain_db = self.input_gain_db.clamp(-12.0, 24.0);
         self.agc_target_db = self.agc_target_db.clamp(-40.0, -6.0);
         self.agc_max_gain_db = self.agc_max_gain_db.clamp(0.0, 30.0);
         self.gate_threshold_db = self.gate_threshold_db.clamp(-80.0, -20.0);
