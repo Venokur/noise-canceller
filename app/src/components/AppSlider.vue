@@ -8,6 +8,8 @@ const props = withDefaults(
     max: number;
     step?: number;
     format?: (value: number) => string;
+    /// screen-reader name; the visible text lives in the neighbouring AppLabel
+    label?: string;
   }>(),
   { step: 1 }
 );
@@ -37,6 +39,8 @@ function onInput(event: Event) {
       :max="max"
       :step="step"
       :value="modelValue"
+      :aria-label="label"
+      :aria-valuetext="text"
       :style="{
         background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${percent}%, var(--track) ${percent}%, var(--track) 100%)`,
       }"

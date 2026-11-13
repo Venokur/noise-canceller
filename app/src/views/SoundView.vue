@@ -203,6 +203,7 @@ const noiseStage = computed(() => {
             <span class="shrink-0 text-[11.5px] whitespace-nowrap text-[var(--muted)]">Громкость выхода</span>
             <div class="w-[220px] shrink-0">
               <AppSlider
+                label="Громкость выхода"
                 v-model="settings.outputGainDb"
                 :min="-18"
                 :max="18"

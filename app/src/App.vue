@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import TitleBar from "./components/TitleBar.vue";
 import AppSelect from "./components/AppSelect.vue";
@@ -14,13 +14,14 @@ import { useSettingsSearch } from "./composables/useSettingsSearch";
 import { useSystemInfo } from "./composables/useSystemInfo";
 import { useTheme, useHotkeyCapture } from "./composables/useShell";
 import { useCable } from "./composables/useCable";
+import { useProfiles } from "./composables/useProfiles";
+import { shortName } from "./format";
 import type {
   AbEntry,
   AbMetrics,
   AbStatus,
   LastAb,
   Profile,
-  ProfileScore,
   Quality,
   Settings,
   SettingsResult,
@@ -59,11 +60,30 @@ const selectedOutput = ref("");
 const busy = ref(false);
 const starting = ref(false);
 const error = ref("");
+const {
+  profiles,
+  selectedProfile,
+  profileQuality,
+  profileScores,
+  profileOptions,
+  activeProfileScore,
+  profileWeak,
+  profileMeta,
+  refreshProfiles,
+  pickProfile,
+  deleteProfile,
+} = useProfiles({
+  settings,
+  error,
+  restart: async () => {
+    if (!running.value) return;
+    const test = testMode.value;
+    await invoke("stop");
+    await startEngine(test);
+  },
+});
 const tab = ref<"sound" | "settings">("sound");
 
-const profiles = ref<string[]>([]);
-const selectedProfile = ref("");
-const profileQuality = ref<Quality | null>(null);
 const recording = ref(false);
 const probing = ref(false);
 const probeLeft = ref(0);
@@ -83,7 +103,7 @@ const abClean = ref<string | null>(null);
 const history = ref<AbEntry[]>([]);
 const abNormalize = ref(true);
 const showWizard = ref(false);
-const profileScores = ref<ProfileScore[]>([]);
+const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
 let slowStreak = 0;
@@ -185,11 +205,6 @@ function toLevel(rms: number): number {
   return Math.max(0, Math.min(1, (db + 60) / 60));
 }
 
-function shortName(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] ?? path;
-}
-
 async function refreshDevices() {
   try {
     const [ins, outs] = await invoke<[string[], string[]]>("list_devices");
@@ -231,44 +246,6 @@ async function refreshDevicesManually() {
   }
 }
 
-async function refreshProfiles() {
-  profiles.value = await invoke<string[]>("list_profiles");
-  try {
-    profileScores.value = (await invoke<ProfileScore[] | null>("profile_scores")) ?? [];
-  } catch {
-    profileScores.value = [];
-  }
-  const best = [...profileScores.value].sort((a, b) => b.score - a.score)[0];
-  if (settings.value?.autoProfile && best) {
-    selectedProfile.value = best.path;
-    settings.value.profilePath = best.path;
-    return;
-  }
-  if (!selectedProfile.value && settings.value?.profilePath) {
-    selectedProfile.value = settings.value.profilePath;
-  }
-  if (!selectedProfile.value && profiles.value.length) {
-    selectedProfile.value = profiles.value[0];
-    if (settings.value) settings.value.profilePath = profiles.value[0];
-  }
-}
-
-
-const profileOptions = computed(() =>
-  profiles.value.map((path) => {
-    const score = profileScores.value.find((s) => s.path === path);
-    const name = shortName(path);
-    return { value: path, label: score ? `${name} · ${score.score}/100` : name };
-  })
-);
-
-const activeProfileScore = computed(() => {
-  const path = selectedProfile.value || settings.value?.profilePath || "";
-  return profileScores.value.find((s) => s.path === path) ?? null;
-});
-
-const profileWeak = computed(() => !!activeProfileScore.value && activeProfileScore.value.score < 55);
-
 const inputIsCable = computed(() => !!selectedInput.value && isCableInput(selectedInput.value));
 
 /// Recording a profile needs a real microphone: the cable's capture side is our
@@ -305,16 +282,6 @@ const routeText = computed(() => {
 /// Score and SNR of the profile in use, shown next to the section title.
 /// The score already sits in the picker label, so only the SNR is repeated here
 /// unless the profile was recorded seconds ago.
-const profileMeta = computed(() => {
-  if (profileQuality.value) {
-    const q = profileQuality.value;
-    return `${q.score} / 100 · речь ${(q.speechPercent * 100).toFixed(0)}% · SNR ${q.snrDb.toFixed(0)} дБ`;
-  }
-  const score = activeProfileScore.value;
-  if (score) return `SNR ${score.snrDb.toFixed(0)} дБ`;
-  return "";
-});
-
 const settingsSections = [
   { id: "voice", label: "Голос" },
   { id: "clean", label: "Чистка сигнала" },
@@ -585,29 +552,6 @@ function playProfile() {
   return togglePlay(selectedProfile.value, "profile");
 }
 
-async function pickProfile() {
-  if (!settings.value || !selectedProfile.value) return;
-  settings.value.profilePath = selectedProfile.value;
-  profileQuality.value = null;
-  if (running.value) {
-    const test = testMode.value;
-    await invoke("stop");
-    await startEngine(test);
-  }
-}
-
-async function deleteProfile() {
-  if (!selectedProfile.value) return;
-  try {
-    await invoke("delete_profile", { path: selectedProfile.value });
-    selectedProfile.value = "";
-    if (settings.value) settings.value.profilePath = null;
-    await refreshProfiles();
-  } catch (e) {
-    error.value = String(e);
-  }
-}
-
 async function toggleAb() {
   if (abRunning.value) return;
   await stopPreview();
@@ -779,6 +723,38 @@ async function setMuted(muted: boolean) {
     stats.value.muted = muted;
   } catch (e) {
     error.value = String(e);
+  }
+}
+
+watch(showWizard, async (open) => {
+  if (!open) return;
+  await nextTick();
+  wizardEl.value?.focus();
+});
+
+/// The wizard covers the window: Escape closes it and Tab cycles inside it,
+/// otherwise focus walks onto the controls hidden behind the overlay.
+function onWizardKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeWizard();
+    return;
+  }
+  if (event.key !== "Tab" || !wizardEl.value) return;
+  const items = Array.from(
+    wizardEl.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.offsetParent !== null);
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
   }
 }
 
@@ -1187,10 +1163,18 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
 
     <!-- first-run wizard -->
     <div v-if="showWizard && settings" class="fixed inset-0 z-[90] grid place-items-center bg-black/45 p-5">
-      <div class="w-full max-w-[540px] rounded-[16px] border border-[var(--stroke)] bg-[var(--surface)] p-6 shadow-[0_30px_70px_-30px_rgba(0,0,0,0.7)]">
+      <div
+        ref="wizardEl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wizard-title"
+        tabindex="-1"
+        class="w-full max-w-[540px] rounded-[16px] border border-[var(--stroke)] bg-[var(--surface)] p-6 shadow-[0_30px_70px_-30px_rgba(0,0,0,0.7)]"
+        @keydown="onWizardKeydown"
+      >
         <div class="flex items-start justify-between gap-3">
           <div>
-            <h2 class="text-[17px] font-semibold tracking-[-0.01em]">Настройка за три шага</h2>
+            <h2 id="wizard-title" class="text-[17px] font-semibold tracking-[-0.01em]">Настройка за три шага</h2>
             <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
               Можно пропустить и вернуться позже: «Настройки» → «Мастер настройки».
             </p>
