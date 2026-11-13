@@ -8,7 +8,7 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, error, evaluateSpeakerThreshold, evaluatingThreshold, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, saveDiagnostics, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, customPresets, deleteCustomPreset, error, evaluateSpeakerThreshold, evaluatingThreshold, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presetName, presets, resetSettings, restartSoon, saveCustomPreset, saveDiagnostics, savingPreset, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -62,7 +62,42 @@ const { applyAutostart, applyPreset, appUpdateStatus, appVersion, autostart, aut
               </button>
             </div>
 
-            <!-- voice -->
+            <div v-if="!searching" class="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span class="mr-1 text-[11.5px] text-[var(--muted)]">{{ t("settings.presetsMine") }}</span>
+              <div
+                v-for="preset in customPresets"
+                :key="preset.name"
+                class="chip group flex items-center gap-1 !pr-1"
+              >
+                <button class="cursor-pointer" @click="applyCustomPreset(preset)">{{ preset.name }}</button>
+                <button
+                  class="grid h-4 w-4 cursor-pointer place-items-center rounded text-[var(--muted)] hover:text-[var(--danger)]"
+                  :title="t('settings.presetsDelete')"
+                  @click="deleteCustomPreset(preset.name)"
+                >
+                  <AppIcon name="close" :size="10" />
+                </button>
+              </div>
+              <button v-if="!savingPreset" class="chip" @click="savingPreset = true">
+                + {{ t("settings.presetsSave") }}
+              </button>
+              <div v-else class="flex items-center gap-1">
+                <input
+                  v-model="presetName"
+                  maxlength="40"
+                  class="h-[26px] w-[150px] rounded-[7px] border border-[var(--stroke)] bg-[var(--surface)] px-2 text-[11.5px] outline-none focus:border-[var(--accent)]"
+                  :placeholder="t('settings.presetsPlaceholder')"
+                  @keydown.enter="saveCustomPreset"
+                  @keydown.esc="savingPreset = false"
+                />
+                <button class="iconbtn" :title="t('common.save')" @click="saveCustomPreset">
+                  <AppIcon name="check" :size="13" />
+                </button>
+                <button class="iconbtn" :title="t('common.cancel')" @click="savingPreset = false">
+                  <AppIcon name="close" :size="13" />
+                </button>
+              </div>
+            </div>
             <div v-if="searching || settingsSection === 'voice'" class="sblock">
               <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.voice") }}</h2>
               <div :class="settingRow">

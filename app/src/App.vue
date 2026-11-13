@@ -27,6 +27,7 @@ import type {
   LastAb,
   Profile,
   ProfileMeta,
+  Preset,
   Quality,
   Settings,
   SettingsResult,
@@ -248,6 +249,90 @@ function applyPreset(patch: Record<string, unknown>, name: string) {
   notify(t("toast.presetApplied"), "ok", name);
   // the residual stage is built at engine start, unlike the DSP controls
   if (settings.value.residualDenoise !== previousResidual) restartSoon();
+}
+
+const customPresets = ref<Preset[]>([]);
+const presetName = ref("");
+const savingPreset = ref(false);
+
+/// Only these fields travel from a saved preset: devices, profile, language
+/// and theme belong to the machine, not to the sound.
+const PRESET_KEYS: (keyof Settings)[] = [
+  "isolationStrength",
+  "maxSuppressionDb",
+  "residualDenoise",
+  "residualOrder",
+  "residualMix",
+  "vadGate",
+  "highPassEnabled",
+  "highPassHz",
+  "toneEnabled",
+  "toneLowDb",
+  "toneHighDb",
+  "deessEnabled",
+  "deessDb",
+  "airAmount",
+  "gateEnabled",
+  "gateThresholdDb",
+  "gateRatio",
+  "gateAttackMs",
+  "gateReleaseMs",
+  "gateHoldMs",
+  "agcEnabled",
+  "agcTargetDb",
+  "agcMaxGainDb",
+  "limiterEnabled",
+  "comfortNoiseEnabled",
+  "comfortNoiseDb",
+  "outputGainDb",
+  "loudnessTargetDb",
+  "inputGainDb",
+];
+
+async function loadPresets() {
+  try {
+    customPresets.value = await invoke<Preset[]>("list_presets");
+  } catch {
+    customPresets.value = [];
+  }
+}
+
+function applyCustomPreset(preset: Preset) {
+  if (!settings.value) return;
+  const previousResidual = settings.value.residualDenoise;
+  for (const key of PRESET_KEYS) {
+    (settings.value as unknown as Record<string, unknown>)[key] = (
+      preset.settings as unknown as Record<string, unknown>
+    )[key];
+  }
+  notify(t("toast.presetApplied"), "ok", preset.name);
+  if (settings.value.residualDenoise !== previousResidual) restartSoon();
+}
+
+async function saveCustomPreset() {
+  if (!settings.value || !presetName.value.trim()) return;
+  savingPreset.value = true;
+  try {
+    await invoke<Preset>("save_preset", {
+      name: presetName.value,
+      settings: settings.value,
+    });
+    presetName.value = "";
+    await loadPresets();
+    savingPreset.value = false;
+  } catch (e) {
+    error.value = String(e);
+    savingPreset.value = false;
+  }
+}
+
+async function deleteCustomPreset(name: string) {
+  try {
+    await invoke("delete_preset", { name });
+    await loadPresets();
+  } catch (e) {
+    error.value = String(e);
+  }
 }
 
 const inputOptions = computed(() => inputs.value.map((n) => ({ value: n, label: n })));
@@ -1146,6 +1231,8 @@ provide(APP_CONTEXT, {
   calibrateRoom,
   calibrating,
   capturingHotkey,
+  customPresets,
+  deleteCustomPreset,
   checkAbSpeaker,
   checkAppUpdate,
   checkingApp,
@@ -1187,6 +1274,10 @@ provide(APP_CONTEXT, {
   playingKey,
   playProfile,
   presets,
+  presetName,
+  saveCustomPreset,
+  savingPreset,
+  applyCustomPreset,
   probeHint,
   probeLeft,
   probeMic,
@@ -1252,6 +1343,7 @@ onMounted(async () => {
     await loadSystemInfo();
     await refreshDevices();
     await refreshProfiles();
+    await loadPresets();
     stats.value = await invoke<Stats>("stats");
     autostart.value = await invoke<boolean>("autostart_enabled");
     // bring back the play buttons for the last take: the paths live in the

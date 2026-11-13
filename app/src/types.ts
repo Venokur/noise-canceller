@@ -70,6 +70,12 @@ export interface Settings {
   defaultsRev: number;
 }
 
+/** A named snapshot of the sound-shaping settings (devices/profile excluded on apply). */
+export interface Preset {
+  name: string;
+  settings: Settings;
+}
+
 export interface Stats {
   inputRms: number;
   outputRms: number;

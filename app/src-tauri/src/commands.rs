@@ -345,6 +345,25 @@ pub(crate) fn list_profiles() -> Vec<String> {
 }
 
 #[tauri::command(async)]
+pub(crate) fn list_presets() -> Vec<noise_canceller_core::presets::Preset> {
+    noise_canceller_core::presets::list()
+}
+
+#[tauri::command(async)]
+pub(crate) fn save_preset(
+    name: String,
+    mut settings: Settings,
+) -> Result<noise_canceller_core::presets::Preset, String> {
+    settings.sanitize();
+    noise_canceller_core::presets::save(&name, settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub(crate) fn delete_preset(name: String) -> Result<(), String> {
+    noise_canceller_core::presets::delete(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 pub(crate) fn delete_profile(path: String) -> Result<(), String> {
     noise_canceller_core::profile::delete(&path).map_err(|e| e.to_string())
 }

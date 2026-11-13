@@ -8,6 +8,7 @@ pub mod model;
 pub mod paths;
 pub mod pipeline;
 pub mod playback;
+pub mod presets;
 pub mod profile;
 pub mod recordings;
 pub mod resample;
