@@ -30,6 +30,7 @@ import type {
   Settings,
   SettingsResult,
   SpeakerSimilarity,
+  SpeakerRecommendation,
   Stats,
 } from "./types";
 
@@ -59,6 +60,7 @@ const stats = ref<Stats>({
   threads: 0,
   speakerConfidence: -1,
   lufs: -120,
+  truePeakDb: -120,
   healthy: false,
   suppressionDb: 0,
   speech: false,
@@ -139,6 +141,8 @@ const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
 const abSpeaker = ref<SpeakerSimilarity | null>(null);
+const speakerRecommendation = ref<SpeakerRecommendation | null>(null);
+const evaluatingThreshold = ref(false);
 let slowStreak = 0;
 let slowWarnAt = 0;
 let quietMicWarned = false;
@@ -853,6 +857,21 @@ async function checkAbSpeaker() {
   }
 }
 
+async function evaluateSpeakerThreshold() {
+  if (evaluatingThreshold.value) return;
+  evaluatingThreshold.value = true;
+  error.value = "";
+  try {
+    speakerRecommendation.value = await invoke<SpeakerRecommendation>(
+      "speaker_recommendation",
+    );
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    evaluatingThreshold.value = false;
+  }
+}
+
 watch(abRaw, () => {
   void loadAbMetrics();
 });
@@ -1093,6 +1112,8 @@ provide(APP_CONTEXT, {
   deleteProfile,
   error,
   evaluateProfileConsistency,
+  evaluateSpeakerThreshold,
+  evaluatingThreshold,
   exportSettings,
   filterSettings,
   formatStamp,
@@ -1162,6 +1183,7 @@ provide(APP_CONTEXT, {
   shownSpectrum,
   showWizard,
   slowConfig,
+  speakerRecommendation,
   spectrumLive,
   startHotkeyCapture,
   starting,

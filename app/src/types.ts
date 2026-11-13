@@ -33,6 +33,7 @@ export interface Settings {
   toneEnabled: boolean;
   toneLowDb: number;
   toneHighDb: number;
+  loudnessTargetDb: number;
   deessEnabled: boolean;
   deessDb: number;
   airAmount: number;
@@ -94,6 +95,7 @@ export interface Stats {
   threads: number;
   speakerConfidence: number;
   lufs: number;
+  truePeakDb: number;
   healthy: boolean;
 }
 
@@ -169,6 +171,14 @@ export interface SpeakerSimilarity {
   min: number;
   median: number;
   max: number;
+}
+
+/** Suggested guard threshold from the user's own A/B takes. */
+export interface SpeakerRecommendation {
+  takes: number;
+  p5: number;
+  median: number;
+  threshold: number;
 }
 
 export interface SystemInfo {

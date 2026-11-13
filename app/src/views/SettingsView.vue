@@ -8,7 +8,7 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, saveDiagnostics, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, evaluateSpeakerThreshold, evaluatingThreshold, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, saveDiagnostics, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -368,6 +368,21 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   :label="t('sound.outputVolume')"
                   v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
               </div>
+              <div :class="settingRow">
+                <AppLabel
+                  :text="t('settings.clean.loudnessTarget')"
+                  :hint="t('settings.clean.loudnessTargetHint')"
+                />
+                <AppSelect
+                  :model-value="String(settings.loudnessTargetDb)"
+                  :options="[
+                    { value: '0', label: t('settings.clean.loudnessOff') },
+                    { value: '-16', label: t('settings.clean.loudnessStream') },
+                    { value: '-20', label: t('settings.clean.loudnessCall') },
+                  ]"
+                  @update:model-value="(value: string) => (settings!.loudnessTargetDb = Number(value))"
+                />
+              </div>
             </div>
 
             <!-- latency -->
@@ -535,6 +550,10 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 </span>
                 <span :title="t('settings.diag.lufsHint')">{{ t("settings.diag.lufs") }}</span>
                 <span>{{ stats.lufs > -100 ? stats.lufs.toFixed(0) + " LUFS" : "—" }}</span>
+                <span :title="t('settings.diag.truePeakHint')">{{ t("settings.diag.truePeak") }}</span>
+                <span :class="stats.truePeakDb > -1 ? 'text-[var(--danger)]' : ''">
+                  {{ stats.truePeakDb > -100 ? stats.truePeakDb.toFixed(1) + " dBTP" : "—" }}
+                </span>
                 <span :title="t('settings.diag.speakerHint')">{{ t("settings.diag.speaker") }}</span>
                 <span :class="stats.speakerConfidence >= 0 && stats.speakerConfidence < 0.5 ? 'text-[var(--danger)]' : ''">
                   {{
@@ -563,10 +582,35 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   <AppIcon name="file" :size="14" />
                   {{ t("settings.diag.report") }}
                 </button>
+                <button
+                  :class="btnGhost"
+                  :title="t('settings.diag.thresholdHint')"
+                  :disabled="evaluatingThreshold"
+                  @click="evaluateSpeakerThreshold"
+                >
+                  <AppIcon :name="evaluatingThreshold ? 'spinner' : 'activity'" :size="14" :class="{ spin: evaluatingThreshold }" />
+                  {{ evaluatingThreshold ? t("settings.diag.thresholdRunning") : t("settings.diag.threshold") }}
+                </button>
                 <button :class="btnGhost" @click="showWizard = true">{{ t("settings.diag.wizard") }}</button>
               </div>
               <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
                 {{ t("settings.diag.logHint") }}
+              </p>
+              <p v-if="speakerRecommendation" class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
+                {{
+                  t("settings.diag.thresholdResult", {
+                    takes: speakerRecommendation.takes,
+                    p5: (speakerRecommendation.p5 * 100).toFixed(0),
+                    median: (speakerRecommendation.median * 100).toFixed(0),
+                    threshold: (speakerRecommendation.threshold * 100).toFixed(0),
+                  })
+                }}
+                <button
+                  class="ml-1 cursor-pointer text-[var(--accent)] hover:underline"
+                  @click="settings.speakerThreshold = speakerRecommendation.threshold"
+                >
+                  {{ t("settings.diag.thresholdApply") }}
+                </button>
               </p>
             </div>
 

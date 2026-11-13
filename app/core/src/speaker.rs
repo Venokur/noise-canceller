@@ -87,7 +87,8 @@ pub fn profile_consistency(embedder: &mut SpeakerEmbedder, path: &Path) -> Resul
     Ok(values[values.len() / 2])
 }
 
-/// Similarity of every speech window in a recording to one profile.#[derive(Debug, Clone, Copy, serde::Serialize)]
+/// Similarity of every speech window in a recording to one profile.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct Similarity {
     pub windows: u32,
     pub min: f32,
@@ -105,6 +106,17 @@ pub fn similarity_to_profile(
     rate: u32,
 ) -> Result<Similarity> {
     let enrolled = embedding_from_wav(embedder, profile)?;
+    similarity_to_enrolled(embedder, &enrolled, samples, rate)
+}
+
+/// Same as [`similarity_to_profile`], but the enrolled vector is passed in so a
+/// batch can embed the profile once instead of once per take.
+pub fn similarity_to_enrolled(
+    embedder: &mut SpeakerEmbedder,
+    enrolled: &[f32],
+    samples: &[f32],
+    rate: u32,
+) -> Result<Similarity> {
     let samples = if rate == MODEL_RATE {
         samples.to_vec()
     } else {
@@ -130,7 +142,7 @@ pub fn similarity_to_profile(
             .sqrt() as f32;
         if rms >= MIN_RMS {
             if let Ok(vector) = embedder.embed(window, MODEL_RATE) {
-                values.push(cosine(&vector, &enrolled));
+                values.push(cosine(&vector, enrolled));
             }
         }
         start += HOP;
@@ -145,6 +157,49 @@ pub fn similarity_to_profile(
         min: *values.first().unwrap_or(&0.0),
         median,
         max: *values.last().unwrap_or(&0.0),
+    })
+}
+
+/// Suggested guard threshold from the user's own A/B takes.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct Recommendation {
+    pub takes: u32,
+    /// fifth percentile of the per-take medians
+    pub p5: f32,
+    pub median: f32,
+    pub threshold: f32,
+}
+
+/// Embeds the profile once, measures every take, and suggests a threshold
+/// 0.15 below the fifth percentile. With no labelled foreign voice this is the
+/// honest ceiling: it keeps the guard off the owner's quiet takes, and the user
+/// can still lower it manually.
+pub fn recommend_threshold(
+    embedder: &mut SpeakerEmbedder,
+    profile: &Path,
+    takes: &[PathBuf],
+) -> Result<Recommendation> {
+    let enrolled = embedding_from_wav(embedder, profile)?;
+    let mut medians: Vec<f32> = Vec::new();
+    for path in takes {
+        let Ok((samples, rate)) = wav::read_mono(path) else {
+            continue;
+        };
+        if let Ok(similarity) = similarity_to_enrolled(embedder, &enrolled, &samples, rate) {
+            medians.push(similarity.median);
+        }
+    }
+    if medians.is_empty() {
+        return Err(anyhow!("no usable takes"));
+    }
+    medians.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p5 = medians[(medians.len().saturating_sub(1)) * 5 / 100];
+    let median = medians[medians.len() / 2];
+    Ok(Recommendation {
+        takes: medians.len() as u32,
+        p5,
+        median,
+        threshold: (p5 - 0.15).clamp(0.25, 0.6),
     })
 }
 

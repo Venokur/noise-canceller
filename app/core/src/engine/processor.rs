@@ -495,6 +495,9 @@ impl Processor {
             self.shared
                 .lufs
                 .store(self.chain.lufs().to_bits(), Ordering::Relaxed);
+            self.shared
+                .true_peak
+                .store(self.chain.true_peak_db().to_bits(), Ordering::Relaxed);
 
             if self.rate.trace {
                 eprintln!(
@@ -617,6 +620,9 @@ impl Processor {
         fade_suppression(&self.shared);
         self.shared
             .lufs
+            .store((-120.0f32).to_bits(), Ordering::Relaxed);
+        self.shared
+            .true_peak
             .store((-120.0f32).to_bits(), Ordering::Relaxed);
         let produced = self.up.process(&self.zeros, &mut self.up_buf);
         for sample in self.up_buf[..produced].iter_mut() {

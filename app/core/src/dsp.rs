@@ -550,6 +550,115 @@ impl Default for Loudness {
     }
 }
 
+/// Final safety stage: a 5 ms lookahead limiter with a 4× inter-sample peak
+/// estimate. The sample-peak limiter that used to sit here let a resampled
+/// signal clip between samples; this one looks at the oversampled envelope
+/// before it reaches the device.
+pub struct TruePeakLimiter {
+    ceiling_db: f64,
+    ceiling: f64,
+    delay: Vec<f64>,
+    peaks: Vec<f64>,
+    lookahead: usize,
+    position: usize,
+    gain: f64,
+    previous: f64,
+    attack: f64,
+    release: f64,
+    hold: f64,
+}
+
+impl TruePeakLimiter {
+    pub fn new() -> Self {
+        Self {
+            ceiling_db: -1.0,
+            ceiling: 10f64.powf(-1.0 / 20.0),
+            delay: Vec::new(),
+            peaks: Vec::new(),
+            lookahead: 0,
+            position: 0,
+            gain: 1.0,
+            previous: 0.0,
+            attack: 0.0,
+            release: 0.0,
+            hold: 0.0,
+        }
+    }
+
+    pub fn prepare(&mut self, sample_rate: f64) {
+        self.ceiling = 10f64.powf(self.ceiling_db / 20.0);
+        // 5 ms is enough to catch a transient before it reaches the output;
+        // shorter looks fine on a meter but still clicks.
+        self.lookahead = ((sample_rate * 0.005) as usize).max(8);
+        self.delay = vec![0.0; self.lookahead];
+        self.peaks = vec![0.0; self.lookahead];
+        self.position = 0;
+        self.gain = 1.0;
+        self.previous = 0.0;
+        self.hold = 0.0;
+        self.attack = 1.0 - (-1000.0 / 1.0 / sample_rate).exp();
+        self.release = 1.0 - (-1000.0 / 100.0 / sample_rate).exp();
+    }
+
+    #[inline]
+    pub fn process(&mut self, x: f64, sample_rate: f64) -> f64 {
+        if self.lookahead == 0 {
+            self.prepare(sample_rate);
+        }
+
+        // 4x linear interpolation between the previous and the current sample:
+        // cheap, and enough to see the inter-sample overshoot the old limiter
+        // missed. The result is not a broadcast true-peak meter, hence the
+        // "4x" wording in the UI.
+        let mut peak = x.abs().max(self.previous.abs());
+        for fraction in [0.25f64, 0.5, 0.75] {
+            let value = self.previous + (x - self.previous) * fraction;
+            peak = peak.max(value.abs());
+        }
+        self.previous = x;
+
+        self.peaks[self.position] = peak;
+        self.delay[self.position] = x;
+        self.position = (self.position + 1) % self.lookahead;
+
+        let window_peak = self.peaks.iter().fold(0.0f64, |max, value| max.max(*value));
+        let target = if window_peak > self.ceiling {
+            self.ceiling / window_peak
+        } else {
+            1.0
+        };
+        let coef = if target < self.gain {
+            self.attack
+        } else {
+            self.release
+        };
+        self.gain += (target - self.gain) * coef;
+
+        let out = self.delay[self.position] * self.gain;
+        self.hold = (self.hold * 0.999).max(out.abs());
+        out
+    }
+
+    pub fn true_peak_db(&self) -> f32 {
+        (20.0 * (self.hold + 1e-9).log10()) as f32
+    }
+
+    pub fn reset(&mut self) {
+        self.delay.fill(0.0);
+        self.peaks.fill(0.0);
+        self.position = 0;
+        self.gain = 1.0;
+        self.previous = 0.0;
+        self.hold = 0.0;
+    }
+}
+
+impl Default for TruePeakLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Limiter {
     gain: f64,
     ceiling: f64,
@@ -601,7 +710,7 @@ pub struct Chain {
     /// straight into the hard `clamp(-1.0, 1.0)`: a loud syllable clipped on the
     /// very last sample. This one is idle (gain 1.0) whenever the signal stays
     /// under the ceiling, so the shipped -3 dB setting is still bit-exact.
-    safety: Limiter,
+    safety: TruePeakLimiter,
     loudness: Loudness,
     /// tone control: body shelf at 200 Hz and presence shelf at 3 kHz, both
     /// after the AGC and before the limiter
@@ -634,6 +743,8 @@ pub struct Chain {
     comfort_enabled: bool,
     comfort_level: f32,
     output_gain_db: f32,
+    loudness_target_db: f32,
+    normalizer_gain_db: f32,
     noise_state: u64,
 }
 
@@ -662,7 +773,7 @@ impl Chain {
             gate: Gate::default(),
             agc: Agc::default(),
             limiter: Limiter::default(),
-            safety: Limiter::default(),
+            safety: TruePeakLimiter::default(),
             loudness: Loudness::new(),
             tone_low: Biquad::default(),
             tone_high: Biquad::default(),
@@ -691,6 +802,8 @@ impl Chain {
             comfort_enabled: false,
             comfort_level: -66.0,
             output_gain_db: 0.0,
+            loudness_target_db: 0.0,
+            normalizer_gain_db: 0.0,
             noise_state: 0x2545F4914F6CDD1D,
         };
         chain.configure(&Settings::default(), 48000);
@@ -712,6 +825,7 @@ impl Chain {
         self.comfort_enabled = settings.comfort_noise_enabled;
         self.comfort_level = settings.comfort_noise_db;
         self.output_gain_db = settings.output_gain_db;
+        self.loudness_target_db = settings.loudness_target_db;
 
         self.gate.threshold_db = settings.gate_threshold_db as f64;
         self.gate.ratio = settings.gate_ratio as f64;
@@ -726,7 +840,7 @@ impl Chain {
         self.limiter.prepare();
         // the final guard: whatever the output volume, click suppressor and
         // comfort noise produced must still leave the chain under the ceiling
-        self.safety.prepare();
+        self.safety.prepare(self.sample_rate);
         self.loudness.configure(self.sample_rate);
 
         // 4th order Butterworth: one biquad alone lets 40-60 Hz rumble through
@@ -803,11 +917,29 @@ impl Chain {
         self.loudness.lufs()
     }
 
+    /// True-peak estimate of the last ~400 ms, dBTP.
+    pub fn true_peak_db(&self) -> f32 {
+        self.safety.true_peak_db()
+    }
+
     /// Processes interleaved-free mono samples in place.
     pub fn process(&mut self, buffer: &mut [f32]) {
         let sr = self.sample_rate;
         let gain = 10f64.powf(self.output_gain_db as f64 / 20.0);
         let comfort_threshold = 10f64.powf(((self.comfort_level + 6.0) as f64) / 20.0);
+
+        // Slow loudness target. Updated once per block from the 400 ms meter:
+        // at most 0.05 dB per block, so a phrase cannot pump. 0 = off.
+        if self.loudness_target_db < 0.0 {
+            let measured = self.loudness.lufs();
+            if measured > -90.0 {
+                let delta = (self.loudness_target_db - measured).clamp(-0.05, 0.05);
+                self.normalizer_gain_db = (self.normalizer_gain_db + delta).clamp(-12.0, 12.0);
+            }
+        } else if self.normalizer_gain_db.abs() > 0.01 {
+            self.normalizer_gain_db *= 0.98;
+        }
+        let normalizer_gain = 10f64.powf(self.normalizer_gain_db as f64 / 20.0);
 
         // A keyboard click or a knock is a crack of 17-25 dB crest; speech stays
         // under 14 dB even at its loudest syllable. Ducking the block that
@@ -890,6 +1022,11 @@ impl Chain {
                 let ramp = 1.0 - self.silence_env / comfort_threshold.max(1e-9);
                 x += self.next_noise() * ramp;
             }
+
+            // Slow loudness target. The meter is the same 400 ms K-weighted
+            // value shown in Diagnostics; the gain moves at most 0.05 dB per
+            // block, so a phrase cannot pump. 0 = off.
+            x *= normalizer_gain;
 
             x = self.safety.process(x, sr);
             self.loudness.process(x);
@@ -1270,6 +1407,20 @@ mod tests {
             "7 kHz moved by {sibilance:.1} dB"
         );
         assert!(body.abs() < 0.5, "1 kHz moved by {body:.1} dB");
+    }
+
+    #[test]
+    fn true_peak_limiter_keeps_a_hot_sine_under_the_ceiling() {
+        let mut limiter = TruePeakLimiter::new();
+        limiter.prepare(48_000.0);
+        let mut peak = 0.0f64;
+        for i in 0..48_000 {
+            let x = (2.0 * std::f64::consts::PI * 997.0 * i as f64 / 48_000.0).sin() * 0.99;
+            let y = limiter.process(x, 48_000.0);
+            peak = peak.max(y.abs());
+        }
+        assert!(peak <= 0.95, "true-peak limiter left {peak:.3}");
+        assert!(limiter.true_peak_db() > -20.0);
     }
 
     #[test]

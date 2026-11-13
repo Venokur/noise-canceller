@@ -289,6 +289,55 @@ pub(crate) fn delete_profile(path: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+pub(crate) async fn speaker_recommendation(
+    state: State<'_, AppState>,
+) -> Result<noise_canceller_core::speaker::Recommendation, String> {
+    let settings = state.settings_snapshot();
+    let lang = Lang::from_settings(&settings);
+    let profile = settings.profile_path.clone().ok_or_else(|| {
+        lang.text(
+            "сначала запишите профиль голоса",
+            "record a voice profile first",
+        )
+        .to_string()
+    })?;
+    let model = noise_canceller_core::paths::speaker_model();
+    if !model.exists() {
+        return Err(lang
+            .text(
+                "модель проверки голоса не найдена",
+                "the speaker-check model is missing",
+            )
+            .to_string());
+    }
+    let takes: Vec<std::path::PathBuf> = noise_canceller_core::recordings::pairs()
+        .into_iter()
+        .take(20)
+        .map(noise_canceller_core::recordings::raw)
+        .collect();
+    if takes.is_empty() {
+        return Err(lang
+            .text(
+                "нет записей A/B для оценки",
+                "there are no A/B takes to evaluate",
+            )
+            .to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut embedder = noise_canceller_core::model::SpeakerEmbedder::new(&model, 2)
+            .map_err(|e| e.to_string())?;
+        noise_canceller_core::speaker::recommend_threshold(
+            &mut embedder,
+            std::path::Path::new(&profile),
+            &takes,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(async)]
 pub(crate) async fn profile_consistency(
     path: String,
 ) -> Result<noise_canceller_core::profile::ProfileMeta, String> {

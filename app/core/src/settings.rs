@@ -119,6 +119,8 @@ pub struct Settings {
     pub tone_enabled: bool,
     pub tone_low_db: f32,
     pub tone_high_db: f32,
+    /// target output loudness in LUFS; 0 = off, otherwise -16/-20 etc.
+    pub loudness_target_db: f32,
     /// split-band de-esser after the tone shelves, before the limiter
     pub deess_enabled: bool,
     /// maximum reduction of the 5 kHz band, dB
@@ -210,6 +212,7 @@ impl Default for Settings {
             tone_enabled: true,
             tone_low_db: 0.0,
             tone_high_db: 0.0,
+            loudness_target_db: 0.0,
             deess_enabled: false,
             deess_db: 6.0,
             air_amount: 0.10,
@@ -287,6 +290,11 @@ impl Settings {
         self.high_pass_hz = self.high_pass_hz.clamp(20.0, 300.0);
         self.tone_low_db = self.tone_low_db.clamp(TONE_LOW_MIN_DB, TONE_LOW_MAX_DB);
         self.tone_high_db = self.tone_high_db.clamp(-TONE_HIGH_MAX_DB, TONE_HIGH_MAX_DB);
+        self.loudness_target_db = if self.loudness_target_db.abs() < 0.1 {
+            0.0
+        } else {
+            self.loudness_target_db.clamp(-30.0, -6.0)
+        };
         self.deess_db = self.deess_db.clamp(0.0, 12.0);
         self.speaker_threshold = self.speaker_threshold.clamp(0.05, 0.95);
         self.air_amount = self.air_amount.clamp(0.0, 1.0);

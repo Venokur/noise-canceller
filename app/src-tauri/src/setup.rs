@@ -144,6 +144,7 @@ pub(crate) fn run() {
             crate::commands::delete_profile,
             crate::commands::rename_profile,
             crate::commands::profile_consistency,
+            crate::commands::speaker_recommendation,
             crate::commands::ab_start,
             crate::commands::ab_status,
             crate::commands::last_ab,

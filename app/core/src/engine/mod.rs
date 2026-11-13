@@ -94,6 +94,8 @@ pub struct Stats {
     pub speaker_confidence: f32,
     /// momentary loudness of the output, LUFS
     pub lufs: f32,
+    /// true-peak estimate of the output, dBTP
+    pub true_peak_db: f32,
     /// false when the processor thread died (panic) while the streams live on
     pub healthy: bool,
 }
@@ -146,6 +148,8 @@ struct Shared {
     speaker_confidence: Arc<AtomicU32>,
     /// momentary loudness of the output, LUFS
     lufs: Arc<AtomicU32>,
+    /// true-peak estimate of the rendered output, dBTP
+    true_peak: Arc<AtomicU32>,
     /// duck the output when the speaker confidence is low
     speaker_guard: Arc<AtomicBool>,
     speaker_threshold: Arc<AtomicU32>,
@@ -195,6 +199,7 @@ impl Shared {
             input_channel: Arc::new(AtomicI32::new(settings.input_channel)),
             speaker_confidence: Arc::new(AtomicU32::new((-1.0f32).to_bits())),
             lufs: Arc::new(AtomicU32::new((-120.0f32).to_bits())),
+            true_peak: Arc::new(AtomicU32::new((-120.0f32).to_bits())),
             speaker_guard: Arc::new(AtomicBool::new(settings.speaker_guard)),
             speaker_threshold: Arc::new(AtomicU32::new(
                 settings.speaker_threshold.clamp(0.05, 0.95).to_bits(),
@@ -567,6 +572,7 @@ impl Engine {
                 self.shared.speaker_confidence.load(Ordering::Relaxed),
             ),
             lufs: f32::from_bits(self.shared.lufs.load(Ordering::Relaxed)),
+            true_peak_db: f32::from_bits(self.shared.true_peak.load(Ordering::Relaxed)),
             healthy: self.healthy(),
         }
     }
