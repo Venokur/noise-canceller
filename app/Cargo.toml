@@ -3,7 +3,7 @@ resolver = "2"
 members = ["core", "cli", "src-tauri"]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "MIT"
 
@@ -28,3 +28,4 @@ cpal = "0.18"
 rtrb = "0.4"
 libloading = "0.8"
 hound = "3"
+
