@@ -57,6 +57,7 @@
   "toast.levelMatchedText": "Выход сдвинут на {sign}{db} дБ относительно оригинала.",
   "toast.takeApplied": "Настройки дубля применены",
   "toast.takeAppliedText": "Обработка перезапущена с параметрами этой записи.",
+  "toast.presetApplied": "Пресет применён",
   "toast.profileWeakTitle": "Профиль голоса слабый",
   "toast.profileWeakText": "Запишите новый — 15 секунд в тишине, обычным голосом.",
   "toast.engineRestarted": "Движок перезапущен",

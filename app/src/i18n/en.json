@@ -57,6 +57,7 @@
   "toast.levelMatchedText": "The output moved {sign}{db} dB relative to the original.",
   "toast.takeApplied": "Take settings applied",
   "toast.takeAppliedText": "Processing restarted with the parameters of this take.",
+  "toast.presetApplied": "Preset applied",
   "toast.profileWeakTitle": "The voice profile is weak",
   "toast.profileWeakText": "Record a new one — 15 seconds of silence, in your normal voice.",
   "toast.engineRestarted": "Engine restarted",

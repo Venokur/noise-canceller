@@ -200,15 +200,19 @@ const outputDb = computed(() => (stats.value.outputRms > 1e-5 ? `${(20 * Math.lo
 
 
 const presets = computed(() => [
-  { id: "home", label: t("preset.home"), patch: { gateThresholdDb: -60, gateRatio: 2, gateReleaseMs: 300, agcTargetDb: -24, agcMaxGainDb: 12, highPassHz: 85, comfortNoiseEnabled: false } },
-  { id: "office", label: t("preset.office"), patch: { gateThresholdDb: -52, gateRatio: 3, gateReleaseMs: 250, agcTargetDb: -22, highPassHz: 100, comfortNoiseEnabled: true, comfortNoiseDb: -64 } },
-  { id: "street", label: t("preset.street"), patch: { gateThresholdDb: -46, gateRatio: 4, gateReleaseMs: 200, agcTargetDb: -20, highPassHz: 120, comfortNoiseEnabled: true, comfortNoiseDb: -60 } },
-  { id: "stream", label: t("preset.stream"), patch: { gateThresholdDb: -58, gateRatio: 2.5, gateReleaseMs: 300, agcTargetDb: -24, highPassHz: 80, comfortNoiseEnabled: false, outputGainDb: -6 } },
+  { id: "home", label: t("preset.home"), patch: { gateThresholdDb: -60, gateRatio: 2, gateReleaseMs: 300, agcTargetDb: -24, agcMaxGainDb: 12, highPassHz: 85, comfortNoiseEnabled: false, residualDenoise: "dpdfnet", residualMix: 1, toneEnabled: true, toneLowDb: 0, toneHighDb: 0, airAmount: 0.10, deessEnabled: false, maxSuppressionDb: 15 } },
+  { id: "office", label: t("preset.office"), patch: { gateThresholdDb: -52, gateRatio: 3, gateReleaseMs: 250, agcTargetDb: -22, highPassHz: 100, comfortNoiseEnabled: true, comfortNoiseDb: -64, residualDenoise: "dpdfnet", residualMix: 1, toneEnabled: true, toneLowDb: 0, toneHighDb: 2.5, airAmount: 0.15, deessEnabled: true, deessDb: 6, maxSuppressionDb: 12 } },
+  { id: "street", label: t("preset.street"), patch: { gateThresholdDb: -46, gateRatio: 4, gateReleaseMs: 200, agcTargetDb: -20, highPassHz: 120, comfortNoiseEnabled: true, comfortNoiseDb: -60, residualDenoise: "dpdfnet", residualMix: 1, toneEnabled: true, toneLowDb: 0, toneHighDb: 3, airAmount: 0.15, deessEnabled: true, deessDb: 8, maxSuppressionDb: 8 } },
+  { id: "stream", label: t("preset.stream"), patch: { gateThresholdDb: -58, gateRatio: 2.5, gateReleaseMs: 300, agcTargetDb: -24, highPassHz: 80, comfortNoiseEnabled: false, outputGainDb: -6, residualDenoise: "dpdfnet", residualMix: 0.9, toneEnabled: true, toneLowDb: 0, toneHighDb: 2, airAmount: 0.15, deessEnabled: true, deessDb: 6, agcMaxGainDb: 6, maxSuppressionDb: 15 } },
 ]);
 
-function applyPreset(patch: Record<string, unknown>) {
+function applyPreset(patch: Record<string, unknown>, name: string) {
   if (!settings.value) return;
+  const previousResidual = settings.value.residualDenoise;
   Object.assign(settings.value, patch);
+  notify(t("toast.presetApplied"), "ok", name);
+  // the residual stage is built at engine start, unlike the DSP controls
+  if (settings.value.residualDenoise !== previousResidual) restartSoon();
 }
 
 const inputOptions = computed(() => inputs.value.map((n) => ({ value: n, label: n })));

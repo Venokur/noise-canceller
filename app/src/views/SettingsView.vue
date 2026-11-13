@@ -56,7 +56,7 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 v-for="preset in presets"
                 :key="preset.id"
                 class="chip"
-                @click="applyPreset(preset.patch)"
+                @click="applyPreset(preset.patch, preset.label)"
               >
                 {{ preset.label }}
               </button>
