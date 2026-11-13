@@ -19,7 +19,7 @@ use streams::{install_panic_hook, open_input, open_output};
 
 use crate::pipeline::Pipeline;
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -60,6 +60,9 @@ pub struct Stats {
     /// effective output ring buffer (auto or manual), ms
     pub buffer_ms: f32,
     pub underruns: u32,
+    /// capture sample rate and channel count, for the "48 kHz · mono" caption
+    pub in_rate: u32,
+    pub in_channels: u16,
     /// output sample rate, so the UI can turn the sample counter into ms
     pub out_rate: u32,
     pub backend: String,
@@ -129,6 +132,8 @@ struct Shared {
     pulled: Arc<AtomicU64>,
     /// capture samples dropped because the input ring was full
     capture_drops: Arc<AtomicU32>,
+    /// capture channel: -1 mixes all channels, 0.. picks one
+    input_channel: Arc<AtomicI32>,
     /// frames the output device asked for in the last callback
     callback_frames: Arc<AtomicU32>,
     /// blocks where the model returned NaN/Inf and were zeroed
@@ -171,6 +176,7 @@ impl Shared {
             pushed: Arc::new(AtomicU64::new(0)),
             pulled: Arc::new(AtomicU64::new(0)),
             capture_drops: Arc::new(AtomicU32::new(0)),
+            input_channel: Arc::new(AtomicI32::new(settings.input_channel)),
             callback_frames: Arc::new(AtomicU32::new(0)),
             bad_blocks: Arc::new(AtomicU32::new(0)),
         }
@@ -253,6 +259,7 @@ pub struct Engine {
     processor: Option<JoinHandle<()>>,
     backend: String,
     in_rate: u32,
+    in_channels: u16,
     out_rate: u32,
     threads: u16,
 }
@@ -302,6 +309,7 @@ impl Engine {
         let out_cfg = output.default_output_config()?;
 
         let in_rate = in_cfg.sample_rate();
+        let in_channels = in_cfg.channels();
         let out_rate = out_cfg.sample_rate();
 
         let chunk_samples = block_samples(settings.chunk_ms);
@@ -423,6 +431,7 @@ impl Engine {
             processor: Some(processor),
             backend,
             in_rate,
+            in_channels,
             out_rate,
             threads,
         })
@@ -450,6 +459,9 @@ impl Engine {
         self.shared
             .leveling
             .store(settings.input_leveling, Ordering::Relaxed);
+        self.shared
+            .input_channel
+            .store(settings.input_channel, Ordering::Relaxed);
         self.shared.settings_seq.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -470,6 +482,8 @@ impl Engine {
             latency_ms: f32::from_bits(self.shared.latency.load(Ordering::Relaxed)),
             buffer_ms: f32::from_bits(self.shared.buffer_ms.load(Ordering::Relaxed)),
             underruns: self.shared.underruns.load(Ordering::Relaxed),
+            in_rate: self.in_rate,
+            in_channels: self.in_channels,
             out_rate: self.out_rate,
             overflows: self.shared.overflows.load(Ordering::Relaxed),
             capture_drops: self.shared.capture_drops.load(Ordering::Relaxed),

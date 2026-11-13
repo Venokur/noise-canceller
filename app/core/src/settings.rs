@@ -80,6 +80,9 @@ pub struct Settings {
     /// remembered device names, so a restart keeps the user's choice
     pub input_device: String,
     pub output_device: String,
+    /// which capture channel of a stereo interface to use: -1 mixes all channels,
+    /// 0.. picks one. Mixing channels that differ in phase comb-filters the voice.
+    pub input_channel: i32,
 
     /// keeps the model input at a usable level on quiet microphones
     pub input_leveling: bool,
@@ -171,6 +174,7 @@ impl Default for Settings {
 
             input_device: String::new(),
             output_device: String::new(),
+            input_channel: -1,
             input_leveling: true,
 
             residual_denoise: "dpdfnet".into(),
@@ -242,6 +246,11 @@ impl Settings {
         self.buffer_ms = self.buffer_ms.clamp(BUFFER_MS_MIN, BUFFER_MS_MAX);
         self.chunk_ms = self.chunk_ms.clamp(20.0, 200.0);
         self.denoiser_threads = self.denoiser_threads.clamp(1, 16);
+        self.input_channel = if self.input_channel < 0 {
+            -1
+        } else {
+            self.input_channel.min(31)
+        };
         self.agc_target_db = self.agc_target_db.clamp(-40.0, -6.0);
         self.agc_max_gain_db = self.agc_max_gain_db.clamp(0.0, 30.0);
         self.gate_threshold_db = self.gate_threshold_db.clamp(-80.0, -20.0);
@@ -249,7 +258,7 @@ impl Settings {
         self.gate_attack_ms = self.gate_attack_ms.clamp(1.0, 100.0);
         self.gate_release_ms = self.gate_release_ms.clamp(20.0, 1000.0);
         self.gate_hold_ms = self.gate_hold_ms.clamp(0.0, 1000.0);
-        self.output_gain_db = self.output_gain_db.clamp(-24.0, 6.0);
+        self.output_gain_db = self.output_gain_db.clamp(-24.0, 18.0);
         self.high_pass_hz = self.high_pass_hz.clamp(20.0, 300.0);
         self.tone_low_db = self.tone_low_db.clamp(TONE_LOW_MIN_DB, TONE_LOW_MAX_DB);
         self.tone_high_db = self.tone_high_db.clamp(-TONE_HIGH_MAX_DB, TONE_HIGH_MAX_DB);

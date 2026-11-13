@@ -16,7 +16,7 @@ use super::helpers::{rms_of, sanitize, InputVoice, Leveler, PeakGuard, Slew};
 use super::streams::push_block;
 use super::{fade_suppression, Persist, Shared, MODEL_RATE, SILENCE_SKIP_BLOCKS};
 use crate::air::Air;
-use crate::dsp::Chain;
+use crate::dsp::{Chain, InputFilter};
 use crate::pipeline::Pipeline;
 use crate::resample::Resampler;
 use crate::settings::{self, Settings};
@@ -176,6 +176,7 @@ pub(super) struct Processor {
     up_buf: Vec<f32>,
     block: Vec<f32>,
     input_voice: InputVoice,
+    input_filter: InputFilter,
     auto: AutoBuffer,
     max_suppression: f32,
     analyzer: Spectrum,
@@ -240,6 +241,7 @@ impl Processor {
             up_buf,
             block: vec![0.0f32; chunk_samples],
             input_voice: InputVoice::new(),
+            input_filter: InputFilter::new(MODEL_RATE as f32),
             auto: AutoBuffer {
                 enabled: settings.buffer_auto,
                 ms: buffer_ms,
@@ -297,6 +299,9 @@ impl Processor {
             for slot in self.block.iter_mut() {
                 *slot = in_cons.pop().unwrap_or(0.0);
             }
+            // DC and subsonic rumble never reach the leveler or the model: a
+            // desk thump used to lift the gain and clip the model input.
+            self.input_filter.process(&mut self.block);
             let in_voice = self.input_voice.update(&self.block);
 
             // silence costs nothing: skip the model and emit a clean zero block

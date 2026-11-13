@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use noise_canceller_core::air::Air;
-use noise_canceller_core::dsp::Chain;
+use noise_canceller_core::dsp::{Chain, InputFilter};
 use noise_canceller_core::lang::Lang;
 use noise_canceller_core::paths;
 use noise_canceller_core::resample::Resampler;
@@ -284,6 +284,7 @@ fn replay_file() -> Result<()> {
     let mut out: Vec<f32> = Vec::with_capacity(at16.len() * 3 + 64);
     let mut up_buf = vec![0.0f32; up.max_output(chunk) + 64];
     let mut input_voice = InputVoice::new();
+    let mut input_filter = InputFilter::new(16_000.0);
     let mut block_index = 0usize;
     let mut was_speaking = false;
     let mut onset_blocks = 0u32;
@@ -298,6 +299,9 @@ fn replay_file() -> Result<()> {
     let zeros = vec![0.0f32; chunk];
     let mut silent_run = 0u32;
     for block in at16.chunks_mut(chunk) {
+        // same input conditioning as the live engine: DC/subsonic removal
+        // before the leveler and the model
+        input_filter.process(block);
         // same silence skip as the live engine, so replay reproduces what the
         // app does after a quiet room — including the gate state
         let raw_rms = (block.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>()
@@ -680,8 +684,10 @@ fn selftest() -> Result<()> {
         .unwrap_or(0.0);
     let mut leveler = Leveler::new(start_gain);
     let mut input_voice = InputVoice::new();
+    let mut input_filter = InputFilter::new(16_000.0);
 
     for block in at16[..at16_len].chunks_mut(chunk) {
+        input_filter.process(block);
         let second = isolated.len() as f32 / 16_000.0;
         let speaker = input_voice.update(block);
         leveler.process(block, true, second > 1.5, speaker);

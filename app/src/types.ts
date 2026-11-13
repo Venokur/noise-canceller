@@ -16,6 +16,8 @@ export interface Settings {
   maxSuppressionDb: number;
   inputDevice: string;
   outputDevice: string;
+  /** -1 mixes all capture channels, 0.. picks one */
+  inputChannel: number;
   inputLeveling: boolean;
   residualDenoise: string;
   residualOrder: string;
@@ -66,6 +68,8 @@ export interface Stats {
   latencyMs: number;
   bufferMs: number;
   underruns: number;
+  inRate: number;
+  inChannels: number;
   outRate: number;
   overflows: number;
   captureDrops: number;

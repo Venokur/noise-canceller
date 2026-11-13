@@ -51,12 +51,20 @@ pub(super) fn capture_f32(
 
     let mut sum_sq = 0.0f64;
     let mut peak = 0.0f32;
+    // A stereo interface often has the voice on one channel and something else
+    // on the other; averaging two channels with a phase difference comb-filters
+    // the voice. -1 keeps the old mono mix, 0.. picks a channel.
+    let channel = shared.input_channel.load(Ordering::Relaxed);
     for f in 0..frames {
-        let mut acc = 0.0f32;
-        for c in 0..channels {
-            acc += data[f * channels + c];
-        }
-        let value = acc / channels as f32;
+        let value = if channel >= 0 && (channel as usize) < channels {
+            data[f * channels + channel as usize]
+        } else {
+            let mut acc = 0.0f32;
+            for c in 0..channels {
+                acc += data[f * channels + c];
+            }
+            acc / channels as f32
+        };
         mono[f] = value;
         sum_sq += (value as f64) * (value as f64);
         peak = peak.max(value.abs());

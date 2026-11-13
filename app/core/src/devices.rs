@@ -51,9 +51,16 @@ pub fn default_names() -> (Option<String>, Option<String>) {
 }
 
 /// True for the virtual cable in either direction.
+///
+/// A bare `contains("cable")` also matched real microphones from Cable Matters
+/// and CableCreation, which then could not be selected at all.
 pub fn is_cable_name(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.contains("cable") || lower.contains("vb-audio") || lower.contains("vb-cable")
+    lower.contains("vb-audio")
+        || lower.contains("vb-cable")
+        || lower.contains("virtual cable")
+        || lower.contains("cable input")
+        || lower.contains("cable output")
 }
 
 /// The cable's playback side, i.e. what we render into.
@@ -72,6 +79,23 @@ pub fn find_cable(host: &cpal::Host) -> Option<cpal::Device> {
 
 pub fn cable_present() -> bool {
     find_cable(&cpal::default_host()).is_some()
+}
+
+/// Channel count of the chosen (or default) capture device, for the channel
+/// picker. A failure is 0: the picker then hides instead of blocking the screen.
+pub fn input_channels(name: Option<&str>) -> u16 {
+    let host = cpal::default_host();
+    let device = if let Some(target) = name.filter(|n| !n.is_empty()) {
+        host.input_devices()
+            .ok()
+            .and_then(|mut list| list.find(|device| name_of(device).as_deref() == Some(target)))
+    } else {
+        host.default_input_device()
+    };
+    device
+        .and_then(|device| device.default_input_config().ok())
+        .map(|config| config.channels())
+        .unwrap_or(0)
 }
 
 /// The device the user chose, or the system default when nothing was chosen.
@@ -117,4 +141,28 @@ pub fn pick_input(host: &cpal::Host, name: Option<&str>, lang: Lang) -> Result<c
 
 pub fn pick_output(host: &cpal::Host, name: Option<&str>, lang: Lang) -> Result<cpal::Device> {
     pick(host, name, false, lang)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_cable_name;
+
+    #[test]
+    fn cable_names_are_narrow_enough_for_real_microphones() {
+        for name in [
+            "CABLE Input (VB-Audio Virtual Cable)",
+            "CABLE Output (VB-Audio Virtual Cable)",
+            "VB-Audio Virtual Cable",
+            "Voicemeeter Virtual Cable",
+        ] {
+            assert!(is_cable_name(name), "{name} should be the cable");
+        }
+        for name in [
+            "Cable Matters USB Microphone",
+            "CableCreation Headset",
+            "Microphone (Realtek(R) Audio)",
+        ] {
+            assert!(!is_cable_name(name), "{name} is a real microphone");
+        }
+    }
 }

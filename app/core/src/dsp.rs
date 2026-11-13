@@ -367,12 +367,51 @@ impl Agc {
     }
 }
 
+/// Removes DC and subsonic rumble *before* the leveler and the model.
+///
+/// The post-model high-pass cannot help here: a desk thump or wind already
+/// moved the leveler and pushed the model input around by the time it runs.
+/// 40 Hz, 4th order, is below the owner's 96-110 Hz fundamental: at 96 Hz it is
+/// within 0.1 dB, while 20 Hz loses 24 dB. No notch at 100/200 Hz — that
+/// experiment cut the fundamental and made vowels hollow.
+pub struct InputFilter {
+    hp1: Biquad,
+    hp2: Biquad,
+}
+
+impl InputFilter {
+    pub fn new(sample_rate: f32) -> Self {
+        let mut filter = Self {
+            hp1: Biquad::default(),
+            hp2: Biquad::default(),
+        };
+        filter.configure(sample_rate);
+        filter
+    }
+
+    pub fn configure(&mut self, sample_rate: f32) {
+        self.hp1.high_pass(sample_rate, 40.0, 0.5412);
+        self.hp2.high_pass(sample_rate, 40.0, 1.3066);
+    }
+
+    pub fn process(&mut self, block: &mut [f32]) {
+        for sample in block.iter_mut() {
+            let x = *sample as f64;
+            *sample = self.hp2.process(self.hp1.process(x)) as f32;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.hp1.reset();
+        self.hp2.reset();
+    }
+}
+
 pub struct Limiter {
     gain: f64,
     ceiling: f64,
     pub ceiling_db: f64,
 }
-
 impl Default for Limiter {
     fn default() -> Self {
         Self {
@@ -414,6 +453,12 @@ pub struct Chain {
     gate: Gate,
     agc: Agc,
     limiter: Limiter,
+    /// Final safety limiter after the output volume and comfort noise. The
+    /// output gain sits after `limiter`, so a positive volume used to run
+    /// straight into the hard `clamp(-1.0, 1.0)`: a loud syllable clipped on the
+    /// very last sample. This one is idle (gain 1.0) whenever the signal stays
+    /// under the ceiling, so the shipped -3 dB setting is still bit-exact.
+    safety: Limiter,
     /// tone control: body shelf at 200 Hz and presence shelf at 3 kHz, both
     /// after the AGC and before the limiter
     tone_low: Biquad,
@@ -470,6 +515,7 @@ impl Chain {
             gate: Gate::default(),
             agc: Agc::default(),
             limiter: Limiter::default(),
+            safety: Limiter::default(),
             tone_low: Biquad::default(),
             tone_high: Biquad::default(),
             click_gain: 1.0,
@@ -525,6 +571,9 @@ impl Chain {
         self.agc.max_gain_db = settings.agc_max_gain_db as f64;
 
         self.limiter.prepare();
+        // the final guard: whatever the output volume, click suppressor and
+        // comfort noise produced must still leave the chain under the ceiling
+        self.safety.prepare();
 
         // 4th order Butterworth: one biquad alone lets 40-60 Hz rumble through
         self.high_pass
@@ -676,6 +725,7 @@ impl Chain {
                 x += self.next_noise() * ramp;
             }
 
+            x = self.safety.process(x, sr);
             *sample = (x as f32).clamp(-1.0, 1.0);
         }
     }
@@ -1004,5 +1054,55 @@ mod tests {
         let mut chain = tone_chain(-6.0, 0.0);
         let low = tone_change_db(&mut chain, 80.0);
         assert!((low + 6.0).abs() < 1.5, "80 Hz moved by {low:.1} dB");
+    }
+
+    #[test]
+    fn the_input_filter_removes_rumble_but_keeps_the_fundamental() {
+        let run = |hz: f64| {
+            let mut filter = InputFilter::new(16_000.0);
+            let mut block: Vec<f32> = (0..16_000)
+                .map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / 16_000.0).sin() as f32 * 0.1)
+                .collect();
+            // let the filter settle, then measure the last half second
+            filter.process(&mut block[..8_000]);
+            let mut tail = block[8_000..].to_vec();
+            filter.process(&mut tail);
+            20.0 * (tail.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / tail.len() as f64)
+                .sqrt()
+                .log10()
+        };
+        let voice = run(96.0);
+        let rumble = run(20.0);
+        assert!(voice > -24.0, "96 Hz was cut: {voice:.1} dBFS");
+        assert!(
+            rumble < voice - 18.0,
+            "20 Hz was not removed: {rumble:.1} vs {voice:.1} dBFS"
+        );
+    }
+
+    #[test]
+    fn a_positive_output_volume_cannot_clip() {
+        // +18 dB used to be applied after the limiter and then hard-clamped:
+        // every loud syllable lost its top. The safety limiter must keep the
+        // block under full scale without reaching for `clamp`.
+        let mut chain = Chain::new();
+        let settings = Settings {
+            high_pass_enabled: false,
+            gate_enabled: false,
+            agc_enabled: false,
+            limiter_enabled: true,
+            comfort_noise_enabled: false,
+            output_gain_db: 18.0,
+            ..Settings::default()
+        };
+        chain.configure(&settings, 48_000);
+
+        let mut block: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.07).sin() * 0.3).collect();
+        chain.process(&mut block);
+
+        let peak = block.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak <= 1.0, "output reached {peak}");
+        assert!(peak < 0.999, "the safety limiter did not engage: {peak}");
+        assert!(block.iter().all(|v| v.is_finite()));
     }
 }

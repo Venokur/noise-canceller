@@ -28,6 +28,11 @@ pub(crate) fn list_devices() -> (Vec<String>, Vec<String>) {
     (devices::input_devices(), devices::output_devices())
 }
 
+#[tauri::command(async)]
+pub(crate) fn input_channels(name: Option<String>) -> u16 {
+    devices::input_channels(name.as_deref())
+}
+
 #[tauri::command]
 pub(crate) async fn start(
     app: tauri::AppHandle,
