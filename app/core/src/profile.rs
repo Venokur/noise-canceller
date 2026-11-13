@@ -54,7 +54,24 @@ pub struct ProfileMeta {
     pub created: u64,
     pub score: i32,
     pub snr_db: f32,
+    /// how consistent the speech is across the enrolment (0..1); negative =
+    /// not measured yet
+    #[serde(default = "unknown_consistency")]
+    pub consistency: f32,
     pub app_version: String,
+}
+
+fn unknown_consistency() -> f32 {
+    -1.0
+}
+
+/// Persists a measured consistency without touching the wav. Used by the
+/// speaker-verification pass after recording.
+pub fn set_consistency(path: &std::path::Path, value: f32) -> Result<ProfileMeta> {
+    let mut meta = read_meta(path).ok_or_else(|| anyhow!("profile sidecar is missing"))?;
+    meta.consistency = value.clamp(0.0, 1.0);
+    write_meta(path, &meta);
+    Ok(meta)
 }
 
 /// Renames a profile by rewriting its sidecar. An old profile without a
@@ -66,6 +83,7 @@ pub fn rename(path: &std::path::Path, name: &str) -> Result<ProfileMeta> {
         created: 0,
         score: 0,
         snr_db: 0.0,
+        consistency: -1.0,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     });
     meta.name = name.trim().chars().take(48).collect();
@@ -260,6 +278,7 @@ fn record_inner(
             created: stamp,
             score: quality.score,
             snr_db: quality.snr_db,
+            consistency: -1.0,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
         },
     );

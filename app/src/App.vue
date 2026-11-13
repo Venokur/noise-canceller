@@ -25,6 +25,7 @@ import type {
   AbStatus,
   LastAb,
   Profile,
+  ProfileMeta,
   Quality,
   Settings,
   SettingsResult,
@@ -581,6 +582,18 @@ async function calibrateRoom() {
   }
 }
 
+async function evaluateProfileConsistency(path: string) {
+  try {
+    const meta = await invoke<ProfileMeta>("profile_consistency", { path });
+    if (path === selectedProfile.value || path === settings.value?.profilePath) {
+      profileInfo.value = meta;
+    }
+  } catch (e) {
+    // the check is an extra, not a reason to fail the recording
+    console.warn("profile consistency:", e);
+  }
+}
+
 async function recordProfile() {
   if (recording.value || !settings.value || !micReady.value) return;
   await stopPreview();
@@ -605,6 +618,7 @@ async function recordProfile() {
     settings.value.mode = "profile";
     await refreshProfiles();
     selectedProfile.value = profile.path;
+    void evaluateProfileConsistency(profile.path);
     if (running.value) {
       const test = testMode.value;
       await invoke("stop");
@@ -1036,6 +1050,7 @@ provide(APP_CONTEXT, {
   checkModel,
   deleteProfile,
   error,
+  evaluateProfileConsistency,
   exportSettings,
   filterSettings,
   formatStamp,

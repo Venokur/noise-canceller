@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const renaming = ref(false);
 const nameDraft = ref("");
@@ -314,6 +314,14 @@ const noiseStage = computed(() => {
               <AppIcon name="pencil" :size="14" />
             </button>
             <button
+              class="iconbtn"
+              :disabled="!selectedProfile"
+              :title="t('sound.checkConsistency')"
+              @click="evaluateProfileConsistency(selectedProfile)"
+            >
+              <AppIcon name="activity" :size="14" />
+            </button>
+            <button
               :class="btnPrimary"
               :disabled="recording || !micReady"
               :title="micReady ? t('wizard.recordTitle') : t('sound.profileRecordNeedMic')"
@@ -365,6 +373,15 @@ const noiseStage = computed(() => {
           </p>
           <p v-else-if="profileInfo?.device" class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
             {{ t("sound.profileRecordedOn", { device: profileInfo.device }) }}
+          </p>
+          <p
+            v-if="profileInfo && profileInfo.consistency >= 0"
+            class="mt-2 text-[12px] leading-relaxed"
+            :class="profileInfo.consistency < 0.5 ? 'text-[var(--danger)]' : 'text-[var(--muted)]'"
+          >
+            {{ profileInfo.consistency < 0.5
+              ? t("sound.profileConsistencyLow", { value: (profileInfo.consistency * 100).toFixed(0) })
+              : t("sound.profileConsistency", { value: (profileInfo.consistency * 100).toFixed(0) }) }}
           </p>
           <div class="mt-2.5 flex items-center gap-2.5 text-[12.5px] text-[var(--muted)]">
             <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />

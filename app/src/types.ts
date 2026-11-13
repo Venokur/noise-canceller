@@ -124,6 +124,7 @@ export interface ProfileMeta {
   created: number;
   score: number;
   snrDb: number;
+  consistency: number;
   appVersion: string;
 }
 

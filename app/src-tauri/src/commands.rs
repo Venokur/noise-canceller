@@ -266,6 +266,29 @@ pub(crate) fn delete_profile(path: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+pub(crate) async fn profile_consistency(
+    path: String,
+) -> Result<noise_canceller_core::profile::ProfileMeta, String> {
+    let model = noise_canceller_core::paths::speaker_model();
+    if !model.exists() {
+        return Err("speaker-check model is missing".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut embedder = noise_canceller_core::model::SpeakerEmbedder::new(&model, 2)
+            .map_err(|e| e.to_string())?;
+        let value = noise_canceller_core::speaker::profile_consistency(
+            &mut embedder,
+            std::path::Path::new(&path),
+        )
+        .map_err(|e| e.to_string())?;
+        noise_canceller_core::profile::set_consistency(std::path::Path::new(&path), value)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(async)]
 pub(crate) fn rename_profile(
     path: String,
     name: String,

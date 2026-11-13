@@ -30,9 +30,64 @@ const MIN_RMS: f32 = 0.0015;
 /// confidence sentinel: no profile, no speech, or the model is missing
 pub const UNKNOWN: f32 = -1.0;
 
-/// Similarity of every speech window in a recording to one profile.
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+/// How uniform the enrolment is: the profile is split into thirds, the loudest
+/// 3 s of each third are embedded, and the pairwise cosine is collapsed to a
+/// median. A low value means the take mixed voices, distances or a lot of noise.
+pub fn profile_consistency(embedder: &mut SpeakerEmbedder, path: &Path) -> Result<f32> {
+    let (samples, rate) = wav::read_mono(path)?;
+    if samples.is_empty() {
+        return Err(anyhow!("profile wav is empty"));
+    }
+    let samples = if rate == MODEL_RATE {
+        samples
+    } else {
+        let mut resampler = Resampler::new(rate, MODEL_RATE);
+        let mut out = vec![0.0f32; resampler.max_output(samples.len()) + 64];
+        let count = resampler.process(&samples, &mut out);
+        out.truncate(count);
+        out
+    };
+    if samples.len() < WINDOW * 2 {
+        return Err(anyhow!("profile is shorter than 6 seconds"));
+    }
+
+    let third = samples.len() / 3;
+    let mut vectors: Vec<Vec<f32>> = Vec::new();
+    for part in 0..3 {
+        let slice = &samples[part * third..(part + 1) * third];
+        let len = WINDOW.min(slice.len());
+        if len < MODEL_RATE as usize {
+            continue;
+        }
+        let window = loudest_window(slice, MODEL_RATE, len);
+        let rms = (window
+            .iter()
+            .map(|v| (*v as f64) * (*v as f64))
+            .sum::<f64>()
+            / window.len() as f64)
+            .sqrt() as f32;
+        if rms < MIN_RMS {
+            continue;
+        }
+        if let Ok(vector) = embedder.embed(window, MODEL_RATE) {
+            vectors.push(vector);
+        }
+    }
+    if vectors.len() < 2 {
+        return Err(anyhow!("not enough speech to compare"));
+    }
+
+    let mut values = Vec::new();
+    for i in 0..vectors.len() {
+        for j in (i + 1)..vectors.len() {
+            values.push(cosine(&vectors[i], &vectors[j]));
+        }
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(values[values.len() / 2])
+}
+
+/// Similarity of every speech window in a recording to one profile.#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct Similarity {
     pub windows: u32,
     pub min: f32,
