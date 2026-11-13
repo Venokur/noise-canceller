@@ -196,6 +196,13 @@
   "sound.history": "History",
   "sound.applyTakeSettings": "Take settings",
   "sound.applyTakeSettingsHint": "restore the parameters this take was recorded with",
+  "sound.longRecord": "Long recording",
+  "sound.longRecordHint": "clean signal only, to WAV",
+  "sound.minutes": "min",
+  "sound.longRecordStart": "Record a clean file",
+  "sound.longRecordStop": "Stop recording",
+  "sound.longRecordNeedEngine": "Turn processing on first.",
+  "sound.openFolder": "Open the folder",
   "sound.deleteTake": "Delete the take",
   "sound.noMicFound": "No microphone found",
 

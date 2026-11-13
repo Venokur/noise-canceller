@@ -196,6 +196,13 @@
   "sound.history": "История",
   "sound.applyTakeSettings": "Настройки дубля",
   "sound.applyTakeSettingsHint": "вернуть параметры, с которыми записан этот дубль",
+  "sound.longRecord": "Длинная запись",
+  "sound.longRecordHint": "только очищенный сигнал, в WAV",
+  "sound.minutes": "мин",
+  "sound.longRecordStart": "Записать чистый файл",
+  "sound.longRecordStop": "Остановить запись",
+  "sound.longRecordNeedEngine": "Сначала включите обработку.",
+  "sound.openFolder": "Открыть папку",
   "sound.deleteTake": "Удалить запись",
   "sound.noMicFound": "Микрофон не найден",
 

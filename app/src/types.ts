@@ -179,6 +179,12 @@ export interface AbWaveform {
   clean: number[];
 }
 
+export interface CleanRecordStatus {
+  running: boolean;
+  progress: number;
+  path: string | null;
+}
+
 /** Similarity of the raw take's speech windows to the enrolled profile. */
 export interface SpeakerSimilarity {
   windows: number;

@@ -6,10 +6,11 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, micReady, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, cleanRec, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, micReady, openRecordings, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, startCleanRecord, stats, stopCleanRecord, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const renaming = ref(false);
 const nameDraft = ref("");
+const cleanMinutes = ref(5);
 
 function startRename() {
   nameDraft.value = profileInfo?.value?.name || "";
@@ -592,6 +593,52 @@ const noiseStage = computed(() => {
             </button>
             <span class="text-[11.5px] text-[var(--muted)]">{{ t("sound.applyTakeSettingsHint") }}</span>
           </div>
+        </section>
+
+        <!-- long clean recording -->
+        <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
+          <div class="mb-2.5 flex items-center gap-2.5">
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">{{ t("sound.longRecord") }}</h2>
+            <span class="ml-auto text-[11.5px] text-[var(--muted)]">{{ t("sound.longRecordHint") }}</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="seg">
+              <button
+                v-for="min in [1, 5, 15, 30]"
+                :key="min"
+                class="segbtn"
+                :data-on="cleanMinutes === min"
+                :disabled="cleanRec.running"
+                @click="cleanMinutes = min"
+              >
+                {{ min }} {{ t("sound.minutes") }}
+              </button>
+            </div>
+            <button
+              v-if="!cleanRec.running"
+              :class="btnGhost"
+              :disabled="!running"
+              @click="startCleanRecord(cleanMinutes * 60)"
+            >
+              <AppIcon name="record" :size="14" />
+              {{ t("sound.longRecordStart") }}
+            </button>
+            <button v-else :class="btnGhost" @click="stopCleanRecord">
+              <AppIcon name="stop" :size="14" />
+              {{ t("sound.longRecordStop") }}
+            </button>
+            <button v-if="cleanRec.path" :class="btnGhost" @click="openRecordings">
+              <AppIcon name="file" :size="14" />
+              {{ t("sound.openFolder") }}
+            </button>
+            <span v-if="!running" class="text-[11.5px] text-[var(--muted)]">{{ t("sound.longRecordNeedEngine") }}</span>
+          </div>
+          <div v-if="cleanRec.running" class="mt-2 h-0.5 overflow-hidden rounded-full bg-[var(--stroke)]">
+            <div class="h-full rounded-full bg-[var(--accent)]" :style="{ width: cleanRec.progress * 100 + '%' }"></div>
+          </div>
+          <p v-if="cleanRec.path" class="mt-2 truncate font-mono text-[11px] text-[var(--muted)]" :title="cleanRec.path">
+            {{ cleanRec.path }}
+          </p>
         </section>
   </div>
 </template>

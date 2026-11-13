@@ -24,6 +24,7 @@ import type {
   AbMetrics,
   AbStatus,
   AbWaveform,
+  CleanRecordStatus,
   LastAb,
   Profile,
   ProfileMeta,
@@ -144,6 +145,8 @@ const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
 const abWaveform = ref<AbWaveform | null>(null);
+const cleanRec = ref<CleanRecordStatus>({ running: false, progress: 0, path: null });
+let cleanTimer: number | undefined;
 const abSpeaker = ref<SpeakerSimilarity | null>(null);
 const speakerRecommendation = ref<SpeakerRecommendation | null>(null);
 const evaluatingThreshold = ref(false);
@@ -939,8 +942,53 @@ async function loadAbMetrics() {
   }
 }
 
-async function checkAbSpeaker() {
-  if (!abRaw.value) return;
+async function refreshCleanRec() {
+  try {
+    cleanRec.value = await invoke<CleanRecordStatus>("clean_record_status");
+  } catch {
+    cleanRec.value = { running: false, progress: 0, path: null };
+  }
+}
+
+function startCleanPolling() {
+  if (cleanTimer) window.clearInterval(cleanTimer);
+  cleanTimer = window.setInterval(async () => {
+    await refreshCleanRec();
+    if (!cleanRec.value.running && cleanTimer) {
+      window.clearInterval(cleanTimer);
+      cleanTimer = undefined;
+    }
+  }, 500);
+}
+
+async function startCleanRecord(seconds: number) {
+  error.value = "";
+  try {
+    cleanRec.value = await invoke<CleanRecordStatus>("clean_record_start", { seconds });
+    startCleanPolling();
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
+async function stopCleanRecord() {
+  try {
+    await invoke("clean_record_stop");
+    await refreshCleanRec();
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
+async function openRecordings() {
+  try {
+    await invoke("open_recordings");
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
+async function checkAbSpeaker() {  if (!abRaw.value) return;
   const match = /ab-(\d+)-raw/.exec(abRaw.value);
   if (!match) return;
   abSpeaker.value = null;
@@ -1231,6 +1279,7 @@ provide(APP_CONTEXT, {
   calibrateRoom,
   calibrating,
   capturingHotkey,
+  cleanRec,
   customPresets,
   deleteCustomPreset,
   checkAbSpeaker,
@@ -1262,6 +1311,7 @@ provide(APP_CONTEXT, {
   modelStatus,
   openLicenses,
   openLog,
+  openRecordings,
   openSoundSettings,
   outputDb,
   outputLevel,
@@ -1318,6 +1368,8 @@ provide(APP_CONTEXT, {
   slowConfig,
   speakerRecommendation,
   spectrumLive,
+  startCleanRecord,
+  stopCleanRecord,
   startHotkeyCapture,
   starting,
   stats,
@@ -1344,6 +1396,7 @@ onMounted(async () => {
     await refreshDevices();
     await refreshProfiles();
     await loadPresets();
+    await refreshCleanRec();
     stats.value = await invoke<Stats>("stats");
     autostart.value = await invoke<boolean>("autostart_enabled");
     // bring back the play buttons for the last take: the paths live in the
@@ -1489,6 +1542,7 @@ onUnmounted(() => {
   if (saveTimer) window.clearTimeout(saveTimer);
   if (recordTimer) window.clearInterval(recordTimer);
   if (restartTimer) window.clearTimeout(restartTimer);
+  if (cleanTimer) window.clearInterval(cleanTimer);
 });
 
 watch(

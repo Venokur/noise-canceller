@@ -18,6 +18,11 @@ pub fn dir() -> PathBuf {
     paths::recordings_dir()
 }
 
+/// A long clean-only take, separate from the A/B pairs.
+pub fn clean_take(stamp: u64) -> PathBuf {
+    dir().join(format!("clean-{stamp}.wav"))
+}
+
 fn raw_in(dir: &Path, stamp: u64) -> PathBuf {
     dir.join(format!("ab-{stamp}-raw.wav"))
 }

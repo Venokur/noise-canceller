@@ -81,6 +81,46 @@ pub(crate) async fn check_app_update(state: State<'_, AppState>) -> Result<Strin
 }
 
 #[tauri::command(async)]
+pub(crate) fn clean_record_start(
+    state: State<'_, AppState>,
+    seconds: f32,
+) -> Result<noise_canceller_core::engine::CleanRecordStatus, String> {
+    state
+        .with_engine(|engine| engine.start_clean_recording(seconds))
+        .ok_or_else(|| "processing is not running".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub(crate) fn clean_record_stop(state: State<'_, AppState>) {
+    state.with_engine(|engine| engine.stop_clean_recording());
+}
+
+#[tauri::command(async)]
+pub(crate) fn clean_record_status(
+    state: State<'_, AppState>,
+) -> noise_canceller_core::engine::CleanRecordStatus {
+    state
+        .with_engine(|engine| engine.clean_record_status())
+        .unwrap_or(noise_canceller_core::engine::CleanRecordStatus {
+            running: false,
+            progress: 0.0,
+            path: None,
+        })
+}
+
+#[tauri::command]
+pub(crate) fn open_recordings() -> Result<(), String> {
+    let path = noise_canceller_core::paths::recordings_dir();
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 pub(crate) fn save_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     use std::fmt::Write as _;
 

@@ -31,6 +31,7 @@ use crate::settings::{self, Settings};
 use crate::state::LearnedState;
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
+use hound::{SampleFormat, WavSpec, WavWriter};
 
 pub const MODEL_RATE: u32 = 16_000;
 pub const BANDS: usize = 32;
@@ -51,6 +52,16 @@ pub fn block_ms(samples: usize) -> f32 {
 /// Shared with `nc replay`: a different value there (it used to be 100) meant
 /// the offline regression ran a different audio path than the live app.
 pub const SILENCE_SKIP_BLOCKS: u32 = 5;
+
+/// Long clean-only take, separate from the 60 s A/B pair.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanRecordStatus {
+    pub running: bool,
+    /// 0..1
+    pub progress: f32,
+    pub path: Option<String>,
+}
 
 pub struct Stats {
     pub input_rms: f32,
@@ -155,6 +166,14 @@ struct Shared {
     /// duck the output when the speaker confidence is low
     speaker_guard: Arc<AtomicBool>,
     speaker_threshold: Arc<AtomicU32>,
+    /// long clean-only recording: producer fed by the processor, writer owns
+    /// the consumer and the wav file
+    clean_rec: Arc<Mutex<Option<rtrb::Producer<f32>>>>,
+    clean_rec_active: Arc<AtomicBool>,
+    clean_rec_progress: Arc<AtomicU32>,
+    clean_rec_path: Arc<Mutex<Option<String>>>,
+    clean_rec_target: Arc<AtomicU32>,
+    clean_rec_rate: Arc<AtomicU32>,
     /// frames the output device asked for in the last callback
     callback_frames: Arc<AtomicU32>,
     /// blocks where the model returned NaN/Inf and were zeroed
@@ -207,6 +226,12 @@ impl Shared {
             speaker_threshold: Arc::new(AtomicU32::new(
                 settings.speaker_threshold.clamp(0.05, 0.95).to_bits(),
             )),
+            clean_rec: Arc::new(Mutex::new(None)),
+            clean_rec_active: Arc::new(AtomicBool::new(false)),
+            clean_rec_progress: Arc::new(AtomicU32::new(0)),
+            clean_rec_path: Arc::new(Mutex::new(None)),
+            clean_rec_target: Arc::new(AtomicU32::new(0)),
+            clean_rec_rate: Arc::new(AtomicU32::new(48_000)),
             callback_frames: Arc::new(AtomicU32::new(0)),
             bad_blocks: Arc::new(AtomicU32::new(0)),
         }
@@ -492,6 +517,128 @@ impl Engine {
         })
     }
 
+    /// Starts a long clean-only recording. The processor pushes the final
+    /// (post-DSP) block into a ring; a separate thread owns the wav writer, so
+    /// the audio path never touches the disk.
+    pub fn start_clean_recording(&self, seconds: f32) -> Result<CleanRecordStatus> {
+        if self.shared.clean_rec_active.load(Ordering::Relaxed) {
+            return Err(anyhow!("a clean recording is already running"));
+        }
+        let seconds = seconds.clamp(5.0, 1800.0);
+        let target = (self.out_rate as f32 * seconds) as u32;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let path = recordings::clean_take(stamp);
+        let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(self.out_rate as usize * 2);
+        if let Ok(mut slot) = self.shared.clean_rec.lock() {
+            *slot = Some(producer);
+        }
+        self.shared
+            .clean_rec_target
+            .store(target, Ordering::Relaxed);
+        self.shared
+            .clean_rec_rate
+            .store(self.out_rate, Ordering::Relaxed);
+        self.shared
+            .clean_rec_progress
+            .store(0.0f32.to_bits(), Ordering::Relaxed);
+        if let Ok(mut slot) = self.shared.clean_rec_path.lock() {
+            *slot = Some(path.to_string_lossy().to_string());
+        }
+        let active = self.shared.clean_rec_active.clone();
+        let progress = self.shared.clean_rec_progress.clone();
+        let path_slot = self.shared.clean_rec_path.clone();
+        let rate = self.out_rate;
+        active.store(true, Ordering::Relaxed);
+
+        std::thread::Builder::new()
+            .name("nc-clean-rec".into())
+            .spawn(move || {
+                let spec = WavSpec {
+                    channels: 1,
+                    sample_rate: rate,
+                    bits_per_sample: 16,
+                    sample_format: SampleFormat::Int,
+                };
+                let mut writer = match WavWriter::create(&path, spec) {
+                    Ok(writer) => writer,
+                    Err(err) => {
+                        crate::log::info(&format!("clean recording: {err}"));
+                        active.store(false, Ordering::Relaxed);
+                        return;
+                    }
+                };
+                let mut written = 0u32;
+                let mut pending: Vec<f32> = Vec::with_capacity(8192);
+                while active.load(Ordering::Relaxed) && written < target {
+                    while let Ok(sample) = consumer.pop() {
+                        pending.push(sample);
+                        if pending.len() >= 4096 {
+                            for value in pending.drain(..) {
+                                let _ =
+                                    writer.write_sample((value.clamp(-1.0, 1.0) * 32767.0) as i16);
+                            }
+                            written += 4096;
+                            progress.store(
+                                (written as f32 / target.max(1) as f32)
+                                    .clamp(0.0, 1.0)
+                                    .to_bits(),
+                                Ordering::Relaxed,
+                            );
+                        }
+                    }
+                    for value in pending.drain(..) {
+                        let _ = writer.write_sample((value.clamp(-1.0, 1.0) * 32767.0) as i16);
+                    }
+                    written = written.min(target);
+                    progress.store(
+                        (written as f32 / target.max(1) as f32)
+                            .clamp(0.0, 1.0)
+                            .to_bits(),
+                        Ordering::Relaxed,
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                // drain what is still in the ring so the last syllable is kept
+                while let Ok(value) = consumer.pop() {
+                    let _ = writer.write_sample((value.clamp(-1.0, 1.0) * 32767.0) as i16);
+                }
+                let _ = writer.finalize();
+                active.store(false, Ordering::Relaxed);
+                progress.store(1.0f32.to_bits(), Ordering::Relaxed);
+                if let Ok(mut slot) = path_slot.lock() {
+                    *slot = Some(path.to_string_lossy().to_string());
+                }
+                crate::log::info(&format!("clean recording saved: {}", path.display()));
+            })
+            .map_err(|e| anyhow!("clean recording thread: {e}"))?;
+
+        Ok(self.clean_record_status())
+    }
+
+    pub fn stop_clean_recording(&self) {
+        self.shared.clean_rec_active.store(false, Ordering::Relaxed);
+        if let Ok(mut slot) = self.shared.clean_rec.lock() {
+            slot.take();
+        }
+    }
+
+    pub fn clean_record_status(&self) -> CleanRecordStatus {
+        let path = self
+            .shared
+            .clean_rec_path
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        CleanRecordStatus {
+            running: self.shared.clean_rec_active.load(Ordering::Relaxed),
+            progress: f32::from_bits(self.shared.clean_rec_progress.load(Ordering::Relaxed)),
+            path,
+        }
+    }
+
     pub fn update_settings(&self, settings: &Settings) {
         if let Ok(mut guard) = self.shared.settings.lock() {
             *guard = settings.clone();
@@ -687,6 +834,7 @@ impl Engine {
         ));
         self.input.take();
         self.output.take();
+        self.stop_clean_recording();
         if let Some(mut speaker) = self.speaker.take() {
             speaker.stop();
         }

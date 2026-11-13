@@ -506,6 +506,16 @@ impl Processor {
                 .true_peak
                 .store(self.chain.true_peak_db().to_bits(), Ordering::Relaxed);
 
+            if self.shared.clean_rec_active.load(Ordering::Relaxed) {
+                if let Ok(mut slot) = self.shared.clean_rec.try_lock() {
+                    if let Some(producer) = slot.as_mut() {
+                        for sample in self.up_buf[..produced].iter() {
+                            let _ = producer.push(*sample);
+                        }
+                    }
+                }
+            }
+
             if self.rate.trace {
                 eprintln!(
                     "blk in {:.0} out {:.0} atten {:.0} cap {} voice {} vad {} agc {:.1} level {:.1}",
