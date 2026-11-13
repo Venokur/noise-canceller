@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Noise Canceller",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "identifier": "com.noisecanceller.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -46,7 +46,7 @@
       "../models/voxlock/chunk_int8.onnx": "models/voxlock/chunk_int8.onnx",
       "../models/voxlock/README.md": "models/voxlock/README.md",
       "../models/denoise/gtcrn.onnx": "models/denoise/gtcrn.onnx",
-    "../models/denoise/dpdfnet4.onnx": "models/denoise/dpdfnet4.onnx",
+      "../models/denoise/dpdfnet4.onnx": "models/denoise/dpdfnet4.onnx",
       "../models/denoise/silero_vad.onnx": "models/denoise/silero_vad.onnx",
       "../models/bwe/novasr.onnx": "models/bwe/novasr.onnx",
       "../models/speaker/campplus.onnx": "models/speaker/campplus.onnx",
@@ -93,5 +93,3 @@
     }
   }
 }
-
-
