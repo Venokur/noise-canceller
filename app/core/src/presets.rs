@@ -65,3 +65,24 @@ pub fn delete(name: &str) -> Result<()> {
     }
     write(&presets)
 }
+
+pub fn export(path: &std::path::Path) -> Result<()> {
+    let presets = list();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&presets)?)?;
+    Ok(())
+}
+
+pub fn import(path: &std::path::Path) -> Result<usize> {
+    let text = std::fs::read_to_string(path)?;
+    let incoming: Vec<Preset> = serde_json::from_str(text.trim_start_matches('\u{feff}'))?;
+    let mut presets = list();
+    for preset in incoming {
+        presets.retain(|existing| existing.name != preset.name);
+        presets.push(preset);
+    }
+    write(&presets)?;
+    Ok(presets.len())
+}

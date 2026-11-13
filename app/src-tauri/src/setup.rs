@@ -152,6 +152,8 @@ pub(crate) fn run() {
             crate::commands::list_presets,
             crate::commands::save_preset,
             crate::commands::delete_preset,
+            crate::commands::export_presets,
+            crate::commands::import_presets,
             crate::commands::rename_profile,
             crate::commands::profile_consistency,
             crate::commands::speaker_recommendation,

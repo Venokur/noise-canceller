@@ -338,6 +338,37 @@ async function deleteCustomPreset(name: string) {
   }
 }
 
+async function exportPresets() {
+  error.value = "";
+  try {
+    const path = await save({
+      defaultPath: "presets.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!path) return;
+    await invoke("export_presets", { path });
+    notify(t("toast.presetsExported"), "ok", path);
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
+async function importPresets() {
+  error.value = "";
+  try {
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+    const count = await invoke<number>("import_presets", { path: picked });
+    await loadPresets();
+    notify(t("toast.presetsImported"), "ok", t("toast.presetsImportedText", { n: count }));
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 const inputOptions = computed(() => inputs.value.map((n) => ({ value: n, label: n })));
 const outputOptions = computed(() => outputs.value.map((n) => ({ value: n, label: n })));
 const previewOutput = computed(
@@ -1292,12 +1323,14 @@ provide(APP_CONTEXT, {
   evaluateProfileConsistency,
   evaluateSpeakerThreshold,
   evaluatingThreshold,
+  exportPresets,
   exportSettings,
   filterSettings,
   formatStamp,
   history,
   importSettings,
   importProfile,
+  importPresets,
   inputDb,
   inputChannels,
   inputIsCable,

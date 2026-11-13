@@ -404,6 +404,16 @@ pub(crate) fn delete_preset(name: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+pub(crate) fn export_presets(path: String) -> Result<(), String> {
+    noise_canceller_core::presets::export(std::path::Path::new(&path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub(crate) fn import_presets(path: String) -> Result<usize, String> {
+    noise_canceller_core::presets::import(std::path::Path::new(&path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 pub(crate) fn delete_profile(path: String) -> Result<(), String> {
     noise_canceller_core::profile::delete(&path).map_err(|e| e.to_string())
 }

@@ -8,7 +8,7 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, customPresets, deleteCustomPreset, error, evaluateSpeakerThreshold, evaluatingThreshold, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presetName, presets, resetSettings, restartSoon, saveCustomPreset, saveDiagnostics, savingPreset, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, customPresets, deleteCustomPreset, error, evaluateSpeakerThreshold, evaluatingThreshold, exportPresets, exportSettings, importPresets, importSettings, maxThreads, modelStatus, openLicenses, openLog, presetName, presets, resetSettings, restartSoon, saveCustomPreset, saveDiagnostics, savingPreset, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -97,6 +97,8 @@ const { applyAutostart, applyCustomPreset, applyPreset, appUpdateStatus, appVers
                   <AppIcon name="close" :size="13" />
                 </button>
               </div>
+              <button class="chip" @click="exportPresets">{{ t("settings.presetsExport") }}</button>
+              <button class="chip" @click="importPresets">{{ t("settings.presetsImport") }}</button>
             </div>
             <div v-if="searching || settingsSection === 'voice'" class="sblock">
               <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.voice") }}</h2>
