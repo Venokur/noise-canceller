@@ -118,6 +118,18 @@ const abClean = ref<string | null>(null);
 const history = ref<AbEntry[]>([]);
 const abNormalize = ref(true);
 const abSide = ref<"raw" | "clean">("raw");
+const abBlind = ref(false);
+const abSwap = ref(false);
+/// Which actual side the visible A/B buttons play. In blind mode the mapping is
+/// random until the user turns it off; the pair player still switches at the
+/// same timestamp.
+const abVisible = computed(() => {
+  const swap = abBlind.value && abSwap.value;
+  return swap ? { a: "clean" as const, b: "raw" as const } : { a: "raw" as const, b: "clean" as const };
+});
+watch(abBlind, (blind) => {
+  if (blind) abSwap.value = Math.random() < 0.5;
+});
 const showWizard = ref(false);
 const resetDialog = ref(false);
 const takeToApply = ref<AbEntry | null>(null);
@@ -695,6 +707,7 @@ function playProfile() {
 async function toggleAb() {
   if (abRunning.value) return;
   await stopPreview();
+  if (abBlind.value) abSwap.value = Math.random() < 0.5;
   error.value = "";
   try {
     await invoke("ab_start", { seconds: settings.value?.abSeconds ?? 30 });
@@ -981,6 +994,7 @@ async function applyAutostart() {
 // the two screens get the state and the actions through one object:
 // the shell stays the only place that owns timers and engine calls
 provide(APP_CONTEXT, {
+  abBlind,
   abClean,
   abDelta,
   abFolder,
@@ -991,6 +1005,7 @@ provide(APP_CONTEXT, {
   abRunning,
   abSide,
   abSpeaker,
+  abVisible,
   applyAutostart,
   applyPreset,
   askApplyTake,

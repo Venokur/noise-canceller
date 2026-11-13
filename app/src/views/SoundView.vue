@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -339,7 +339,11 @@ const noiseStage = computed(() => {
         <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
           <div class="mb-2.5 flex items-center gap-2.5">
             <h2 class="text-[15px] font-semibold tracking-[-0.01em]">{{ t("sound.ab") }}</h2>
-            <div class="seg ml-auto">
+            <label class="ml-auto flex items-center gap-1.5 text-[11.5px] whitespace-nowrap text-[var(--muted)]" :title="t('sound.blindHint')">
+              <AppSwitch v-model="abBlind" />
+              {{ t("sound.blind") }}
+            </label>
+            <div class="seg">
               <button
                 v-for="sec in [10, 30, 60]"
                 :key="sec"
@@ -394,13 +398,13 @@ const noiseStage = computed(() => {
             :title="abFolder || undefined"
           >
             <div class="flex gap-1.5">
-              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === 'raw'" @click="playAb('raw')">
-                <AppIcon :name="playingKey === 'pair' && abSide === 'raw' ? 'stop' : 'play'" :size="12" />
-                {{ t("sound.raw") }}
+              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === abVisible.a" @click="playAb(abVisible.a)">
+                <AppIcon :name="playingKey === 'pair' && abSide === abVisible.a ? 'stop' : 'play'" :size="12" />
+                {{ abBlind ? "A" : t("sound.raw") }}
               </button>
-              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === 'clean'" @click="playAb('clean')">
-                <AppIcon :name="playingKey === 'pair' && abSide === 'clean' ? 'stop' : 'play'" :size="12" />
-                {{ t("sound.clean") }}
+              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === abVisible.b" @click="playAb(abVisible.b)">
+                <AppIcon :name="playingKey === 'pair' && abSide === abVisible.b ? 'stop' : 'play'" :size="12" />
+                {{ abBlind ? "B" : t("sound.clean") }}
               </button>
             </div>
 

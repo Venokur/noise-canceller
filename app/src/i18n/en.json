@@ -160,6 +160,8 @@
   "sound.profileRecordedOn": "Profile recorded on: {device}",
   "sound.autoProfile": "Pick the best profile automatically",
   "sound.ab": "A/B check",
+  "sound.blind": "Blind test",
+  "sound.blindHint": "A and B are assigned randomly; turn it off to see which is raw and which is processed.",
   "sound.abRecord": "Record A/B ({s} s)",
   "sound.switching": "Switching…",
   "sound.stopTest": "Stop the check",

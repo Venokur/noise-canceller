@@ -160,6 +160,8 @@
   "sound.profileRecordedOn": "Профиль записан на: {device}",
   "sound.autoProfile": "Выбирать лучший профиль автоматически",
   "sound.ab": "Проверка A/B",
+  "sound.blind": "Слепой тест",
+  "sound.blindHint": "A и B назначаются случайно; выключите, чтобы увидеть, где сырой, а где обработанный.",
   "sound.abRecord": "Записать A/B ({s} с)",
   "sound.switching": "Переключаю…",
   "sound.stopTest": "Остановить проверку",
