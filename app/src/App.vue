@@ -109,6 +109,7 @@ const tab = ref<"sound" | "settings">("sound");
 const recording = ref(false);
 const probing = ref(false);
 const calibrating = ref(false);
+const measuringRoom = ref(false);
 const probeLeft = ref(0);
 const probeResult = ref<Quality | null>(null);
 const recordLeft = ref(0);
@@ -713,6 +714,39 @@ async function calibrateRoom() {
     error.value = String(e);
   } finally {
     calibrating.value = false;
+  }
+}
+
+async function measureRoom() {
+  if (measuringRoom.value || probing.value || calibrating.value || !micReady.value) return;
+  measuringRoom.value = true;
+  error.value = "";
+  try {
+    notify(t("toast.roomMeasure"), "ok", t("toast.roomMeasureHint"));
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    const quiet = await invoke<Quality>("probe_mic", {
+      input: selectedInput.value || null,
+      seconds: 4,
+    });
+    if (!settings.value) return;
+    const floor = quiet.peakDb;
+    const noisy = floor > -55;
+    settings.value.comfortNoiseEnabled = noisy;
+    if (noisy) {
+      settings.value.comfortNoiseDb = Math.max(-90, Math.min(-40, Math.round(floor - 6)));
+    }
+    notify(
+      t("toast.roomMeasured"),
+      "ok",
+      t("toast.roomMeasuredText", {
+        db: floor.toFixed(0),
+        state: noisy ? t("toast.roomNoisy") : t("toast.roomQuiet"),
+      }),
+    );
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    measuringRoom.value = false;
   }
 }
 
@@ -1339,6 +1373,8 @@ provide(APP_CONTEXT, {
   installCable,
   installingCable,
   matchLevel,
+  measureRoom,
+  measuringRoom,
   maxThreads,
   micReady,
   modelStatus,

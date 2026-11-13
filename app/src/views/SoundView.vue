@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, cleanRec, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, micReady, openRecordings, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, startCleanRecord, stats, stopCleanRecord, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, cleanRec, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, measureRoom, measuringRoom, micReady, openRecordings, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, startCleanRecord, stats, stopCleanRecord, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const renaming = ref(false);
 const nameDraft = ref("");
@@ -271,6 +271,10 @@ const noiseStage = computed(() => {
             <button :class="btnGhost" :disabled="calibrating || probing || !micReady" @click="calibrateRoom">
               <AppIcon :name="calibrating ? 'spinner' : 'sliders'" :size="14" :class="{ spin: calibrating }" />
               {{ calibrating ? t("calibrate.running") : t("calibrate.start") }}
+            </button>
+            <button :class="btnGhost" :disabled="measuringRoom || probing || calibrating || !micReady" @click="measureRoom">
+              <AppIcon :name="measuringRoom ? 'spinner' : 'gauge'" :size="14" :class="{ spin: measuringRoom }" />
+              {{ measuringRoom ? t("sound.roomMeasuring") : t("sound.roomMeasure") }}
             </button>
             <button :class="btnGhost" :title="t('sound.windowsSoundHint')" @click="openSoundSettings">
               <AppIcon name="settings" :size="14" />
