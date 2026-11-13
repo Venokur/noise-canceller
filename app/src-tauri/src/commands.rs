@@ -691,10 +691,14 @@ pub(crate) fn profile_scores() -> Vec<ProfileScoreDto> {
         .filter_map(|path| {
             let quality =
                 noise_canceller_core::profile::score_file(std::path::Path::new(&path)).ok()?;
+            // the sidecar holds the grade of the raw take; re-scoring the saved
+            // wav used to grade the normalised copy (and count its clamps as
+            // clipping), so a quiet microphone could look worse than it is
+            let meta = noise_canceller_core::profile::read_meta(std::path::Path::new(&path));
             Some(ProfileScoreDto {
                 path,
-                score: quality.score,
-                snr_db: quality.snr_db,
+                score: meta.as_ref().map(|m| m.score).unwrap_or(quality.score),
+                snr_db: meta.as_ref().map(|m| m.snr_db).unwrap_or(quality.snr_db),
             })
         })
         .collect()
