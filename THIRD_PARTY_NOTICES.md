@@ -190,6 +190,7 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | regex | 1.13.1 | MIT OR Apache-2.0 |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
+| rfd | 0.17.2 | MIT |
 | rtrb | 0.4.1 | MIT OR Apache-2.0 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
 | same-file | 1.0.6 | Unlicense/MIT |
@@ -229,6 +230,8 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | tauri-codegen | 2.7.4 | Apache-2.0 OR MIT |
 | tauri-macros | 2.7.4 | Apache-2.0 OR MIT |
 | tauri-plugin-autostart | 2.7.0 | Apache-2.0 OR MIT |
+| tauri-plugin-dialog | 2.8.4 | Apache-2.0 OR MIT |
+| tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-global-shortcut | 2.4.1 | Apache-2.0 OR MIT |
 | tauri-plugin-single-instance | 2.5.5 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT |
@@ -314,6 +317,7 @@ abseil, protobuf, flatbuffers и другие) — это официальная
 | @jridgewell/sourcemap-codec | 1.6.0 | MIT |
 | @lucide/vue | 1.68.0 | ISC |
 | @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT |
+| @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @vue/compiler-core | 3.5.44 | MIT |
 | @vue/compiler-dom | 3.5.44 | MIT |
 | @vue/compiler-sfc | 3.5.44 | MIT |
