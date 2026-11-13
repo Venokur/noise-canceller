@@ -39,12 +39,15 @@ jobs:
 
       # Models and DLLs are 100 MB and not in git; they come from the sherpa-onnx
       # releases. Cache them, otherwise every release downloads the same files.
+      # The key carries the hash of the fetch script, so a new model revision
+      # cannot be served from a stale cache.
       - uses: actions/cache@v4
         with:
           path: |
             app/models
             app/native
-          key: models-sherpa-2.0.1-voxlock-int8-gtcrn
+          key: models-${{ hashFiles('app/scripts/fetch-models.ps1') }}
+          restore-keys: models-
 
       - name: Fetch models
         working-directory: app

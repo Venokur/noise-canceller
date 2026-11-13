@@ -1,0 +1,19 @@
+{
+  "//": "The runtime files, in one place. tauri.conf.json still carries its own map because Tauri reads it at build time; check-bundle.ps1 fails when the two disagree.",
+  "files": [
+    { "source": "models/voxlock/enroll.onnx", "dest": "models/voxlock/enroll.onnx" },
+    { "source": "models/voxlock/chunk_int8.onnx", "dest": "models/voxlock/chunk_int8.onnx" },
+    { "source": "models/voxlock/README.md", "dest": "models/voxlock/README.md" },
+    { "source": "models/denoise/gtcrn.onnx", "dest": "models/denoise/gtcrn.onnx" },
+    { "source": "models/denoise/dpdfnet4.onnx", "dest": "models/denoise/dpdfnet4.onnx" },
+    { "source": "models/denoise/silero_vad.onnx", "dest": "models/denoise/silero_vad.onnx" },
+    {
+      "source": "models/bwe/novasr.onnx",
+      "dest": "models/bwe/novasr.onnx",
+      "required": false,
+      "note": "optional air stage: the engine logs and continues when it is absent"
+    },
+    { "source": "native/sherpa-onnx-c-api.dll", "dest": "native/sherpa-onnx-c-api.dll" },
+    { "source": "native/onnxruntime.dll", "dest": "native/onnxruntime.dll" }
+  ]
+}

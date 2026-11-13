@@ -30,6 +30,8 @@ $ErrorActionPreference = "Stop"
 $app = Split-Path $PSScriptRoot -Parent
 $repo = Split-Path $app -Parent
 . (Join-Path $PSScriptRoot "target-dir.ps1")
+$runtime = Get-Content (Join-Path $PSScriptRoot "runtime-files.json") -Raw | ConvertFrom-Json
+$runtimeFiles = @($runtime.files)
 if (-not $Out) {
     $Out = Join-Path $repo "portable"
 }
@@ -73,58 +75,40 @@ if (-not $SkipExe) {
     }
 }
 
-function Copy-Models {
-    $src = Join-Path $app "models"
-    $dst = Join-Path $Out "models"
-
-    $voxlock = Join-Path $dst "voxlock"
-    New-Item -ItemType Directory -Force $voxlock | Out-Null
-    foreach ($name in @("enroll.onnx", "chunk_int8.onnx", "README.md")) {
-        Copy-Item (Join-Path $src "voxlock\$name") $voxlock -Force
-    }
-
-    # test_wavs are for the CLI, not for the app
-    $stale = Join-Path $voxlock "test_wavs"
-    if (Test-Path $stale) { Remove-Item $stale -Recurse -Force }
-
-    # Only the two stages the app can actually load: dpdfnet2.onnx is a leftover
-    # from a removed experiment and must not travel with the build.
-    $denoise = Join-Path $dst "denoise"
-    New-Item -ItemType Directory -Force $denoise | Out-Null
-    foreach ($name in @("gtcrn.onnx", "dpdfnet4.onnx", "silero_vad.onnx")) {
-        $from = Join-Path $src "denoise\$name"
-        if (Test-Path $from) { Copy-Item $from $denoise -Force }
-    }
-    Get-ChildItem $denoise -Filter "*.onnx" |
-        Where-Object { $_.Name -ne "gtcrn.onnx" -and $_.Name -ne "dpdfnet4.onnx" -and $_.Name -ne "silero_vad.onnx" } |
-        ForEach-Object {
-            Write-Host "  drop $($_.Name)"
-            Remove-Item $_.FullName -Force
+function Copy-Runtime {
+    foreach ($file in $runtimeFiles) {
+        $from = Join-Path $app $file.source
+        $target = Join-Path $Out $file.dest
+        $required = -not ($file.PSObject.Properties.Name -contains "required") -or $file.required
+        if (-not (Test-Path $from)) {
+            if ($required) {
+                throw "runtime file missing: $($file.source) (run scripts\fetch-models.ps1)"
+            }
+            Write-Host "  skip optional $($file.source)"
+            continue
         }
-    # Optional air stage. It is tiny but the engine logs and continues without
-    # it, so a missing file must not fail packaging.
-    $bwe = Join-Path $dst "bwe"
-    New-Item -ItemType Directory -Force $bwe | Out-Null
-    $air = Join-Path $src "bwe\novasr.onnx"
-    if (Test-Path $air) { Copy-Item $air $bwe -Force }
-}
+        $dir = Split-Path $target -Parent
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        Copy-Item $from $target -Force
+    }
 
-function Copy-Native {
-    $src = Join-Path $app "native"
-    $dst = Join-Path $Out "native"
-    New-Item -ItemType Directory -Force $dst | Out-Null
-    foreach ($dll in (Get-ChildItem $src -Filter "*.dll")) {
-        $target = Join-Path $dst $dll.Name
-        if (Test-Path $target) {
-            try {
-                $handle = [System.IO.File]::Open($target, "Open", "ReadWrite", "None")
-                $handle.Close()
-            } catch {
-                throw "cannot replace $target - the app is running, close it first"
+    # Leftovers from removed experiments and the reference wavs must not travel
+    # with the build. The allow-list is the manifest, not a second list here.
+    $allowed = @{}
+    foreach ($file in $runtimeFiles) { $allowed[($file.dest -replace '/', '\')] = $true }
+    foreach ($dir in @("models\voxlock", "models\denoise", "models\bwe", "native")) {
+        $full = Join-Path $Out $dir
+        if (-not (Test-Path $full)) { continue }
+        Get-ChildItem $full -File | ForEach-Object {
+            $rel = "$dir\$($_.Name)"
+            if (-not $allowed.ContainsKey($rel)) {
+                Write-Host "  drop $rel"
+                Remove-Item $_.FullName -Force
             }
         }
-        Copy-Item $dll.FullName $target -Force
     }
+    $stale = Join-Path $Out "models\voxlock\test_wavs"
+    if (Test-Path $stale) { Remove-Item $stale -Recurse -Force }
 }
 
 function Copy-Licenses {
@@ -140,8 +124,7 @@ function Copy-Licenses {
 if (-not $SkipExe) {
     Copy-Item $Exe $targetExe -Force
 }
-Copy-Models
-Copy-Native
+Copy-Runtime
 Copy-Licenses
 
 Write-Host "package: $Out"
@@ -178,10 +161,17 @@ if ($Zip) {
         Copy-Item $_.FullName $stage -Recurse -Force
     }
 
-    # Zipping half a package is worse than not zipping at all.
-    foreach ($required in @("noise-canceller.exe", "models\voxlock\chunk_int8.onnx", "models\bwe\novasr.onnx", "native\sherpa-onnx-c-api.dll")) {
-        if (-not (Test-Path (Join-Path $stage $required))) {
-            throw "incomplete package: $required is missing from $Out"
+    # Zipping half a package is worse than not zipping at all. The list comes
+    # from the same manifest the copy used; only the optional air model may be
+    # absent.
+    $requiredPaths = @("noise-canceller.exe")
+    foreach ($file in $runtimeFiles) {
+        $optional = ($file.PSObject.Properties.Name -contains "required") -and -not $file.required
+        if (-not $optional) { $requiredPaths += $file.dest }
+    }
+    foreach ($requiredPath in $requiredPaths) {
+        if (-not (Test-Path (Join-Path $stage $requiredPath))) {
+            throw "incomplete package: $requiredPath is missing from $Out"
         }
     }
 

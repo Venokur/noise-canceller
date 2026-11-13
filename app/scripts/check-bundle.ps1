@@ -40,20 +40,31 @@ foreach ($source in $resources.PSObject.Properties.Name) {
 }
 
 # The app resolves these next to the exe (core/src/paths.rs, core/src/model.rs);
-# without them it starts but cannot load a model or a DLL.
-foreach ($required in @(
-        "models/voxlock/enroll.onnx",
-        "models/voxlock/chunk_int8.onnx",
-        "models/denoise/gtcrn.onnx",
-        "models/denoise/dpdfnet4.onnx",
-        "models/denoise/silero_vad.onnx",
-        "models/bwe/novasr.onnx",
-        "native/sherpa-onnx-c-api.dll",
-        "native/onnxruntime.dll",
-        "THIRD_PARTY_NOTICES.txt"
-    )) {
-    if (-not $destinations.ContainsKey($required)) {
-        $problems += "bundle.resources does not install $required"
+# without them it starts but cannot load a model or a DLL. The list is not
+# written here: it is `scripts/runtime-files.json`, the same file
+# `package-portable.ps1` copies from. The two used to be separate lists and had
+# already drifted.
+$runtime = Get-Content (Join-Path $PSScriptRoot "runtime-files.json") -Raw | ConvertFrom-Json
+$manifest = @{}
+foreach ($file in @($runtime.files)) {
+    $manifest[$file.dest] = $file.source
+    $optional = ($file.PSObject.Properties.Name -contains "required") -and -not $file.required
+    if (-not $optional -and -not $destinations.ContainsKey($file.dest)) {
+        $problems += "bundle.resources does not install $($file.dest)"
+    }
+    if ($destinations.ContainsKey($file.dest)) {
+        $source = $destinations[$file.dest]
+        if (-not $source.EndsWith($file.source)) {
+            $problems += "bundle.resources maps $($file.dest) from $source, expected .../$($file.source)"
+        }
+    }
+}
+
+# A resource under models/ or native/ that is not in the manifest would travel
+# in the installer but not in the portable zip (or the other way round).
+foreach ($destination in $destinations.Keys) {
+    if (($destination -like "models/*" -or $destination -like "native/*") -and -not $manifest.ContainsKey($destination)) {
+        $problems += "bundle.resources installs $destination, but runtime-files.json does not list it"
     }
 }
 

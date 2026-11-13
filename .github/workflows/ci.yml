@@ -30,17 +30,24 @@ jobs:
 
       # tauri-build checks bundle.resources on every cargo build, and the models
       # are 100 MB of runtime data that is not in git. Cache them, otherwise each
-      # run downloads the same files.
+      # run downloads the same files. The key carries the hash of the fetch
+      # script: a new model revision changes the script and cannot be hidden by
+      # a stale cache.
       - uses: actions/cache@v4
         with:
           path: |
             app/models
             app/native
-          key: models-sherpa-2.0.1-voxlock-int8-gtcrn
+          key: models-${{ hashFiles('app/scripts/fetch-models.ps1') }}
+          restore-keys: models-
 
       - name: Fetch models
         working-directory: app
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-models.ps1
+
+      - name: UI context check
+        working-directory: app
+        run: npm run check:ui
 
       - name: Format
         working-directory: app

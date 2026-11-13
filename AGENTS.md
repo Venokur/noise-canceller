@@ -56,10 +56,13 @@ app/
     log.rs         app.log: старт/стоп движка, ошибки устройств, сбросы модели
     paths.rs       каталоги, 8.3-путь для нативных вызовов
   cli/         headless-проверки (бинарник `nc`)
-  src-tauri/   Tauri: команды, трей, автозапуск, один экземпляр
+  src-tauri/   Tauri: main.rs только собирает модули
+               (commands.rs команды, dto.rs формы IPC, state.rs AppState,
+                setup.rs Builder и плагины, tray.rs трей/окно/хоткей/выход)
   src/         Vue: App.vue (оболочка: заголовок, вкладки, тосты, мастер),
                views/{SoundView,SettingsView}.vue, components/{TitleBar,AppSelect,AppSwitch,AppSlider,AppLabel,AppIcon,AppToast},
-               composables/{useToasts,useSettingsSearch,useSystemInfo}.ts,
+               composables/{useToasts,useSettingsSearch,useSystemInfo,useShell,useCable}.ts,
+               cable.ts (что считать виртуальным кабелем),
                appContext.ts (что оболочка отдаёт экранам), types.ts (формы DTO)
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
   models/denoise/  gtcrn.onnx (0,5 МБ), dpdfnet4.onnx (11 МБ), silero_vad.onnx
