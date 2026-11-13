@@ -926,17 +926,19 @@ mod tests {
     fn processor_moves_a_block_to_the_output_ring() {
         use std::path::Path;
 
-        let mut settings = Settings::default();
-        settings.voice_isolation = false;
-        settings.residual_denoise = "off".into();
-        settings.vad_gate = false;
-        settings.air_amount = 0.0;
-        settings.input_leveling = false;
-        settings.agc_enabled = false;
-        settings.gate_enabled = false;
-        settings.limiter_enabled = false;
-        settings.comfort_noise_enabled = false;
-        settings.tone_enabled = false;
+        let settings = Settings {
+            voice_isolation: false,
+            residual_denoise: "off".into(),
+            vad_gate: false,
+            air_amount: 0.0,
+            input_leveling: false,
+            agc_enabled: false,
+            gate_enabled: false,
+            limiter_enabled: false,
+            comfort_noise_enabled: false,
+            tone_enabled: false,
+            ..Settings::default()
+        };
 
         let chunk = block_samples(settings.chunk_ms);
         let shared = Shared::new(settings.clone());
