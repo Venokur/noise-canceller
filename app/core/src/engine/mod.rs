@@ -917,6 +917,82 @@ mod tests {
         assert!(!voice.speech(), "the phrase never ended after the pause");
     }
 
+    /// The live processing thread is the one piece selftest and replay do not
+    /// cover: both drive Pipeline/Chain directly. This pushes a block through
+    /// the real loop (pacing, silence detection, leveler, publish) with no model
+    /// loaded, so a broken ring hand-off or a controller that never lets a block
+    /// through fails here instead of in the user's ears.
+    #[test]
+    fn processor_moves_a_block_to_the_output_ring() {
+        use std::path::Path;
+
+        let mut settings = Settings::default();
+        settings.voice_isolation = false;
+        settings.residual_denoise = "off".into();
+        settings.vad_gate = false;
+        settings.air_amount = 0.0;
+        settings.input_leveling = false;
+        settings.agc_enabled = false;
+        settings.gate_enabled = false;
+        settings.limiter_enabled = false;
+        settings.comfort_noise_enabled = false;
+        settings.tone_enabled = false;
+
+        let chunk = block_samples(settings.chunk_ms);
+        let shared = Shared::new(settings.clone());
+        let dir = std::env::temp_dir().join(format!("nc-processor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let persist = Persist::spawn(dir.clone(), LearnedState::default());
+        let pipeline = Pipeline::new(
+            &settings,
+            None,
+            2,
+            chunk,
+            Path::new("unused"),
+            Path::new("unused"),
+        )
+        .expect("pipeline without models");
+        let processor = Processor::new(
+            shared.clone(),
+            &settings,
+            pipeline,
+            persist,
+            48_000,
+            50.0,
+            50.0,
+            0.0,
+        );
+
+        let (mut input, input_cons) = rtrb::RingBuffer::<f32>::new(chunk * 16);
+        let (output_prod, mut output_cons) = rtrb::RingBuffer::<f32>::new(48_000);
+        let handle = thread::spawn(move || processor.run(input_cons, output_prod));
+
+        let mut phase = 0.0f32;
+        for _ in 0..2 {
+            for _ in 0..chunk {
+                let _ = input.push(phase.sin() * 0.1);
+                phase += 2.0 * std::f32::consts::PI * 220.0 / MODEL_RATE as f32;
+            }
+            thread::sleep(Duration::from_millis(60));
+        }
+        thread::sleep(Duration::from_millis(100));
+        shared
+            .running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        handle.join().expect("processor thread");
+
+        let mut pulled = 0usize;
+        let mut peak = 0.0f32;
+        while let Ok(sample) = output_cons.pop() {
+            pulled += 1;
+            peak = peak.max(sample.abs());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(pulled > chunk, "processor pushed only {pulled} samples");
+        assert!(peak > 1e-3, "output stayed silent (peak {peak})");
+    }
+
     #[test]
     fn persist_merges_both_values_into_one_file() {
         let dir = std::env::temp_dir().join(format!("nc-persist-{}", std::process::id()));
