@@ -114,6 +114,31 @@ function templateIdentifiers(template) {
   return used;
 }
 
+/// An attribute line belongs to the tag that opened above it. A bare
+/// `label="…"` left outside the tag is rendered as text: that is exactly what
+/// happened when the slider labels were inserted for the accessible name.
+function attributesOutsideTags(file, text) {
+  const problems = [];
+  const lines = text.split("\n");
+  lines.forEach((line, index) => {
+    if (!/^\s*(?:label|:label|aria-label|aria-valuetext)="/.test(line)) return;
+    // Walk up until the nearest angle bracket: if a tag is still open, the
+    // attribute belongs to it; if the previous tag already closed, it is text.
+    let inside = false;
+    for (let j = index - 1; j >= 0 && j >= index - 40; j--) {
+      const open = lines[j].lastIndexOf("<");
+      const close = lines[j].lastIndexOf(">");
+      if (open < 0 && close < 0) continue;
+      inside = open > close;
+      break;
+    }
+    if (!inside) {
+      problems.push(`${file}:${index + 1}: ${line.trim()} is outside an open tag`);
+    }
+  });
+  return problems;
+}
+
 const appVue = join(app, "App.vue");
 const provided = provideKeys(appVue);
 
@@ -149,6 +174,7 @@ for (const file of [appVue, ...views]) {
   if (missing.length) {
     problems.push(`${file}: template uses undeclared ${missing.join(", ")}`);
   }
+  problems.push(...attributesOutsideTags(file, template));
 }
 
 if (problems.length) {

@@ -127,16 +127,18 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   text="Тело"
                   hint="Полка на 200 Гц. Вниз убирает бубнёж и остатки гула, вверх добавляет плотность. Выше +3 дБ возвращает то, что снимает срез низов."
                 />
-                label="Тело"
-                <AppSlider v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+                <AppSlider
+                  label="Тело"
+                  v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
               </div>
               <div v-if="settings.toneEnabled" :class="settingRow">
                 <AppLabel
                   text="Разборчивость"
                   hint="Полка на 3 кГц — там согласные. Вверх делает речь яснее, но поднимает и остаточный шип, поэтому предел ±6 дБ. Выше 8 кГц полосы нет: модель работает на 16 кГц."
                 />
-                label="Разборчивость"
-                <AppSlider v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+                <AppSlider
+                  label="Разборчивость"
+                  v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
               </div>
             </div>
 
@@ -185,16 +187,17 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   text="Частота среза"
                   hint="Ниже этой частоты сигнал ослабляется. 80–120 Гц убирают гул, выше — начинает худеть сам голос."
                 />
-                label="Частота среза"
-                <AppSlider v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} Гц`" />
+                <AppSlider
+                  v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} Гц`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
                   text="Воздух"
                   hint="Добавляет верх выше 8 кГц, которого у 16-кГц модели нет: голос перестаёт звучать «в подушку». Это не шумодав и не изоляция — полоса 0–8 кГц, громкость и чужие голоса не меняются. 0 % — выключено."
                 />
-                label="Воздух"
-                <AppSlider v-model="settings.airAmount" :min="0" :max="1" :step="0.05" :format="(v) => `${Math.round(v * 100)} %`" />
+                <AppSlider
+                  label="Воздух"
+                  v-model="settings.airAmount" :min="0" :max="1" :step="0.05" :format="(v) => `${Math.round(v * 100)} %`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -208,40 +211,45 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   text="Порог гейта"
                   hint="Уровень закрытия гейта. Выше — чище паузы, но можно срезать тихие слова; ниже — мягче."
                 />
-                label="Порог гейта"
-                <AppSlider v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} дБ`" />
+                <AppSlider
+                  label="Порог гейта"
+                  v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} дБ`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
                   text="Степень"
                   hint="Насколько сильно гейт глушит ниже порога: 1 — мягко, 10 — почти в ноль."
                 />
-                label="Степень"
-                <AppSlider v-model="settings.gateRatio" :min="1" :max="10" :step="0.5" :format="(v) => v.toFixed(1)" />
+                <AppSlider
+                  label="Степень"
+                  v-model="settings.gateRatio" :min="1" :max="10" :step="0.5" :format="(v) => v.toFixed(1)" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
                   text="Атака"
                   hint="Как быстро открывается гейт. Больше — плавнее, но начало слова может приглушаться."
                 />
-                label="Атака"
-                <AppSlider v-model="settings.gateAttackMs" :min="1" :max="100" :step="1" :format="(v) => `${v} мс`" />
+                <AppSlider
+                  label="Атака"
+                  v-model="settings.gateAttackMs" :min="1" :max="100" :step="1" :format="(v) => `${v} мс`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
                   text="Восстановление"
                   hint="Как быстро гейт закрывается. Больше — не режет концы слов, но дольше тянет фон."
                 />
-                label="Восстановление"
-                <AppSlider v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} мс`" />
+                <AppSlider
+                  label="Восстановление"
+                  v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} мс`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
                   text="Удержание"
                   hint="Сколько гейт остаётся открытым после спада уровня, чтобы не обрубать концы слов."
                 />
-                label="Удержание"
-                <AppSlider v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} мс`" />
+                <AppSlider
+                  label="Удержание"
+                  v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} мс`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -255,16 +263,18 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   text="Целевой уровень"
                   hint="К какому уровню AGC тянет речь. Ниже — тише и безопаснее, выше — громче, но ближе к перегрузу."
                 />
-                label="Целевой уровень"
-                <AppSlider v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} дБ`" />
+                <AppSlider
+                  label="Целевой уровень"
+                  v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} дБ`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
                   text="Макс. усиление"
                   hint="Предел подъёма AGC. Большой поднимает и остатки шума; для тихого микрофона хватает 12–18 дБ."
                 />
-                label="Макс. усиление"
-                <AppSlider v-model="settings.agcMaxGainDb" :min="0" :max="30" :step="1" :format="(v) => `${v} дБ`" />
+                <AppSlider
+                  label="Макс. усиление"
+                  v-model="settings.agcMaxGainDb" :min="0" :max="30" :step="1" :format="(v) => `${v} дБ`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -282,16 +292,18 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               </div>
               <div v-if="!settings.basicUi && settings.comfortNoiseEnabled" :class="settingRow">
                 <AppLabel text="Уровень шума" hint="Громкость комфортного шума: −60…−70 дБ почти не слышно." />
-                label="Уровень шума"
-                <AppSlider v-model="settings.comfortNoiseDb" :min="-90" :max="-30" :step="1" :format="(v) => `${v} дБ`" />
+                <AppSlider
+                  label="Уровень шума"
+                  v-model="settings.comfortNoiseDb" :min="-90" :max="-30" :step="1" :format="(v) => `${v} дБ`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
                   text="Выходная громкость"
                   hint="Общее усиление после всей обработки. Меняет только громкость, шумодав не трогает."
                 />
-                label="Громкость выхода"
-                <AppSlider v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+                <AppSlider
+                  label="Громкость выхода"
+                  v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
               </div>
             </div>
 
@@ -333,8 +345,9 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   text="Блок модели"
                   hint="Размер блока VoxLock: меньше — ниже задержка и выше нагрузка. 60 мс — баланс."
                 />
-                label="Блок модели"
-                <AppSlider v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} мс`" />
+                <AppSlider
+                  label="Блок модели"
+                  v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} мс`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
@@ -508,8 +521,9 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               </div>
               <div :class="settingRow">
                 <AppLabel text="Хранить записей A/B" hint="Сколько последних пар хранить в data/recordings; старые удаляются." />
-                label="Хранить записей A/B"
-                <AppSlider v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
+                <AppSlider
+                  label="Хранить записей A/B"
+                  v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
