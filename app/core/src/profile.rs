@@ -73,8 +73,12 @@ fn write_meta(path: &std::path::Path, meta: &ProfileMeta) {
 /// "check microphone" button: the user speaks once and sees whether the level
 /// and the signal-to-noise ratio are sane.
 pub fn probe(input_name: Option<&str>, seconds: f32, lang: Lang) -> Result<Quality> {
-    let profile = record(input_name, seconds, lang)?;
-    let _ = std::fs::remove_file(&profile.path);
+    // no normalisation: the check must report the microphone's real level, not
+    // a take pulled up to -20 dBFS
+    let profile = record_inner(input_name, seconds, lang, false)?;
+    let path = std::path::Path::new(&profile.path);
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(meta_path(path));
     Ok(profile.quality)
 }
 
@@ -96,6 +100,15 @@ pub fn score_file(path: &std::path::Path) -> Result<Quality> {
 }
 
 pub fn record(input_name: Option<&str>, seconds: f32, lang: Lang) -> Result<Profile> {
+    record_inner(input_name, seconds, lang, true)
+}
+
+fn record_inner(
+    input_name: Option<&str>,
+    seconds: f32,
+    lang: Lang,
+    normalize_level: bool,
+) -> Result<Profile> {
     let host = cpal::default_host();
     let device = devices::pick_input(&host, input_name, lang)?;
     let config = device.default_input_config()?;
@@ -178,25 +191,29 @@ pub fn record(input_name: Option<&str>, seconds: f32, lang: Lang) -> Result<Prof
     let count = resampler.process(&mono, &mut at16);
     let mut at16 = at16[..count].to_vec();
 
+    // grade the take as it was captured: a quiet microphone must be reported as
+    // quiet, even though the stored enrolment is later pulled up to -20 dBFS
+    let quality = evaluate(&at16, 16000);
+
     // Normalise the enrolment to the same level the model sees live. Without
     // this a quiet take (the fifine records around -60 dBFS) does not match the
     // live voice, and VoxLock starts dropping the speaker it was enrolled for.
-    let frame = 320usize; // 20 ms at 16 kHz
-    let mut levels: Vec<f32> = at16
-        .chunks_exact(frame)
-        .map(|c| {
-            let s: f64 = c.iter().map(|v| (*v as f64) * (*v as f64)).sum();
-            20.0 * ((s / c.len() as f64).sqrt() as f32 + 1e-9).log10()
-        })
-        .collect();
-    levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let loud = levels.get(levels.len() * 9 / 10).copied().unwrap_or(-60.0);
-    let gain = 10f32.powf((-20.0 - loud) / 20.0).clamp(0.25, 16.0);
-    for sample in at16.iter_mut() {
-        *sample = (*sample * gain).clamp(-0.99, 0.99);
+    if normalize_level {
+        let frame = 320usize; // 20 ms at 16 kHz
+        let mut levels: Vec<f32> = at16
+            .chunks_exact(frame)
+            .map(|c| {
+                let s: f64 = c.iter().map(|v| (*v as f64) * (*v as f64)).sum();
+                20.0 * ((s / c.len() as f64).sqrt() as f32 + 1e-9).log10()
+            })
+            .collect();
+        levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let loud = levels.get(levels.len() * 9 / 10).copied().unwrap_or(-60.0);
+        let gain = 10f32.powf((-20.0 - loud) / 20.0).clamp(0.25, 16.0);
+        for sample in at16.iter_mut() {
+            *sample = (*sample * gain).clamp(-0.99, 0.99);
+        }
     }
-
-    let quality = evaluate(&at16, 16000);
 
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

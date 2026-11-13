@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -237,11 +237,15 @@ const noiseStage = computed(() => {
               <AppIcon name="refresh" :size="14" :class="{ spin: refreshing }" />
               {{ refreshing ? t("sound.refreshing") : t("common.refresh") }}
             </button>
-            <button :class="btnGhost" :disabled="probing" @click="probeMic">
+            <button :class="btnGhost" :disabled="probing || calibrating" @click="probeMic">
               <AppIcon name="mic" :size="14" />
               {{
                 probing ? (probeLeft > 0 ? t("wizard.listening", { s: probeLeft }) : t("wizard.listen")) : t("wizard.probe")
               }}
+            </button>
+            <button :class="btnGhost" :disabled="calibrating || probing || !micReady" @click="calibrateRoom">
+              <AppIcon :name="calibrating ? 'spinner' : 'sliders'" :size="14" :class="{ spin: calibrating }" />
+              {{ calibrating ? t("calibrate.running") : t("calibrate.start") }}
             </button>
             <span v-if="reconnecting" class="ml-2 flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
               <AppIcon name="spinner" :size="12" class="spin" />

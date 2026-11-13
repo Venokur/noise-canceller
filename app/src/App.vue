@@ -97,6 +97,7 @@ const tab = ref<"sound" | "settings">("sound");
 
 const recording = ref(false);
 const probing = ref(false);
+const calibrating = ref(false);
 const probeLeft = ref(0);
 const probeResult = ref<Quality | null>(null);
 const recordLeft = ref(0);
@@ -516,6 +517,53 @@ const probeHint = computed(() => {
   return t("probe.hint.ok");
 });
 
+/// Two short takes: silence gives the room floor, speech gives the microphone
+/// level. The result is a shipped preset with AGC nudged to the mic, not a magic
+/// per-sample model: every value it sets stays visible and editable.
+async function calibrateRoom() {
+  if (calibrating.value || probing.value || !micReady.value) return;
+  calibrating.value = true;
+  error.value = "";
+  try {
+    notify(t("toast.calibrateQuiet"), "ok", t("toast.calibrateQuietText"));
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    const quiet = await invoke<Quality>("probe_mic", {
+      input: selectedInput.value || null,
+      seconds: 4,
+    });
+
+    notify(t("toast.calibrateSpeak"), "ok", t("toast.calibrateSpeakText"));
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    const speech = await invoke<Quality>("probe_mic", {
+      input: selectedInput.value || null,
+      seconds: 8,
+    });
+
+    const room = quiet.peakDb;
+    const id = room > -35 ? "street" : room > -50 ? "office" : "home";
+    const preset = presets.value.find((item) => item.id === id);
+    if (!preset) return;
+    const patch: Record<string, unknown> = { ...preset.patch };
+    // a quiet microphone needs the headroom; a hot one must not be lifted
+    if (speech.peakDb < -30) patch.agcMaxGainDb = 18;
+    else if (speech.peakDb > -14) patch.agcMaxGainDb = 6;
+
+    applyPreset(patch, preset.label);
+    notify(
+      t("toast.calibrated"),
+      "ok",
+      t("toast.calibratedText", {
+        room: room > -35 ? t("calibrate.loud") : room > -50 ? t("calibrate.medium") : t("calibrate.quiet"),
+        preset: preset.label,
+      }),
+    );
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    calibrating.value = false;
+  }
+}
+
 async function recordProfile() {
   if (recording.value || !settings.value || !micReady.value) return;
   await stopPreview();
@@ -931,6 +979,8 @@ provide(APP_CONTEXT, {
   busy,
   cableMessage,
   cableOk,
+  calibrateRoom,
+  calibrating,
   capturingHotkey,
   checkingModel,
   checkModel,
