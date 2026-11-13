@@ -29,6 +29,63 @@ pub(crate) fn list_devices() -> (Vec<String>, Vec<String>) {
 }
 
 #[tauri::command(async)]
+pub(crate) fn save_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
+    use std::fmt::Write as _;
+
+    let settings = state.settings_snapshot();
+    let stats = state.with_engine(|engine| engine.stats());
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "Noise Canceller {} · {}",
+        env!("CARGO_PKG_VERSION"),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
+    let _ = writeln!(text, "\n## settings\n");
+    let _ = writeln!(
+        text,
+        "{}",
+        serde_json::to_string_pretty(&settings).unwrap_or_default()
+    );
+    let _ = writeln!(text, "\n## stats\n");
+    match stats {
+        Some(stats) => {
+            let _ = writeln!(
+                text,
+                "{}",
+                serde_json::to_string_pretty(&StatsDto::from(stats)).unwrap_or_default()
+            );
+        }
+        None => {
+            let _ = writeln!(text, "engine is not running");
+        }
+    }
+    let _ = writeln!(text, "\n## devices\n");
+    let _ = writeln!(text, "inputs: {:?}", devices::input_devices());
+    let _ = writeln!(text, "outputs: {:?}", devices::output_devices());
+    let _ = writeln!(text, "\n## app.log (last 200 lines)\n");
+    let log_path = paths::data_dir().join("app.log");
+    if let Ok(log) = std::fs::read_to_string(&log_path) {
+        let lines: Vec<&str> = log.lines().rev().take(200).collect();
+        for line in lines.iter().rev() {
+            let _ = writeln!(text, "{line}");
+        }
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = paths::data_dir().join(format!("diagnostics-{stamp}.txt"));
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    noise_canceller_core::log::info(&format!("diagnostics saved to {}", path.display()));
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command(async)]
 pub(crate) fn input_channels(name: Option<String>) -> u16 {
     devices::input_channels(name.as_deref())
 }

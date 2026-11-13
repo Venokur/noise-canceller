@@ -8,7 +8,7 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, saveDiagnostics, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -558,6 +558,10 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 <button :class="btnGhost" @click="openLog">
                   <AppIcon name="file" :size="14" />
                   {{ t("settings.diag.log") }}
+                </button>
+                <button :class="btnGhost" :title="t('settings.diag.reportHint')" @click="saveDiagnostics">
+                  <AppIcon name="file" :size="14" />
+                  {{ t("settings.diag.report") }}
                 </button>
                 <button :class="btnGhost" @click="showWizard = true">{{ t("settings.diag.wizard") }}</button>
               </div>

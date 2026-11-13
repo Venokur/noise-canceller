@@ -65,6 +65,7 @@
 
   "toast.hotkeyTitle": "Хоткей не зарегистрирован",
   "toast.settingsSaved": "Настройки сохранены",
+  "toast.reportSaved": "Отчёт сохранён",
   "toast.levelMatched": "Громкость выровнена",
   "toast.levelMatchedText": "Выход сдвинут на {sign}{db} дБ относительно оригинала.",
   "toast.takeApplied": "Настройки дубля применены",
@@ -317,6 +318,8 @@
   "settings.diag.clock": "Расхождение часов",
   "settings.diag.clockHint": "Подстройка под расхождение часов микрофона и вывода. 0 ppm — конвертер работает ровно, темп и тембр не меняются.",
   "settings.diag.log": "Открыть лог",
+  "settings.diag.report": "Сохранить отчёт",
+  "settings.diag.reportHint": "Отчёт с настройками, статистикой, устройствами и последними 200 строками лога лежит в data\\diagnostics-<время>.txt.",
   "settings.diag.wizard": "Мастер настройки",
   "settings.diag.logHint": "Лог пишется в data/app.log: старт и стоп движка, ошибки устройств, сбросы модели.",
 

@@ -917,6 +917,16 @@ async function openLog() {
   }
 }
 
+async function saveDiagnostics() {
+  error.value = "";
+  try {
+    const path = await invoke<string>("save_diagnostics");
+    notify(t("toast.reportSaved"), "ok", path);
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 async function openLicenses() {
   error.value = "";
   try {
@@ -1078,6 +1088,7 @@ provide(APP_CONTEXT, {
   resetSettings,
   restartSoon,
   running,
+  saveDiagnostics,
   selectedInput,
   selectedOutput,
   selectedProfile,

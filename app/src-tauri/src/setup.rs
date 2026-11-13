@@ -108,6 +108,7 @@ pub(crate) fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::commands::list_devices,
             crate::commands::input_channels,
+            crate::commands::save_diagnostics,
             crate::commands::start,
             crate::commands::stop,
             crate::commands::stats,
