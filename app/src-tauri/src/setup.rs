@@ -137,6 +137,7 @@ pub(crate) fn run() {
             crate::commands::get_settings,
             crate::commands::set_settings,
             crate::commands::record_profile,
+            crate::commands::import_profile,
             crate::commands::probe_mic,
             crate::commands::probe_spectrum,
             crate::commands::list_profiles,

@@ -236,22 +236,58 @@ fn record_inner(
     // this a quiet take (the fifine records around -60 dBFS) does not match the
     // live voice, and VoxLock starts dropping the speaker it was enrolled for.
     if normalize_level {
-        let frame = 320usize; // 20 ms at 16 kHz
-        let mut levels: Vec<f32> = at16
-            .chunks_exact(frame)
-            .map(|c| {
-                let s: f64 = c.iter().map(|v| (*v as f64) * (*v as f64)).sum();
-                20.0 * ((s / c.len() as f64).sqrt() as f32 + 1e-9).log10()
-            })
-            .collect();
-        levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let loud = levels.get(levels.len() * 9 / 10).copied().unwrap_or(-60.0);
-        let gain = 10f32.powf((-20.0 - loud) / 20.0).clamp(0.25, 16.0);
-        for sample in at16.iter_mut() {
-            *sample = (*sample * gain).clamp(-0.99, 0.99);
-        }
+        normalize_enrolment(&mut at16);
     }
 
+    save_profile(&at16, input_name.unwrap_or(""), "", quality)
+}
+
+/// Imports a clean voice recording instead of asking for 15 seconds again.
+/// The file is resampled to 16 kHz, graded on its raw level, normalised and
+/// stored exactly like a recorded enrolment.
+pub fn import(source: &std::path::Path, input_name: Option<&str>) -> Result<Profile> {
+    let (samples, rate) = crate::wav::read_mono(source)?;
+    if samples.len() < (rate as f32 * 3.0) as usize {
+        return Err(anyhow!("recording is shorter than 3 seconds"));
+    }
+    let mut at16 = if rate == 16000 {
+        samples
+    } else {
+        let mut resampler = Resampler::new(rate, 16000);
+        let mut out = vec![0.0f32; resampler.max_output(samples.len()) + 64];
+        let count = resampler.process(&samples, &mut out);
+        out.truncate(count);
+        out
+    };
+    let quality = evaluate(&at16, 16000);
+    normalize_enrolment(&mut at16);
+    let name = source
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    save_profile(&at16, input_name.unwrap_or(""), &name, quality)
+}
+
+/// Brings the enrolment to the level VoxLock sees live: the p90 of speech
+/// frames to -20 dBFS, clamped so a silent file cannot be amplified into noise.
+fn normalize_enrolment(at16: &mut [f32]) {
+    let frame = 320usize; // 20 ms at 16 kHz
+    let mut levels: Vec<f32> = at16
+        .chunks_exact(frame)
+        .map(|c| {
+            let s: f64 = c.iter().map(|v| (*v as f64) * (*v as f64)).sum();
+            20.0 * ((s / c.len() as f64).sqrt() as f32 + 1e-9).log10()
+        })
+        .collect();
+    levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let loud = levels.get(levels.len() * 9 / 10).copied().unwrap_or(-60.0);
+    let gain = 10f32.powf((-20.0 - loud) / 20.0).clamp(0.25, 16.0);
+    for sample in at16.iter_mut() {
+        *sample = (*sample * gain).clamp(-0.99, 0.99);
+    }
+}
+
+fn save_profile(at16: &[f32], device: &str, name: &str, quality: Quality) -> Result<Profile> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -273,8 +309,8 @@ fn record_inner(
     write_meta(
         &path,
         &ProfileMeta {
-            name: String::new(),
-            device: input_name.unwrap_or("").to_string(),
+            name: name.trim().chars().take(48).collect(),
+            device: device.to_string(),
             created: stamp,
             score: quality.score,
             snr_db: quality.snr_db,

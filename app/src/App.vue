@@ -594,6 +594,39 @@ async function evaluateProfileConsistency(path: string) {
   }
 }
 
+async function importProfile() {
+  if (!settings.value) return;
+  await stopPreview();
+  error.value = "";
+  try {
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "WAV", extensions: ["wav"] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+    const profile = await invoke<Profile>("import_profile", {
+      input: selectedInput.value || null,
+      path: picked,
+    });
+    profileQuality.value = profile.quality;
+    settings.value.profilePath = profile.path;
+    if (selectedInput.value) {
+      settings.value.profileByDevice[selectedInput.value] = profile.path;
+    }
+    settings.value.mode = "profile";
+    await refreshProfiles();
+    selectedProfile.value = profile.path;
+    void evaluateProfileConsistency(profile.path);
+    if (running.value) {
+      const test = testMode.value;
+      await invoke("stop");
+      await startEngine(test);
+    }
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 async function recordProfile() {
   if (recording.value || !settings.value || !micReady.value) return;
   await stopPreview();
@@ -1065,6 +1098,7 @@ provide(APP_CONTEXT, {
   formatStamp,
   history,
   importSettings,
+  importProfile,
   inputDb,
   inputChannels,
   inputIsCable,

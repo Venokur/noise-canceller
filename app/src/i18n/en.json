@@ -166,6 +166,7 @@
   "sound.renameProfile": "Rename the profile",
   "sound.renamePlaceholder": "For example: headset, desk, lavalier",
   "sound.checkConsistency": "Check profile consistency",
+  "sound.importProfile": "Import a profile from WAV",
   "sound.profileConsistency": "Recording consistency: {value} %.",
   "sound.profileConsistencyLow": "Recording consistency: {value} % — the voice sounds different across the profile. Record again in silence without changing the distance to the microphone.",
   "sound.profileWeak": "The profile is weak: the model will recognise the voice worse. Record a new one — 15 seconds in silence.",

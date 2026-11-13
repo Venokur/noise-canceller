@@ -266,6 +266,19 @@ pub(crate) async fn record_profile(
 }
 
 #[tauri::command(async)]
+pub(crate) async fn import_profile(
+    input: Option<String>,
+    path: String,
+) -> Result<noise_canceller_core::profile::Profile, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        noise_canceller_core::profile::import(std::path::Path::new(&path), input.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 pub(crate) fn list_profiles() -> Vec<String> {
     noise_canceller_core::profile::list()
 }
