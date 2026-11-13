@@ -125,6 +125,19 @@ mod contract_tests {
     }
 
     #[test]
+    fn ab_waveform_matches_types_ts() {
+        assert_same(
+            "AbWaveform",
+            json_keys(&AbWaveformDto {
+                duration: 0.0,
+                raw: Vec::new(),
+                clean: Vec::new(),
+            }),
+            ts_interface("AbWaveform"),
+        );
+    }
+
+    #[test]
     fn recording_and_profile_dtos_match_types_ts() {
         let quality = noise_canceller_core::profile::Quality {
             duration: 0.0,

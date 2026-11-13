@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, micReady, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abBlind, abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, abSpeaker, abVisible, abWaveform, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, calibrateRoom, calibrating, checkAbSpeaker, deleteProfile, evaluateProfileConsistency, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, importProfile, matchLevel, micReady, openSoundSettings, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, renameProfile, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const renaming = ref(false);
 const nameDraft = ref("");
@@ -47,6 +47,17 @@ const format = computed(() => {
     channels > 1 ? t("sound.channels", { n: channels }) : t("sound.mono");
   return `${rateText} · ${channelText}`;
 });
+
+/// Polyline points for a 240-bucket envelope, normalised to its own peak.
+function wavePoints(values: number[], height = 24): string {
+  const peak = Math.max(0.001, ...values);
+  return values
+    .map((value, index) => {
+      const y = height - 1 - (value / peak) * (height - 2);
+      return `${index},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
 
 /// The trash sits next to "play", so a stray click used to delete the profile
 /// outright. The first click only arms the button for three seconds.
@@ -540,6 +551,16 @@ const noiseStage = computed(() => {
                 </b>
                 <span class="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{{ t("sound.metricVoice") }}</span>
               </span>
+            </div>
+            <div v-if="abWaveform" class="mt-2 grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+              <span class="w-[54px] text-[10.5px] text-[var(--muted)]">{{ t("sound.raw") }}</span>
+              <svg viewBox="0 0 239 24" preserveAspectRatio="none" class="h-6 w-full" aria-hidden="true">
+                <polyline :points="wavePoints(abWaveform.raw)" fill="none" stroke="var(--muted)" stroke-width="0.7" />
+              </svg>
+              <span class="w-[54px] text-[10.5px] text-[var(--muted)]">{{ t("sound.clean") }}</span>
+              <svg viewBox="0 0 239 24" preserveAspectRatio="none" class="h-6 w-full" aria-hidden="true">
+                <polyline :points="wavePoints(abWaveform.clean)" fill="none" stroke="var(--accent)" stroke-width="0.7" />
+              </svg>
             </div>
           </div>
 

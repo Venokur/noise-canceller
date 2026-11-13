@@ -110,6 +110,14 @@ impl From<Stats> for StatsDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct AbWaveformDto {
+    pub(crate) duration: f32,
+    pub(crate) raw: Vec<f32>,
+    pub(crate) clean: Vec<f32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SpeakerSimilarityDto {
     pub(crate) windows: u32,
     pub(crate) min: f32,

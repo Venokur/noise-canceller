@@ -23,6 +23,7 @@ import type {
   AbEntry,
   AbMetrics,
   AbStatus,
+  AbWaveform,
   LastAb,
   Profile,
   ProfileMeta,
@@ -140,6 +141,7 @@ const takeToApply = ref<AbEntry | null>(null);
 const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
+const abWaveform = ref<AbWaveform | null>(null);
 const abSpeaker = ref<SpeakerSimilarity | null>(null);
 const speakerRecommendation = ref<SpeakerRecommendation | null>(null);
 const evaluatingThreshold = ref(false);
@@ -834,6 +836,7 @@ async function loadHistory() {
 async function loadAbMetrics() {
   abMetrics.value = null;
   abSpeaker.value = null;
+  abWaveform.value = null;
   abDelta.value = null;
   if (!abRaw.value) return;
   const match = /ab-(\d+)-raw/.exec(abRaw.value);
@@ -875,8 +878,22 @@ async function evaluateSpeakerThreshold() {
   }
 }
 
+async function loadAbWaveform() {
+  if (!abRaw.value) return;
+  const match = /ab-(\d+)-raw/.exec(abRaw.value);
+  if (!match) return;
+  try {
+    abWaveform.value = await invoke<AbWaveform>("ab_waveform", {
+      stamp: Number(match[1]),
+    });
+  } catch {
+    abWaveform.value = null;
+  }
+}
+
 watch(abRaw, () => {
   void loadAbMetrics();
+  void loadAbWaveform();
 });
 function selectRecording(entry: AbEntry) {
   abRaw.value = entry.raw;
@@ -1106,6 +1123,7 @@ provide(APP_CONTEXT, {
   abSide,
   abSpeaker,
   abVisible,
+  abWaveform,
   appUpdateStatus,
   appVersion,
   applyAutostart,

@@ -15,8 +15,8 @@ use noise_canceller_core::{devices, recordings};
 use tauri::{Manager, State};
 
 use crate::dto::{
-    AbEntry, AbMetricsDto, LastAb, ProfileScoreDto, SettingsResult, SpeakerSimilarityDto,
-    StartResult, StatsDto, SystemInfo,
+    AbEntry, AbMetricsDto, AbWaveformDto, LastAb, ProfileScoreDto, SettingsResult,
+    SpeakerSimilarityDto, StartResult, StatsDto, SystemInfo,
 };
 use crate::state::AppState;
 use crate::tray::register_hotkey;
@@ -950,6 +950,39 @@ pub(crate) fn ab_settings(state: State<'_, AppState>, stamp: u64) -> Result<Sett
             .to_string());
     }
     Ok(Settings::load(&path))
+}
+
+#[tauri::command(async)]
+pub(crate) fn ab_waveform(stamp: u64) -> Result<AbWaveformDto, String> {
+    use noise_canceller_core::wav;
+
+    let (raw, raw_rate) = wav::read_mono(&recordings::raw(stamp)).map_err(|e| e.to_string())?;
+    let (clean, clean_rate) =
+        wav::read_mono(&recordings::clean(stamp)).map_err(|e| e.to_string())?;
+    let duration = (raw.len() as f32 / raw_rate.max(1) as f32)
+        .max(clean.len() as f32 / clean_rate.max(1) as f32);
+
+    fn envelope(samples: &[f32], buckets: usize) -> Vec<f32> {
+        if samples.is_empty() {
+            return vec![0.0; buckets];
+        }
+        let step = (samples.len() as f32 / buckets as f32).max(1.0);
+        (0..buckets)
+            .map(|bucket| {
+                let start = (bucket as f32 * step) as usize;
+                let end = (((bucket + 1) as f32 * step) as usize).min(samples.len());
+                samples[start..end.max(start + 1)]
+                    .iter()
+                    .fold(0.0f32, |max, value| max.max(value.abs()))
+            })
+            .collect()
+    }
+
+    Ok(AbWaveformDto {
+        duration,
+        raw: envelope(&raw, 240),
+        clean: envelope(&clean, 240),
+    })
 }
 
 #[tauri::command(async)]

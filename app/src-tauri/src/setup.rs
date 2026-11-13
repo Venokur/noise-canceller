@@ -154,6 +154,7 @@ pub(crate) fn run() {
             crate::commands::profile_meta,
             crate::commands::ab_level_delta,
             crate::commands::ab_metrics,
+            crate::commands::ab_waveform,
             crate::commands::ab_speaker,
             crate::commands::ab_settings,
             crate::commands::prune_recordings,

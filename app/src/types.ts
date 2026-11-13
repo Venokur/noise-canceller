@@ -166,6 +166,12 @@ export interface AbMetrics {
   longestDropoutS: number;
 }
 
+export interface AbWaveform {
+  duration: number;
+  raw: number[];
+  clean: number[];
+}
+
 /** Similarity of the raw take's speech windows to the enrolled profile. */
 export interface SpeakerSimilarity {
   windows: number;
