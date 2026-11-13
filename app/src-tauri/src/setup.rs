@@ -69,6 +69,28 @@ pub(crate) fn run() {
             }
         })
         .setup(move |app| {
+            // The mute overlay: a second transparent window, created hidden and
+            // shown by the tray/hotkey code for a moment. Failure is not fatal:
+            // the app must start even if the compositor refuses transparency.
+            let osd = tauri::WebviewWindowBuilder::new(
+                app,
+                "osd",
+                tauri::WebviewUrl::App("index.html#osd".into()),
+            )
+            .title("Noise Canceller OSD")
+            .inner_size(320.0, 76.0)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .shadow(false)
+            .focused(false)
+            .visible(false)
+            .build();
+            if let Err(err) = osd {
+                noise_canceller_core::log::info(&format!("mute overlay: {err}"));
+            }
             crate::tray::install(app, &start_hotkey, lang, start_minimized)?;
             Ok(())
         })

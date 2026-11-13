@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Главное окно: перетаскивание, сворачивание, закрытие",
-  "windows": ["main"],
+  "windows": ["main", "osd"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

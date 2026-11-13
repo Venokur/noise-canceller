@@ -78,6 +78,13 @@ body {
   transition: background-color 0.18s linear, color 0.18s linear;
 }
 
+/* the mute overlay lives in a transparent, always-on-top window */
+html[data-window="osd"],
+html[data-window="osd"] body,
+html[data-window="osd"] #app {
+  background: transparent;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

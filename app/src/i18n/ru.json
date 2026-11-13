@@ -23,6 +23,10 @@
   "nav.darkTheme": "Тёмная тема",
   "nav.muted": "Микрофон выключен",
   "nav.unmute": "Включить микрофон",
+  "osd.muted": "Микрофон выключен",
+  "osd.mutedHint": "Собеседники вас не слышат",
+  "osd.live": "Микрофон включён",
+  "osd.liveHint": "Обработка идёт в кабель",
 
   "readout.latency": "Задержка",
   "readout.load": "Нагрузка",

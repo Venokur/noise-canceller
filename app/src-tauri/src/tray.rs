@@ -11,7 +11,7 @@ use noise_canceller_core::paths;
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, ContextMenu, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::state::AppState;
@@ -35,6 +35,33 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// Momentary overlay on mute/unmute: the main window is usually hidden while
+/// the user is in a call, so the title-bar pill is not enough.
+fn show_osd(app: &tauri::AppHandle, muted: bool) {
+    let Some(osd) = app.get_webview_window("osd") else {
+        return;
+    };
+    let _ = osd.emit("mute-changed", muted);
+    let size = osd
+        .outer_size()
+        .unwrap_or(tauri::PhysicalSize::new(320, 76));
+    if let Ok(Some(monitor)) = osd.primary_monitor() {
+        let position = monitor.position();
+        let area = monitor.size();
+        let x = position.x + (area.width as i32 - size.width as i32) / 2;
+        let y = position.y + area.height as i32 - size.height as i32 - 80;
+        let _ = osd.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+    let _ = osd.show();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        if let Some(osd) = app.get_webview_window("osd") {
+            let _ = osd.hide();
+        }
+    });
+}
+
 /// Push-to-talk and the tray checkbox share this: mute the cable, keep the
 /// meters running.
 pub(crate) fn apply_mute(app: &tauri::AppHandle, muted: bool) {
@@ -42,19 +69,23 @@ pub(crate) fn apply_mute(app: &tauri::AppHandle, muted: bool) {
         state.with_engine(|engine| engine.set_muted(muted));
     }
     refresh_tray(app);
+    show_osd(app, muted);
 }
 
 pub(crate) fn toggle_mute(app: &tauri::AppHandle) {
+    let mut muted = false;
     if let Some(state) = app.try_state::<AppState>() {
         if let Some(next) = state.with_engine(|engine| {
             let next = !engine.is_muted();
             engine.set_muted(next);
             next
         }) {
+            muted = next;
             noise_canceller_core::log::info(if next { "mute on" } else { "mute off" });
         }
     }
     refresh_tray(app);
+    show_osd(app, muted);
 }
 
 pub(crate) fn register_hotkey(app: &tauri::AppHandle, hotkey: &str, lang: Lang) -> Option<String> {

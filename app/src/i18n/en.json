@@ -23,6 +23,10 @@
   "nav.darkTheme": "Dark theme",
   "nav.muted": "Microphone muted",
   "nav.unmute": "Unmute the microphone",
+  "osd.muted": "Microphone muted",
+  "osd.mutedHint": "The other side cannot hear you",
+  "osd.live": "Microphone live",
+  "osd.liveHint": "Processing goes to the cable",
 
   "readout.latency": "Latency",
   "readout.load": "Load",
