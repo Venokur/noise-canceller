@@ -92,6 +92,8 @@ pub struct Stats {
     /// 0..1 similarity of the last window to the enrolled profile; negative
     /// means "unknown" (no profile, silence, or the model is off)
     pub speaker_confidence: f32,
+    /// momentary loudness of the output, LUFS
+    pub lufs: f32,
     /// false when the processor thread died (panic) while the streams live on
     pub healthy: bool,
 }
@@ -142,6 +144,8 @@ struct Shared {
     input_channel: Arc<AtomicI32>,
     /// similarity of the live voice to the profile, f32 bits; negative = unknown
     speaker_confidence: Arc<AtomicU32>,
+    /// momentary loudness of the output, LUFS
+    lufs: Arc<AtomicU32>,
     /// frames the output device asked for in the last callback
     callback_frames: Arc<AtomicU32>,
     /// blocks where the model returned NaN/Inf and were zeroed
@@ -187,6 +191,7 @@ impl Shared {
             capture_drops: Arc::new(AtomicU32::new(0)),
             input_channel: Arc::new(AtomicI32::new(settings.input_channel)),
             speaker_confidence: Arc::new(AtomicU32::new((-1.0f32).to_bits())),
+            lufs: Arc::new(AtomicU32::new((-120.0f32).to_bits())),
             callback_frames: Arc::new(AtomicU32::new(0)),
             bad_blocks: Arc::new(AtomicU32::new(0)),
         }
@@ -547,6 +552,7 @@ impl Engine {
             speaker_confidence: f32::from_bits(
                 self.shared.speaker_confidence.load(Ordering::Relaxed),
             ),
+            lufs: f32::from_bits(self.shared.lufs.load(Ordering::Relaxed)),
             healthy: self.healthy(),
         }
     }

@@ -301,6 +301,8 @@
   "settings.diag.captureDropsHint": "Microphone samples lost to an overflowing input ring. Zero is normal.",
   "settings.diag.inputPeak": "Input peak",
   "settings.diag.outputPeak": "Output peak",
+  "settings.diag.lufs": "Loudness",
+  "settings.diag.lufsHint": "Momentary output loudness over the last 400 ms (K-weighted, LUFS). For streaming aim at −16…−14 LUFS, for calls −20…−18.",
   "settings.diag.speaker": "Profile similarity",
   "settings.diag.speakerHint": "How close the microphone voice is to the recorded profile (0–100 %). Computed once a second over a 2-second window. It only measures for now — the output is not ducked. “—” means silence, no profile, or the check is off.",
   "settings.diag.clock": "Clock drift",

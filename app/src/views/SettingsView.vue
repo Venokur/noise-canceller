@@ -510,6 +510,8 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 <span :class="stats.outputPeakDb > -1 ? 'text-[var(--danger)]' : ''">
                   {{ stats.outputPeakDb > -100 ? stats.outputPeakDb.toFixed(0) + " " + u.db : "—" }}
                 </span>
+                <span :title="t('settings.diag.lufsHint')">{{ t("settings.diag.lufs") }}</span>
+                <span>{{ stats.lufs > -100 ? stats.lufs.toFixed(0) + " LUFS" : "—" }}</span>
                 <span :title="t('settings.diag.speakerHint')">{{ t("settings.diag.speaker") }}</span>
                 <span :class="stats.speakerConfidence >= 0 && stats.speakerConfidence < 0.5 ? 'text-[var(--danger)]' : ''">
                   {{

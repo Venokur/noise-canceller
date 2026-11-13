@@ -475,6 +475,9 @@ impl Processor {
                 stage.add(out.wet, &mut self.up_buf[..produced], air_amount, speaker);
             }
             self.chain.process(&mut self.up_buf[..produced]);
+            self.shared
+                .lufs
+                .store(self.chain.lufs().to_bits(), Ordering::Relaxed);
 
             if self.rate.trace {
                 eprintln!(
@@ -595,6 +598,9 @@ impl Processor {
             air.reset();
         }
         fade_suppression(&self.shared);
+        self.shared
+            .lufs
+            .store((-120.0f32).to_bits(), Ordering::Relaxed);
         let produced = self.up.process(&self.zeros, &mut self.up_buf);
         for sample in self.up_buf[..produced].iter_mut() {
             *sample = 0.0;

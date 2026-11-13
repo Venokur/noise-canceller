@@ -485,6 +485,71 @@ impl Default for DeEsser {
     }
 }
 
+/// Momentary loudness, BS.1770-style: K-weighting (a +4 dB shelf at 1.5 kHz
+/// and a 38 Hz high-pass) over a 400 ms window. It is a diagnostic, not a
+/// broadcast meter: no gating or true-peak oversampling.
+pub struct Loudness {
+    shelf: Biquad,
+    high_pass: Biquad,
+    sum: f64,
+    count: usize,
+    window: usize,
+    value: f32,
+}
+
+impl Loudness {
+    pub fn new() -> Self {
+        Self {
+            shelf: Biquad::default(),
+            high_pass: Biquad::default(),
+            sum: 0.0,
+            count: 0,
+            window: 1,
+            value: -120.0,
+        }
+    }
+
+    pub fn configure(&mut self, sample_rate: f64) {
+        self.shelf.high_shelf(sample_rate as f32, 1_500.0, 4.0);
+        self.high_pass.high_pass(sample_rate as f32, 38.0, 0.5);
+        self.window = ((sample_rate * 0.4) as usize).max(1);
+        self.sum = 0.0;
+        self.count = 0;
+        self.value = -120.0;
+    }
+
+    #[inline]
+    pub fn process(&mut self, x: f64) {
+        let y = self.high_pass.process(self.shelf.process(x));
+        self.sum += y * y;
+        self.count += 1;
+        if self.count >= self.window {
+            let mean = self.sum / self.count as f64;
+            self.value = (-0.691 + 10.0 * (mean + 1e-12).log10()) as f32;
+            self.sum = 0.0;
+            self.count = 0;
+        }
+    }
+
+    pub fn lufs(&self) -> f32 {
+        self.value
+    }
+
+    pub fn reset(&mut self) {
+        self.shelf.reset();
+        self.high_pass.reset();
+        self.sum = 0.0;
+        self.count = 0;
+        self.value = -120.0;
+    }
+}
+
+impl Default for Loudness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Limiter {
     gain: f64,
     ceiling: f64,
@@ -537,6 +602,7 @@ pub struct Chain {
     /// very last sample. This one is idle (gain 1.0) whenever the signal stays
     /// under the ceiling, so the shipped -3 dB setting is still bit-exact.
     safety: Limiter,
+    loudness: Loudness,
     /// tone control: body shelf at 200 Hz and presence shelf at 3 kHz, both
     /// after the AGC and before the limiter
     tone_low: Biquad,
@@ -597,6 +663,7 @@ impl Chain {
             agc: Agc::default(),
             limiter: Limiter::default(),
             safety: Limiter::default(),
+            loudness: Loudness::new(),
             tone_low: Biquad::default(),
             tone_high: Biquad::default(),
             deess: DeEsser::new(),
@@ -660,6 +727,7 @@ impl Chain {
         // the final guard: whatever the output volume, click suppressor and
         // comfort noise produced must still leave the chain under the ceiling
         self.safety.prepare();
+        self.loudness.configure(self.sample_rate);
 
         // 4th order Butterworth: one biquad alone lets 40-60 Hz rumble through
         self.high_pass
@@ -728,6 +796,11 @@ impl Chain {
     /// control is actually moving or sitting at its limit).
     pub fn agc_gain_db(&self) -> f64 {
         self.agc.gain_db
+    }
+
+    /// Momentary loudness of the last 400 ms of output, LUFS.
+    pub fn lufs(&self) -> f32 {
+        self.loudness.lufs()
     }
 
     /// Processes interleaved-free mono samples in place.
@@ -819,6 +892,7 @@ impl Chain {
             }
 
             x = self.safety.process(x, sr);
+            self.loudness.process(x);
             *sample = (x as f32).clamp(-1.0, 1.0);
         }
     }
@@ -1196,6 +1270,32 @@ mod tests {
             "7 kHz moved by {sibilance:.1} dB"
         );
         assert!(body.abs() < 0.5, "1 kHz moved by {body:.1} dB");
+    }
+
+    #[test]
+    fn momentary_loudness_tracks_a_known_sine() {
+        let mut chain = Chain::new();
+        let settings = Settings {
+            high_pass_enabled: false,
+            gate_enabled: false,
+            agc_enabled: false,
+            limiter_enabled: false,
+            comfort_noise_enabled: false,
+            output_gain_db: 0.0,
+            ..Settings::default()
+        };
+        chain.configure(&settings, 48_000);
+        let mut block: Vec<f32> = (0..48_000)
+            .map(|i| {
+                (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32 * 0.1
+            })
+            .collect();
+        chain.process(&mut block);
+        let lufs = chain.lufs();
+        assert!(
+            (-25.0..=-19.0).contains(&lufs),
+            "a 0.1 sine should read near -23 LUFS, got {lufs:.1}"
+        );
     }
 
     #[test]

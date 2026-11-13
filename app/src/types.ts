@@ -91,6 +91,7 @@ export interface Stats {
   slewPpm: number;
   threads: number;
   speakerConfidence: number;
+  lufs: number;
   healthy: boolean;
 }
 

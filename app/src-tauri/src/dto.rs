@@ -34,6 +34,7 @@ pub(crate) struct StatsDto {
     pub(crate) slew_ppm: f32,
     pub(crate) threads: u16,
     pub(crate) speaker_confidence: f32,
+    pub(crate) lufs: f32,
     pub(crate) healthy: bool,
 }
 
@@ -65,6 +66,7 @@ impl Default for StatsDto {
             slew_ppm: 0.0,
             threads: 0,
             speaker_confidence: -1.0,
+            lufs: -120.0,
             healthy: false,
         }
     }
@@ -97,6 +99,7 @@ impl From<Stats> for StatsDto {
             slew_ppm: s.slew_ppm,
             threads: s.threads,
             speaker_confidence: s.speaker_confidence,
+            lufs: s.lufs,
             healthy: s.healthy,
         }
     }

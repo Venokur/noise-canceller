@@ -57,6 +57,7 @@ const stats = ref<Stats>({
   slewPpm: 0,
   threads: 0,
   speakerConfidence: -1,
+  lufs: -120,
   healthy: false,
   suppressionDb: 0,
   speech: false,
