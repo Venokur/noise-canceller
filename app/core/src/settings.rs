@@ -72,6 +72,9 @@ pub struct Settings {
     /// "profile" or "auto"
     pub mode: String,
     pub profile_path: Option<String>,
+    /// microphone name -> profile path, so a headset and a desk mic each keep
+    /// the enrolment recorded on them
+    pub profile_by_device: std::collections::BTreeMap<String, String>,
     pub isolation_strength: f32,
     /// hard floor under the voice: the processed output is never more than this
     /// many dB below the model input while the input is speech. 0 = no limit.
@@ -180,6 +183,7 @@ impl Default for Settings {
             language: "auto".into(),
             mode: "profile".into(),
             profile_path: None,
+            profile_by_device: std::collections::BTreeMap::new(),
             isolation_strength: 1.0,
             max_suppression_db: 15.0,
 
@@ -280,6 +284,16 @@ impl Settings {
         self.deess_db = self.deess_db.clamp(0.0, 12.0);
         self.air_amount = self.air_amount.clamp(0.0, 1.0);
         self.residual_mix = self.residual_mix.clamp(0.0, 1.0);
+        // a settings file is user-editable, but the map has no reason to grow
+        // without bound: one profile per microphone is enough
+        if self.profile_by_device.len() > 32 {
+            self.profile_by_device = self
+                .profile_by_device
+                .iter()
+                .take(32)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+        }
         self.comfort_noise_db = self.comfort_noise_db.clamp(-90.0, -30.0);
         self.ab_seconds = self.ab_seconds.clamp(5.0, 60.0);
         self.keep_recordings = self.keep_recordings.clamp(1, 100);

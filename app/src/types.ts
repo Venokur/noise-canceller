@@ -12,6 +12,7 @@ export interface Settings {
   language: string;
   mode: string;
   profilePath: string | null;
+  profileByDevice: Record<string, string>;
   isolationStrength: number;
   maxSuppressionDb: number;
   inputDevice: string;

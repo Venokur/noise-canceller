@@ -49,7 +49,13 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
       profileScores.value = [];
     }
     const best = [...profileScores.value].sort((a, b) => b.score - a.score)[0];
-    if (settings.value?.autoProfile && best) {
+    // a profile bound to this microphone wins over "pick the best": a headset
+    // enrolment does not describe a desk microphone
+    const bound = settings.value?.profileByDevice?.[inputDevice.value];
+    if (bound && profiles.value.includes(bound)) {
+      selectedProfile.value = bound;
+      if (settings.value) settings.value.profilePath = bound;
+    } else if (settings.value?.autoProfile && best) {
       selectedProfile.value = best.path;
       settings.value.profilePath = best.path;
     } else if (!selectedProfile.value && settings.value?.profilePath) {
@@ -114,7 +120,13 @@ export function useProfiles({ settings, error, inputDevice, restart }: ProfileDe
   async function deleteProfile() {
     if (!selectedProfile.value) return;
     try {
-      await invoke("delete_profile", { path: selectedProfile.value });
+      const removed = selectedProfile.value;
+      await invoke("delete_profile", { path: removed });
+      if (settings.value?.profileByDevice) {
+        for (const [device, path] of Object.entries(settings.value.profileByDevice)) {
+          if (path === removed) delete settings.value.profileByDevice[device];
+        }
+      }
       selectedProfile.value = "";
       if (settings.value) settings.value.profilePath = null;
       await refreshProfiles();

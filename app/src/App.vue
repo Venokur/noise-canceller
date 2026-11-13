@@ -585,6 +585,9 @@ async function recordProfile() {
     });
     profileQuality.value = profile.quality;
     settings.value.profilePath = profile.path;
+    if (selectedInput.value) {
+      settings.value.profileByDevice[selectedInput.value] = profile.path;
+    }
     settings.value.mode = "profile";
     await refreshProfiles();
     selectedProfile.value = profile.path;
@@ -1294,6 +1297,13 @@ watch([selectedInput, selectedOutput], ([input], [prevInput]) => {
 function pickInput(value: string) {
   if (value === selectedInput.value) return;
   selectedInput.value = value;
+  // a profile recorded on this microphone wins over the current one
+  const bound = settings.value?.profileByDevice?.[value];
+  if (bound && profiles.value.includes(bound)) {
+    selectedProfile.value = bound;
+    settings.value!.profilePath = bound;
+    profileQuality.value = null;
+  }
   saveDevices(true);
   void refreshInputChannels();
 }
