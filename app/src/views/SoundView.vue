@@ -394,73 +394,86 @@ const noiseStage = computed(() => {
 
           <div
             v-if="abRaw && abClean"
-            class="mt-3 flex flex-wrap items-center gap-3 rounded-[11px] border border-[var(--stroke)] bg-[var(--surface)] px-3 py-2"
+            class="mt-3 rounded-[11px] border border-[var(--stroke)] bg-[var(--surface)] px-3 py-2.5"
             :title="abFolder || undefined"
           >
-            <div class="flex gap-1.5">
-              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === abVisible.a" @click="playAb(abVisible.a)">
-                <AppIcon :name="playingKey === 'pair' && abSide === abVisible.a ? 'stop' : 'play'" :size="12" />
-                {{ abBlind ? "A" : t("sound.raw") }}
-              </button>
-              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === abVisible.b" @click="playAb(abVisible.b)">
-                <AppIcon :name="playingKey === 'pair' && abSide === abVisible.b ? 'stop' : 'play'" :size="12" />
-                {{ abBlind ? "B" : t("sound.clean") }}
-              </button>
-            </div>
-
-            <div class="ml-auto flex items-center gap-4">
-              <div class="flex items-start gap-4 font-mono tabular-nums">
-                <span class="block w-[76px]">
-                  <b class="block text-[12.5px] font-normal">
-                    {{ abMetrics ? abMetrics.speechLevelDb.toFixed(0) + " " + u.db : "—" }}
-                  </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricSpeech") }}</span>
-                </span>
-                <span class="block w-[76px]">
-                  <b class="block text-[12.5px] font-normal">
-                    {{ abMetrics ? Math.max(0, abMetrics.pauseContrastDb).toFixed(0) + " " + u.db : "—" }}
-                  </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricPauses") }}</span>
-                </span>
-                <span class="block w-[76px]">
-                  <b class="block text-[12.5px] font-normal">
-                    {{ abDelta === null ? "—" : Math.abs(abDelta).toFixed(1) + " " + u.db }}
-                  </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricDelta") }}</span>
-                </span>
-                <span class="block w-[76px]">
-                  <b
-                    class="block text-[12.5px] font-normal"
-                    :class="abMetrics && abMetrics.longestDropoutS > 0.4 ? 'text-[var(--danger)]' : ''"
-                  >
-                    {{ abMetrics ? abMetrics.longestDropoutS.toFixed(2) + " " + u.s : "—" }}
-                  </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricDropout") }}</span>
-                </span>
-                <span
-                  v-if="abSpeaker"
-                  class="block w-[76px]"
-                  :title="t('sound.voiceSimilarity', {
-                    median: (abSpeaker.median * 100).toFixed(0),
-                    min: (abSpeaker.min * 100).toFixed(0),
-                    max: (abSpeaker.max * 100).toFixed(0),
-                  })"
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex gap-1.5">
+                <button
+                  class="playbtn"
+                  :data-on="playingKey === 'pair' && abSide === abVisible.a"
+                  @click="playAb(abVisible.a)"
                 >
-                  <b class="block text-[12.5px] font-normal">{{ (abSpeaker.median * 100).toFixed(0) }} %</b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricVoice") }}</span>
-                </span>
+                  <AppIcon :name="playingKey === 'pair' && abSide === abVisible.a ? 'stop' : 'play'" :size="12" />
+                  {{ abBlind ? "A" : t("sound.raw") }}
+                </button>
+                <button
+                  class="playbtn"
+                  :data-on="playingKey === 'pair' && abSide === abVisible.b"
+                  @click="playAb(abVisible.b)"
+                >
+                  <AppIcon :name="playingKey === 'pair' && abSide === abVisible.b ? 'stop' : 'play'" :size="12" />
+                  {{ abBlind ? "B" : t("sound.clean") }}
+                </button>
               </div>
 
-              <label class="flex items-center gap-2 text-[11.5px] whitespace-nowrap text-[var(--muted)]">
-                <AppSwitch v-model="abNormalize" />
-                {{ t("sound.normalize") }}
-              </label>
-              <button class="iconbtn" :title="t('sound.matchLevel')" @click="matchLevel">
-                <AppIcon name="sliders" :size="14" />
-              </button>
-              <button class="iconbtn" :title="t('sound.checkVoice')" @click="checkAbSpeaker">
-                <AppIcon name="mic" :size="14" />
-              </button>
+              <div class="flex items-center gap-3">
+                <label class="flex items-center gap-2 text-[11.5px] whitespace-nowrap text-[var(--muted)]">
+                  <AppSwitch v-model="abNormalize" />
+                  {{ t("sound.normalize") }}
+                </label>
+                <button class="iconbtn" :title="t('sound.matchLevel')" @click="matchLevel">
+                  <AppIcon name="sliders" :size="14" />
+                </button>
+                <button class="iconbtn" :title="t('sound.checkVoice')" @click="checkAbSpeaker">
+                  <AppIcon name="mic" :size="14" />
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-2 grid grid-cols-5 gap-3 border-t border-[var(--stroke)] pt-2 font-mono tabular-nums">
+              <span class="min-w-0">
+                <b class="block text-[12.5px] font-normal">
+                  {{ abMetrics ? abMetrics.speechLevelDb.toFixed(0) + " " + u.db : "—" }}
+                </b>
+                <span class="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{{ t("sound.metricSpeech") }}</span>
+              </span>
+              <span class="min-w-0">
+                <b class="block text-[12.5px] font-normal">
+                  {{ abMetrics ? Math.max(0, abMetrics.pauseContrastDb).toFixed(0) + " " + u.db : "—" }}
+                </b>
+                <span class="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{{ t("sound.metricPauses") }}</span>
+              </span>
+              <span class="min-w-0">
+                <b class="block text-[12.5px] font-normal">
+                  {{ abDelta === null ? "—" : Math.abs(abDelta).toFixed(1) + " " + u.db }}
+                </b>
+                <span class="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{{ t("sound.metricDelta") }}</span>
+              </span>
+              <span class="min-w-0">
+                <b
+                  class="block text-[12.5px] font-normal"
+                  :class="abMetrics && abMetrics.longestDropoutS > 0.4 ? 'text-[var(--danger)]' : ''"
+                >
+                  {{ abMetrics ? abMetrics.longestDropoutS.toFixed(2) + " " + u.s : "—" }}
+                </b>
+                <span class="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{{ t("sound.metricDropout") }}</span>
+              </span>
+              <span
+                class="min-w-0"
+                :title="abSpeaker
+                  ? t('sound.voiceSimilarity', {
+                      median: (abSpeaker.median * 100).toFixed(0),
+                      min: (abSpeaker.min * 100).toFixed(0),
+                      max: (abSpeaker.max * 100).toFixed(0),
+                    })
+                  : t('sound.checkVoice')"
+              >
+                <b class="block text-[12.5px] font-normal">
+                  {{ abSpeaker ? (abSpeaker.median * 100).toFixed(0) + " %" : "—" }}
+                </b>
+                <span class="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{{ t("sound.metricVoice") }}</span>
+              </span>
             </div>
           </div>
 
