@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "noise-canceller"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "noise-canceller-core",
@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "noise-canceller-cli"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "hound",
@@ -2330,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "noise-canceller-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "cpal",
