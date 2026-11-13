@@ -346,6 +346,7 @@ cargo run -p noise-canceller-cli -- profile 5     # запись профиля
 cargo run -p noise-canceller-cli -- ab 3          # A/B-запись
 cargo run -p noise-canceller-cli -- devices       # список устройств с индексами
 powershell -File scripts\golden.ps1               # golden-тест, падает при дрейфе
+powershell -File scripts\bakeoff.ps1 -Count 3     # сравнить варианты тракта на сохранённых дублях
 powershell -File scripts\voxlock.ps1 -Atten       # матрица блок/потоки + тихий микрофон
 powershell -File scripts\licenses.ps1 -Check      # список лицензий не разъехался
 ```
@@ -359,6 +360,12 @@ powershell -File scripts\licenses.ps1 -Check      # список лицензи�
 к речи, громкость уехала от сырого больше чем на 20 дБ или речь вне −55…−10 dBFS.
 CI (`.github/workflows/ci.yml`) гоняет `cargo fmt --check`, clippy `-D warnings`, тесты, сборку фронта
 и Tauri, а также `npm run check:ui` и `npm run check:i18n`.
+
+`scripts\bakeoff.ps1` прогоняет последние A/B через `nc replay` в нескольких
+конфигурациях (residual off/GTCRN/DPDFNet, residual_mix 0.75, Air 0/0.15,
+де-эссер, предел 8/0 дБ) и печатает средние «речь / громкость / паузы / провал».
+Это дешёвый способ сравнить новую модель или ползунок на своих дублях, не
+полагаясь только на слух.
 
 Те же цифры для одной пары: `nc metrics <raw.wav> <clean.wav>` — печатает уровень
 речи, разницу с оригиналом, «паузы тише речи» и самый длинный провал; с `--json`
