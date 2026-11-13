@@ -39,6 +39,8 @@ const stats = ref<Stats>({
   latencyMs: 0,
   bufferMs: 0,
   underruns: 0,
+  inRate: 0,
+  inChannels: 0,
   outRate: 0,
   overflows: 0,
   captureDrops: 0,
@@ -57,6 +59,8 @@ const stats = ref<Stats>({
 });
 const inputs = ref<string[]>([]);
 const outputs = ref<string[]>([]);
+/// capture channels of the selected microphone, for the channel picker
+const inputChannels = ref(0);
 const selectedInput = ref("");
 const selectedOutput = ref("");
 const busy = ref(false);
@@ -217,6 +221,18 @@ function toLevel(rms: number): number {
   return Math.max(0, Math.min(1, (db + 60) / 60));
 }
 
+/// Channel count of the current microphone: the picker is hidden for a mono
+/// device and offers real numbers only for a stereo interface.
+async function refreshInputChannels() {
+  try {
+    inputChannels.value = await invoke<number>("input_channels", {
+      name: selectedInput.value || null,
+    });
+  } catch {
+    inputChannels.value = 0;
+  }
+}
+
 async function refreshDevices() {
   try {
     const [ins, outs] = await invoke<[string[], string[]]>("list_devices");
@@ -241,6 +257,7 @@ async function refreshDevices() {
       selectedOutput.value = settings.value.outputDevice;
     }
     cableOk.value = outs.some((n) => isCableOutput(n));
+    await refreshInputChannels();
   } catch (e) {
     error.value = String(e);
   }
@@ -689,6 +706,9 @@ async function applyResetSettings() {
     await refreshDevices();
     await refreshProfiles();
     if (result.warning) notify(t("toast.hotkeyTitle"), "warn", result.warning);
+    // some fields (device, profile, residual stage, block) only take effect on
+    // a fresh engine; importing them without a restart left the old chain on
+    restartSoon(true);
   } catch (e) {
     error.value = String(e);
   }
@@ -713,6 +733,7 @@ async function importSettings() {
     await refreshDevices();
     await refreshProfiles();
     if (result.warning) notify(t("toast.hotkeyTitle"), "warn", result.warning);
+    restartSoon(true);
   } catch (e) {
     error.value = String(e);
   }
@@ -834,6 +855,7 @@ provide(APP_CONTEXT, {
   history,
   importSettings,
   inputDb,
+  inputChannels,
   inputIsCable,
   inputLevel,
   inputOptions,
@@ -1088,6 +1110,13 @@ watch(
 );
 
 watch(
+  () => settings.value?.theme,
+  (value) => {
+    if (value) applyTheme(value);
+  },
+);
+
+watch(
   () => [settings.value?.chunkMs, settings.value?.denoiserThreads, settings.value?.autoThreads],
   () => {
     void loadSystemInfo();
@@ -1106,6 +1135,7 @@ function pickInput(value: string) {
   if (value === selectedInput.value) return;
   selectedInput.value = value;
   saveDevices(true);
+  void refreshInputChannels();
 }
 
 function pickOutput(value: string) {

@@ -9,7 +9,9 @@ import type { Settings, SystemInfo } from "../types";
 export function useSystemInfo(settings: Ref<Settings | null>) {
   const sysInfo = ref<SystemInfo | null>(null);
 
-  const maxThreads = computed(() => Math.max(2, sysInfo.value?.logicalCores ?? 8));
+  // the model is never given more than 16 threads, and above six it only
+  // warms cores: the slider must not promise a number `sanitize` will cut
+  const maxThreads = computed(() => Math.min(16, Math.max(2, sysInfo.value?.logicalCores ?? 8)));
   const autoThreads = computed(() => sysInfo.value?.recommendedThreads ?? 4);
 
   async function loadSystemInfo() {

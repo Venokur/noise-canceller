@@ -331,7 +331,7 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   v-if="!settings.bufferAuto"
                   :label="t('settings.latency.buffer')"
                   v-model="settings.bufferMs"
-                  :min="20"
+                  :min="40"
                   :max="250"
                   :step="10"
                   :format="(v) => `${v} ${u.ms}`"
@@ -496,6 +496,17 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               <div :class="settingRow">
                 <AppLabel :text="t('settings.language')" :hint="t('settings.languageHint')" />
                 <AppSelect v-model="settings.language" :options="LANGUAGE_OPTIONS" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel :text="t('settings.theme')" :hint="t('settings.themeHint')" />
+                <AppSelect
+                  v-model="settings.theme"
+                  :options="[
+                    { value: 'system', label: t('settings.theme.system') },
+                    { value: 'dark', label: t('settings.theme.dark') },
+                    { value: 'light', label: t('settings.theme.light') },
+                  ]"
+                />
               </div>
               <div :class="settingRow">
                 <AppLabel :text="t('model.label')" :hint="modelStatus" />
