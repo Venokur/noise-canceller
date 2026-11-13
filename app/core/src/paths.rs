@@ -8,11 +8,20 @@ pub fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Workspace root: the nearest ancestor that has `Cargo.toml` or `models`.
+/// Workspace root: the nearest ancestor that has `Cargo.toml`, or — in a
+/// packaged build, where there is no workspace — the nearest one that has
+/// `models`.
+///
+/// The two passes matter: `target/release/models` is left behind by a packaging
+/// run, and taking the first directory that has `models` made a dev build load
+/// that stale copy instead of `app/models` (its `test_wavs` are removed by
+/// packaging, so `nc selftest` and `golden.ps1` failed with "path not found").
 pub fn root_dir() -> PathBuf {
-    let mut dir = exe_dir();
+    let start = exe_dir();
+    let mut dir = start.clone();
+
     for _ in 0..5 {
-        if dir.join("Cargo.toml").is_file() || dir.join("models").is_dir() {
+        if dir.join("Cargo.toml").is_file() {
             return dir;
         }
         match dir.parent() {
@@ -20,6 +29,18 @@ pub fn root_dir() -> PathBuf {
             None => break,
         }
     }
+
+    dir = start;
+    for _ in 0..5 {
+        if dir.join("models").is_dir() {
+            return dir;
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent.to_path_buf(),
+            None => break,
+        }
+    }
+
     exe_dir()
 }
 

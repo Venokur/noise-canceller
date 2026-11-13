@@ -5,6 +5,7 @@
 
 mod ab;
 mod helpers;
+mod processor;
 mod streams;
 
 pub use ab::AbStatus;
@@ -12,29 +13,23 @@ pub use helpers::{
     cap_dry_mix, rms_of, DropoutGuard, FixedStage, InputVoice, LeakGuard, Leveler, PeakGuard,
 };
 
-use ab::{ab_append_clean, AbBuffer};
-use helpers::*;
-use streams::{capture_f32, install_panic_hook, push_block, render_f32};
+use ab::AbBuffer;
+use processor::Processor;
+use streams::{install_panic_hook, open_input, open_output};
 
-use crate::air::Air;
 use crate::pipeline::Pipeline;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
-
-use anyhow::{anyhow, Result};
-use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{SampleFormat, StreamConfig};
 
 use crate::devices;
-use crate::dsp::Chain;
 use crate::paths;
 use crate::recordings;
-use crate::resample::Resampler;
 use crate::settings::{self, Settings};
-use crate::state::{LearnedState, LEVELER_GAIN_MAX_DB};
+use crate::state::LearnedState;
+use anyhow::{anyhow, Result};
+use cpal::traits::{DeviceTrait, StreamTrait};
 
 pub const MODEL_RATE: u32 = 16_000;
 pub const BANDS: usize = 32;
@@ -311,7 +306,7 @@ impl Engine {
         let threads = settings.effective_threads(chunk_ms);
 
         // the model chain lives in one place, shared with `nc replay`
-        let mut pipeline = Pipeline::new(
+        let pipeline = Pipeline::new(
             &settings,
             voice.as_deref(),
             threads,
@@ -337,7 +332,7 @@ impl Engine {
         let learned = LearnedState::load(&paths::data_dir());
         // read once, here, before the streams run: the processing thread must
         // not read or write this folder
-        let mut learned_buffer_ms = if learned.auto_buffer_ms > 0.0 {
+        let learned_buffer_ms = if learned.auto_buffer_ms > 0.0 {
             learned.auto_buffer_ms
         } else {
             settings.buffer_ms
@@ -359,8 +354,8 @@ impl Engine {
         let persist = Persist::spawn(paths::data_dir(), learned);
 
         // rings ------------------------------------------------------------
-        let (mut in_prod, mut in_cons) = rtrb::RingBuffer::<f32>::new(MODEL_RATE as usize * 2);
-        let (mut out_prod, mut out_cons) = rtrb::RingBuffer::<f32>::new(out_rate as usize * 2);
+        let (in_prod, in_cons) = rtrb::RingBuffer::<f32>::new(MODEL_RATE as usize * 2);
+        let (mut out_prod, out_cons) = rtrb::RingBuffer::<f32>::new(out_rate as usize * 2);
 
         // prefill the output ring so playback starts cleanly: one block plus the
         // buffer, otherwise the first block arrives too late and starts with a
@@ -370,592 +365,24 @@ impl Engine {
             let _ = out_prod.push(0.0);
         }
 
-        let in_ab = shared.ab.clone();
-        let proc_ab = shared.ab.clone();
-        let proc_ab_done = shared.ab_done.clone();
-        let proc_ab_active = shared.ab_active.clone();
-        let proc_ab_folder = shared.ab_folder.clone();
-        let proc_ab_paths = shared.ab_paths.clone();
-
         // processing thread ------------------------------------------------
-        let proc_shared = shared.clone();
-        let mut chain = Chain::new();
-        chain.configure(&settings, out_rate);
-        let mut up = Resampler::new(MODEL_RATE, out_rate);
-        let mut up_buf = vec![0.0f32; up.max_output(chunk_samples) + 64];
-        let mut block = vec![0.0f32; chunk_samples];
-        let mut input_voice = InputVoice::new();
-        // auto buffer: learn the smallest ring that does not miss
-        let mut auto_enabled = settings.buffer_auto;
-        let mut auto_ms = buffer_ms;
-        let mut auto_events = 0u32;
-        let mut auto_at = Instant::now();
-        let mut auto_changed = Instant::now();
-        // kept next to the pipeline only for the suppression readout
-        let mut max_suppression = settings.max_suppression_db.clamp(0.0, 48.0);
-
-        let mut analyzer = crate::spectrum::Spectrum::new(1024, out_rate as f32);
-        let mut chain_seq = 0u32;
-        let mut rtf_window = (0usize, Duration::ZERO);
-        // remember the level between runs: without it the first words of a
-        // session start quiet and climb for a second or two
-        let saved_gain = learned.leveler_gain_db.clamp(0.0, LEVELER_GAIN_MAX_DB);
-        let mut leveler = Leveler::new(saved_gain);
-
-        let session_start = Instant::now();
-        let mut saved_level = saved_gain;
-        let mut persist_ticks = 0u32;
-        let mut guard = PeakGuard::new(MODEL_RATE as f32);
-        let zeros = vec![0.0f32; chunk_samples];
-        let mut silent_run = 0u32;
-        let mut was_speaking = false;
-        let mut onset_blocks = 0u32;
-        let mut speech_hold = 0u32;
-        let mut slew = Slew::new();
-        let mut slew_out: Vec<f32> = Vec::with_capacity(chunk_samples * 4);
-        let mut slew_step = 1.0f64;
-        // rate control: the ring level is an integral of the clock error, so a
-        // deadband around it moves the converter only when it actually drifts
-        let mut drift_at = Instant::now();
-        let mut drift_logs = 0u32;
-        let trace = std::env::var("NC_TRACE").is_ok();
-
+        let processor = Processor::new(
+            shared.clone(),
+            &settings,
+            pipeline,
+            persist,
+            out_rate,
+            buffer_ms,
+            learned_buffer_ms,
+            learned.leveler_gain_db,
+        );
         let processor = thread::Builder::new()
             .name("voxlock-processor".into())
-            .spawn(move || {
-                // NovaSR is loaded on first use, not at start: most sessions
-                // never enable "air", and a 22 ms session load in the middle of
-                // the first buffer is worse than a short wait after the switch.
-                let mut air: Option<Air> = None;
-                let mut air_error = false;
-                while proc_shared.running.load(Ordering::Relaxed) {
-                    let seq = proc_shared.settings_seq.load(Ordering::Relaxed);
-                    if seq != chain_seq {
-                        if let Ok(current) = proc_shared.settings.lock() {
-                            chain.configure(&current, out_rate);
-                            max_suppression = current.max_suppression_db.clamp(0.0, 48.0);
-                            pipeline.set_max_suppression(max_suppression);
-                            if current.buffer_auto {
-                                if !auto_enabled {
-                                    // the learned value, kept in memory: this
-                                    // thread does not touch `data/`
-                                    auto_ms = learned_buffer_ms;
-                                    proc_shared
-                                        .buffer_ms
-                                        .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                    auto_events =
-                                        proc_shared.underrun_events.load(Ordering::Relaxed);
-                                    auto_changed = Instant::now();
-                                }
-                                auto_enabled = true;
-                            } else {
-                                auto_enabled = false;
-                            }
-                        }
-                        chain_seq = seq;
-                    }
-
-                    if in_cons.slots() < chunk_samples {
-                        thread::sleep(Duration::from_millis(2));
-                        continue;
-                    }
-
-                    // pace production: never run ahead of what the output ring
-                    // can hold, otherwise the excess is simply thrown away
-                    let chunk_out = (out_rate as f32 * chunk_ms / 1000.0) as usize;
-                    let buffer_ms = f32::from_bits(proc_shared.buffer_ms.load(Ordering::Relaxed));
-                    // a virtual cable can ask for 200 ms in one callback; the ring
-                    // has to hold at least one callback plus a block, otherwise
-                    // every callback drains it and the render starsves
-                    let callback_ms = proc_shared.callback_frames.load(Ordering::Relaxed) as f32
-                        / out_rate.max(1) as f32
-                        * 1000.0;
-                    let block_ms = chunk_samples as f32 / MODEL_RATE as f32 * 1000.0;
-                    // the ring must hold the user buffer, one whole model block
-                    // and one device callback; `buffer + max(half block, cb)`
-                    // left 18 ms of slack at the default and a 65 ms model reset
-                    // always emptied it
-                    let ref_ms = buffer_ms + block_ms + callback_ms;
-                    let max_fill = (out_rate as f32 * ref_ms / 1000.0) as usize + chunk_out + 64;
-                    // leave room for a whole block plus the resampler's tail:
-                    // pushing into a nearly full ring silently dropped the rest
-                    // of the block, which is a hole in the middle of a word
-                    let need = chunk_out + 64;
-
-                    // Auto buffer: one step every 4 s. A real miss raises the
-                    // ring by 20 ms and is persisted for the next session; 90 s
-                    // without misses lowers it by 10 ms, so latency settles at
-                    // the smallest value this machine actually sustains.
-                    if auto_at.elapsed() >= Duration::from_secs(4) {
-                        auto_at = Instant::now();
-                        if auto_enabled && session_start.elapsed() > Duration::from_secs(10) {
-                            let events = proc_shared.underrun_events.load(Ordering::Relaxed);
-                            if events > auto_events {
-                                let delta = events - auto_events;
-                                auto_events = events;
-                                auto_ms = (auto_ms + 20.0).min(settings::BUFFER_MS_MAX);
-                                learned_buffer_ms = auto_ms;
-                                proc_shared
-                                    .buffer_ms
-                                    .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                persist.set_auto_buffer(auto_ms);
-                                auto_changed = Instant::now();
-                                crate::log::info(&format!(
-                                    "auto buffer: {auto_ms:.0} ms (+{delta} buffer miss)"
-                                ));
-                            } else if auto_changed.elapsed() > Duration::from_secs(90)
-                                && auto_ms > settings::BUFFER_MS_MIN
-                            {
-                                auto_ms = (auto_ms - 10.0).max(settings::BUFFER_MS_MIN);
-                                learned_buffer_ms = auto_ms;
-                                proc_shared
-                                    .buffer_ms
-                                    .store(auto_ms.to_bits(), Ordering::Relaxed);
-                                persist.set_auto_buffer(auto_ms);
-                                auto_changed = Instant::now();
-                                crate::log::info(&format!(
-                                    "auto buffer: {auto_ms:.0} ms (90 s without misses)"
-                                ));
-                            }
-                        }
-                    }
-
-                    // Rate control on the real ring level. Comparing pushed with
-                    // pulled sample counts jumped by a whole block at every window
-                    // boundary, and that noise could walk the converter to ±3 % —
-                    // audible as the voice speeding up and down and the timbre
-                    // changing. The fill is the integral of the clock error, so a
-                    // deadband around it is enough; inside it the converter runs
-                    // at exactly 1.0 and nothing bends the pitch.
-                    if drift_at.elapsed() >= Duration::from_secs(if drift_logs == 0 { 8 } else { 4 }) {
-                        drift_at = Instant::now();
-                        let fill_ms = f32::from_bits(proc_shared.out_fill.load(Ordering::Relaxed))
-                            / out_rate.max(1) as f32
-                            * 1000.0;
-                        // the ring target adapts to the device: a cable that asks
-                        // for 200 ms per callback needs a 200 ms ring
-                        // `ref_ms` is computed above for this iteration
-                        // where the rate should go, never more than 0.2 % away
-                        // from 1.0: that is ~3.5 cents, below what anyone hears.
-                        // Returning to 1.0 is allowed to be faster than the
-                        // correction itself, so a one-off emergency cannot leave
-                        // the pitch bent for a minute.
-                        let err = fill_ms - ref_ms;
-                        // proportional: the bigger the backlog, the further the
-                        // read head advances per output sample (step > 1 = fewer
-                        // samples), so a steady mismatch between the mic and the
-                        // cable is cancelled at a small constant offset instead
-                        // of filling the ring for an hour. Inside ±8 ms the
-                        // converter runs at exactly 1.0, so the pitch is not
-                        // being bent all the time.
-                        let target: f64 = if fill_ms < 8.0 {
-                            0.995
-                        } else if fill_ms > buffer_ms + 120.0 {
-                            1.005
-                        } else if err.abs() < 8.0 {
-                            1.0
-                        } else {
-                            (1.0 + 0.0002 * err as f64).clamp(0.995, 1.005)
-                        };
-                        let max_step = if (target - 1.0).abs() < 1e-9 {
-                            0.002
-                        } else {
-                            0.001
-                        };
-                        slew_step += (target - slew_step).clamp(-max_step, max_step);
-                        drift_logs += 1;
-                        if drift_logs.is_multiple_of(8) {
-                            crate::log::info(&format!(
-                                "clock: fill {fill_ms:.0} ms, ref {ref_ms:.0} ms, cb {callback_ms:.0} ms, step {:.0} ppm, underruns {}, overflows {}, input drops {}",
-                                (slew_step - 1.0) * 1e6,
-                                proc_shared.underruns.load(Ordering::Relaxed),
-                                proc_shared.overflows.load(Ordering::Relaxed),
-                                proc_shared.capture_drops.load(Ordering::Relaxed),
-                            ));
-                        }
-                        if trace {
-                            eprintln!(
-                                "drift: fill {fill_ms:.0} ms, ref {ref_ms:.0} ms, target {target:.4}, step {slew_step:.4}"
-                            );
-                        }
-                        proc_shared
-                            .slew_ppm
-                            .store((((slew_step - 1.0) as f32) * 1e6).to_bits(), Ordering::Relaxed);
-                    }
-                    if proc_shared.out_raw.load(Ordering::Relaxed) as usize + need > max_fill {
-                        thread::sleep(Duration::from_millis(2));
-                        continue;
-                    }
-
-                    for slot in block.iter_mut() {
-                        *slot = in_cons.pop().unwrap_or(0.0);
-                    }
-                    let in_voice = input_voice.update(&block);
-
-                    // silence costs nothing: skip the model and emit a clean
-                    // zero block once the room has been quiet for a moment
-                    let raw_rms = rms_of(&block);
-                    if raw_rms < 6e-4 {
-                        silent_run += 1;
-                    } else {
-                        silent_run = 0;
-                    }
-
-                    if silent_run > SILENCE_SKIP_BLOCKS {
-                        // keep the pre-roll current (after a long gap it used
-                        // to hold audio from before the silence) and leave the
-                        // gate open: the detector has not seen audio for a while
-                        // and would take ~300 ms to notice the next word
-                        pipeline.skip_silence(&block);
-                        if let Some(air) = air.as_mut() {
-                            air.reset();
-                        }
-                        fade_suppression(&proc_shared);
-                        let produced = up.process(&zeros, &mut up_buf);
-                        for sample in up_buf[..produced].iter_mut() {
-                            *sample = 0.0;
-                        }
-                        ab_append_clean(
-                        &proc_ab,
-                        &proc_ab_done,
-                        &proc_ab_active,
-                        &proc_ab_folder,
-                        &proc_ab_paths,
-                        &up_buf[..produced],
-                    );
-                        analyzer.push(&up_buf[..produced]);
-                        if let Ok(mut slot) = proc_shared.spectrum.lock() {
-                            *slot = analyzer.bands();
-                        }
-                        // push at the model's own rate, no rate conversion
-                        slew_out.clear();
-                        slew.step = slew_step;
-                        slew.process(&up_buf[..produced], &mut slew_out);
-                        push_block(&mut out_prod, &slew_out, &proc_shared);
-                        continue;
-                    }
-
-                    let leveling = proc_shared.leveling.load(Ordering::Relaxed);
-                    let allow_up = session_start.elapsed() > Duration::from_millis(1500) || speech_hold > 2;
-                    // only the speaker's own blocks may move the level: a steady
-                    // bed (music, a television) used to pull the gain around and
-                    // the voice "caught up" after it stopped
-                    leveler.process(&mut block, leveling, allow_up, in_voice);
-                    proc_shared
-                        .leveler_gain
-                        .store(leveler.gain_db().to_bits(), Ordering::Relaxed);
-                    guard.process(&mut block);
-
-                    persist_ticks += 1;
-                    if persist_ticks >= 40 {
-                        persist_ticks = 0;
-                        let gain = leveler.gain_db();
-                        if (gain - saved_level).abs() > 2.0 {
-                            saved_level = gain;
-                            persist.set_leveler_gain(gain);
-                        }
-                    }
-
-                    let wet = f32::from_bits(proc_shared.wet.load(Ordering::Relaxed));
-                    // VoxLock needs a moment to lock on after a start
-                    let warm = session_start.elapsed() > Duration::from_secs(1);
-                    let started = Instant::now();
-                    let out = pipeline.process(&mut block, wet, warm, in_voice, input_voice.voiced());
-                    if out.cold_reset {
-                        crate::log::info(&format!(
-                            "cold start: VoxLock reset while the model was closed (in {:.0} dB)",
-                            20.0 * raw_rms.max(1e-9).log10()
-                        ));
-                    }
-                    if out.leak_reset {
-                        crate::log::info(&format!(
-                            "leak guard: VoxLock reset, the model was passing the room (in {:.0} dB, atten {:.0} dB)",
-                            20.0 * out.in_rms.max(1e-9).log10(),
-                            out.atten_db
-                        ));
-                    }
-                    if let Some((in_db, out_db, resets)) = out.guard_reset {
-                        proc_shared.guard_resets.fetch_add(1, Ordering::Relaxed);
-                        crate::log::info(&format!(
-                            "dropout guard: VoxLock reset + 200 ms pre-roll (in {in_db:.0} dB, out {out_db:.0} dB, reset #{resets})"
-                        ));
-                    }
-                    proc_shared.speech.store(out.speech_in, Ordering::Relaxed);
-
-                    let cap_voice = out.cap_voice;
-                    let cap_active = out.cap_active;
-                    let out_rms = out.out_rms;
-
-                    // the card shows the model's attenuation of *speech*, and
-                    // never more than the cap (a 50 dB number only scares)
-                    if (cap_voice || cap_active) && out_rms > 1e-8 {
-                        let shown = if max_suppression > 0.0 {
-                            out.atten_db.min(max_suppression)
-                        } else {
-                            out.atten_db
-                        };
-                        let current = f32::from_bits(proc_shared.suppression.load(Ordering::Relaxed));
-                        let smoothed = current + (shown - current) * 0.1;
-                        proc_shared.suppression.store(smoothed.to_bits(), Ordering::Relaxed);
-                    } else {
-                        // nothing is being suppressed in a pause: let the readout
-                        // fall back instead of freezing at the last phrase, which
-                        // made the app look like it kept cutting the room
-                        fade_suppression(&proc_shared);
-                    }
-                    // a block the model cut hard is not the target speaker: do
-                    // not lift its level, unless the cap keeps the speaker
-                    // audible anyway. This is decided further down, once the
-                    // output detector has had its say.
-                    // After a knock, or when speech starts, the model needs a
-                    // moment to lock onto the enrolled voice and outputs almost
-                    // nothing. Keep a little of the dry signal for that second,
-                    // so the first words are not swallowed.
-                    let mut peak = 0.0f32;
-                    for sample in block.iter() {
-                        peak = peak.max(sample.abs());
-                    }
-                    let crest_db = 20.0 * ((peak + 1e-9) / (rms_of(&block) + 1e-9)).log10();
-                    let block_rms = rms_of(&block);
-                    let rms_db = 20.0 * (block_rms + 1e-9).log10();
-                    // hold the speech state for ~0.4 s so syllables do not
-                    // retrigger the onset boost on every word
-                    if block_rms > 1.8e-3 {
-                        speech_hold = 7;
-                    } else {
-                        speech_hold = speech_hold.saturating_sub(1);
-                    }
-                    let speaking = speech_hold > 0;
-                    // a knock is a click in an otherwise quiet block
-                    let knock = crest_db > 19.0 && rms_db < -50.0;
-                    let onset_now = (speaking && !was_speaking) || knock;
-                    if onset_now {
-                        onset_blocks = 5; // ~0.3 s at 60 ms blocks
-                    }
-                    was_speaking = speaking;
-
-                    // The model needs 40-400 ms to pass the first syllable after a
-                    // pause and outputs exact zeros for that time. Replacing that
-                    // gap with the dry input was tried and **reverted**: the dry
-                    // signal brings back the room and other voices, which breaks
-                    // the whole point of the app. The gap stays; only the 3 dB
-                    // onset boost below softens it.
-
-                    onset_blocks = onset_blocks.saturating_sub(1);
-
-                    // the model lets the level fall 10-20 dB between syllables; a
-                    // gain lift was tried here and **reverted**: it raised the
-                    // residual noise and other voices along with the quiet
-                    // syllables. The level stays as the model produced it.
-                    // Whose block is this? The output detector says "speech" for
-                    // an audiobook as readily as for the speaker, so the AGC
-                    // used to lift the background to the target. Both sides have
-                    // to agree: the mic heard a level jump (the user is
-                    // talking) and the detector did not call the block silent.
-                    let vad = out.target_vad.unwrap_or(true);
-                    let vad_ok = vad && out.target_model;
-                    let speaker = (in_voice && vad_ok) || cap_active;
-                    chain.set_target_present(speaker);
-
-                    let produced = up.process(out.wet, &mut up_buf);
-
-                    if sanitize(&mut up_buf[..produced]) {
-                        let seen = proc_shared.bad_blocks.fetch_add(1, Ordering::Relaxed) + 1;
-                        if seen == 1 {
-                            crate::log::info("model returned NaN/Inf — block replaced with silence");
-                        }
-                    }
-                    // Optional air above 8 kHz. It goes in before the DSP so the
-                    // tone shelves and the limiter shape it like the rest of the
-                    // voice; the 0-8 kHz path itself is unchanged.
-                    let air_amount =
-                        f32::from_bits(proc_shared.air.load(Ordering::Relaxed));
-                    if air_amount > 0.0 && air.is_none() && !air_error {
-                        match Air::new(out_rate) {
-                            Ok(stage) => air = Some(stage),
-                            Err(err) => {
-                                air_error = true;
-                                crate::log::info(&format!("air: {err}"));
-                            }
-                        }
-                    }
-                    if let Some(stage) = air.as_mut() {
-                        // only while the speaker talks: the air stage lifts
-                        // whatever the model passed, and 8-12 kHz is exactly
-                        // what makes a leaked television voice intelligible
-                        stage.add(out.wet, &mut up_buf[..produced], air_amount, speaker);
-                    }
-                    chain.process(&mut up_buf[..produced]);
-
-                    if trace {
-                        eprintln!(
-                            "blk in {:.0} out {:.0} atten {:.0} cap {} voice {} vad {} agc {:.1} level {:.1}",
-                            20.0 * out.in_rms.max(1e-9).log10(),
-                            20.0 * out.out_rms.max(1e-9).log10(),
-                            out.atten_db,
-                            u8::from(cap_active),
-                            u8::from(in_voice),
-                            u8::from(out.target_vad.unwrap_or(false)),
-                            chain.agc_gain_db(),
-                            leveler.gain_db(),
-                        );
-                    }
-
-                    // the model needs about a second to lock onto the speaker;
-                    // lift its output for that second so the first words are
-                    // not swallowed (the ramp makes the return inaudible)
-                    if onset_blocks > 0 {
-                        let boost_db = 3.0 * (onset_blocks as f32 / 5.0);
-                        let lin = 10f32.powf(boost_db / 20.0);
-                        for sample in up_buf[..produced].iter_mut() {
-                            *sample = (*sample * lin).clamp(-1.0, 1.0);
-                        }
-                    }
-                    ab_append_clean(
-                        &proc_ab,
-                        &proc_ab_done,
-                        &proc_ab_active,
-                        &proc_ab_folder,
-                        &proc_ab_paths,
-                        &up_buf[..produced],
-                    );
-
-                    analyzer.push(&up_buf[..produced]);
-                    if let Ok(mut slot) = proc_shared.spectrum.lock() {
-                        *slot = analyzer.bands();
-                    }
-
-                    // push through the slow rate converter
-                    slew_out.clear();
-                    slew.step = slew_step;
-                    slew.process(&up_buf[..produced], &mut slew_out);
-                    push_block(&mut out_prod, &slew_out, &proc_shared);
-
-                    let elapsed = started.elapsed();
-                    rtf_window.0 += chunk_samples;
-                    rtf_window.1 += elapsed;
-                    if rtf_window.0 >= MODEL_RATE as usize {
-                        let rtf = rtf_window.1.as_secs_f32() / (rtf_window.0 as f32 / MODEL_RATE as f32);
-                        proc_shared.rtf.store(rtf.to_bits(), Ordering::Relaxed);
-                        rtf_window = (0, Duration::ZERO);
-                    }
-                }
-            })
+            .spawn(move || processor.run(in_cons, out_prod))
             .map_err(|e| anyhow!("processor thread: {e}"))?;
 
-        // input stream -----------------------------------------------------
-        let in_shared = shared.clone();
-        let mut down = Resampler::new(in_rate, MODEL_RATE);
-        let mut mono = vec![0.0f32; 8192];
-        let mut down_buf = vec![0.0f32; 8192];
-
-        let in_config: StreamConfig = in_cfg.config();
-        let channels = in_config.channels as usize;
-        let in_format = in_cfg.sample_format();
-
-        fn err_fn(err: cpal::Error) {
-            eprintln!("input stream error: {err}");
-            crate::log::info(&format!("input stream error: {err}"));
-        }
-
-        let input_stream = match in_format {
-            SampleFormat::F32 => input.build_input_stream(
-                in_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    capture_f32(
-                        data,
-                        channels,
-                        &mut mono,
-                        &mut down,
-                        &mut down_buf,
-                        &mut in_prod,
-                        &in_shared,
-                        &in_ab,
-                    );
-                },
-                err_fn,
-                None,
-            )?,
-            SampleFormat::I16 => input.build_input_stream(
-                in_config,
-                {
-                    // one buffer for the whole stream: converting in the audio
-                    // callback must not allocate
-                    let mut converted: Vec<f32> = Vec::new();
-                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                        converted.clear();
-                        converted.extend(data.iter().map(|v| *v as f32 / 32768.0));
-                        capture_f32(
-                            &converted,
-                            channels,
-                            &mut mono,
-                            &mut down,
-                            &mut down_buf,
-                            &mut in_prod,
-                            &in_shared,
-                            &in_ab,
-                        );
-                    }
-                },
-                err_fn,
-                None,
-            )?,
-            other => return Err(anyhow!("unsupported input sample format: {other:?}")),
-        };
-
-        // output stream ----------------------------------------------------
-        let out_config: StreamConfig = out_cfg.config();
-        let out_channels = out_config.channels as usize;
-        let out_format = out_cfg.sample_format();
-        fn out_err(err: cpal::Error) {
-            eprintln!("output stream error: {err}");
-            crate::log::info(&format!("output stream error: {err}"));
-        }
-
-        let shared_for_out = shared.clone();
-        let mut smoothed_fill = 0.0f32;
-        let output_stream = match out_format {
-            SampleFormat::F32 => output.build_output_stream(
-                out_config,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    render_f32(
-                        data,
-                        out_channels,
-                        &mut out_cons,
-                        &shared_for_out,
-                        out_rate,
-                        &mut smoothed_fill,
-                    );
-                },
-                out_err,
-                None,
-            )?,
-            SampleFormat::I16 => output.build_output_stream(
-                out_config,
-                {
-                    // one conversion buffer for the stream: no allocation in
-                    // the audio callback
-                    let mut tmp: Vec<f32> = Vec::new();
-                    move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        tmp.resize(data.len(), 0.0);
-                        render_f32(
-                            &mut tmp,
-                            out_channels,
-                            &mut out_cons,
-                            &shared_for_out,
-                            out_rate,
-                            &mut smoothed_fill,
-                        );
-                        for (dst, src) in data.iter_mut().zip(tmp.iter()) {
-                            *dst = (*src * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                        }
-                    }
-                },
-                out_err,
-                None,
-            )?,
-            other => return Err(anyhow!("unsupported output sample format: {other:?}")),
-        };
+        let input_stream = open_input(&input, &in_cfg, shared.clone(), in_prod)?;
+        let output_stream = open_output(&output, &out_cfg, shared.clone(), out_cons)?;
 
         input_stream.play()?;
         output_stream.play()?;
@@ -1173,6 +600,10 @@ impl Drop for Engine {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use super::helpers::{sanitize, Slew};
+    use super::streams::push_block;
     use super::*;
 
     #[test]

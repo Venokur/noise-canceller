@@ -3,10 +3,13 @@
 
 use std::sync::atomic::Ordering;
 
+use cpal::traits::DeviceTrait;
+use cpal::{SampleFormat, StreamConfig};
+
 use crate::resample::Resampler;
 
 use super::ab::{ab_append_raw, AbBuffer};
-use super::Shared;
+use super::{Shared, MODEL_RATE};
 
 /// Pushes a rendered block into the output ring, counting what actually landed.
 ///
@@ -174,4 +177,140 @@ pub(super) fn install_panic_hook() {
             default_hook(info);
         }));
     });
+}
+
+/// Opens the capture stream: downmix, resample to the model rate and push into
+/// the input ring. Format conversion buffers are allocated here, never in the
+/// callback.
+pub(super) fn open_input(
+    device: &cpal::Device,
+    supported: &cpal::SupportedStreamConfig,
+    shared: Shared,
+    ring: rtrb::Producer<f32>,
+) -> anyhow::Result<cpal::Stream> {
+    let in_rate = supported.sample_rate();
+    let mut down = Resampler::new(in_rate, MODEL_RATE);
+    let mut mono = vec![0.0f32; 8192];
+    let mut down_buf = vec![0.0f32; 8192];
+    let mut in_prod = ring;
+
+    let in_config: StreamConfig = supported.config();
+    let channels = in_config.channels as usize;
+    let in_format = supported.sample_format();
+    let in_ab = shared.ab.clone();
+
+    fn err_fn(err: cpal::Error) {
+        eprintln!("input stream error: {err}");
+        crate::log::info(&format!("input stream error: {err}"));
+    }
+
+    let stream = match in_format {
+        SampleFormat::F32 => device.build_input_stream(
+            in_config,
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                capture_f32(
+                    data,
+                    channels,
+                    &mut mono,
+                    &mut down,
+                    &mut down_buf,
+                    &mut in_prod,
+                    &shared,
+                    &in_ab,
+                );
+            },
+            err_fn,
+            None,
+        )?,
+        SampleFormat::I16 => device.build_input_stream(
+            in_config,
+            {
+                // one buffer for the whole stream: converting in the audio
+                // callback must not allocate
+                let mut converted: Vec<f32> = Vec::new();
+                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    converted.clear();
+                    converted.extend(data.iter().map(|v| *v as f32 / 32768.0));
+                    capture_f32(
+                        &converted,
+                        channels,
+                        &mut mono,
+                        &mut down,
+                        &mut down_buf,
+                        &mut in_prod,
+                        &shared,
+                        &in_ab,
+                    );
+                }
+            },
+            err_fn,
+            None,
+        )?,
+        other => anyhow::bail!("unsupported input sample format: {other:?}"),
+    };
+    Ok(stream)
+}
+
+/// Opens the render stream and writes the output ring into the device.
+pub(super) fn open_output(
+    device: &cpal::Device,
+    supported: &cpal::SupportedStreamConfig,
+    shared: Shared,
+    ring: rtrb::Consumer<f32>,
+) -> anyhow::Result<cpal::Stream> {
+    let out_rate = supported.sample_rate();
+    let out_config: StreamConfig = supported.config();
+    let out_channels = out_config.channels as usize;
+    let out_format = supported.sample_format();
+    let mut out_cons = ring;
+    let mut smoothed_fill = 0.0f32;
+
+    fn err_fn(err: cpal::Error) {
+        eprintln!("output stream error: {err}");
+        crate::log::info(&format!("output stream error: {err}"));
+    }
+
+    let stream = match out_format {
+        SampleFormat::F32 => device.build_output_stream(
+            out_config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                render_f32(
+                    data,
+                    out_channels,
+                    &mut out_cons,
+                    &shared,
+                    out_rate,
+                    &mut smoothed_fill,
+                );
+            },
+            err_fn,
+            None,
+        )?,
+        SampleFormat::I16 => device.build_output_stream(
+            out_config,
+            {
+                // one conversion buffer for the stream: no allocation in the
+                // audio callback
+                let mut tmp: Vec<f32> = Vec::new();
+                move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    tmp.resize(data.len(), 0.0);
+                    render_f32(
+                        &mut tmp,
+                        out_channels,
+                        &mut out_cons,
+                        &shared,
+                        out_rate,
+                        &mut smoothed_fill,
+                    );
+                    for (dst, src) in data.iter_mut().zip(tmp.iter()) {
+                        *dst = (*src * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                    }
+                }
+            },
+            err_fn,
+            None,
+        )?,
+        other => anyhow::bail!("unsupported output sample format: {other:?}"),
+    };
+    Ok(stream)
 }

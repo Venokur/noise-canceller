@@ -865,10 +865,12 @@ mod tests {
     fn agc_pulls_a_loud_phrase_down_at_once() {
         // the other way round: after a quiet passage the held gain is high, and
         // the first loud word used to arrive 10+ dB too loud for a full second
-        let mut agc = Agc::default();
-        agc.target_db = -24.0;
-        agc.max_gain_db = 18.0;
-        agc.target_present = true;
+        let mut agc = Agc {
+            target_db: -24.0,
+            max_gain_db: 18.0,
+            target_present: true,
+            ..Default::default()
+        };
 
         run_agc(&mut agc, 0.016, 2.0);
         let held = agc.gain_db;
