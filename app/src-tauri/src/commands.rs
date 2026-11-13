@@ -28,6 +28,58 @@ pub(crate) fn list_devices() -> (Vec<String>, Vec<String>) {
     (devices::input_devices(), devices::output_devices())
 }
 
+#[tauri::command]
+pub(crate) fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+#[tauri::command(async)]
+pub(crate) async fn check_app_update(state: State<'_, AppState>) -> Result<String, String> {
+    const SCRIPT: &str =
+        "$r = Invoke-RestMethod 'https://api.github.com/repos/Venokur/noise-canceller/releases/latest'; $r.tag_name";
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
+    let output = tauri::async_runtime::spawn_blocking(move || powershell(SCRIPT))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(lang
+            .text(
+                "не удалось проверить обновления на github.com",
+                "could not check for updates on github.com",
+            )
+            .to_string());
+    }
+    let latest = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let latest = latest.trim_start_matches('v');
+    if latest.is_empty() {
+        return Err(lang
+            .text(
+                "github.com вернул пустой ответ",
+                "github.com returned an empty answer",
+            )
+            .to_string());
+    }
+    let current = env!("CARGO_PKG_VERSION");
+    if latest == current {
+        Ok(lang.fmt(
+            "Установлена последняя версия {version}.",
+            "The latest version {version} is installed.",
+            &[("version", current)],
+        ))
+    } else {
+        Ok(lang.fmt(
+            "Доступна версия {latest}; установлена {current}.",
+            "Version {latest} is available; {current} is installed.",
+            &[("latest", latest), ("current", current)],
+        ))
+    }
+}
+
 #[tauri::command(async)]
 pub(crate) fn save_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     use std::fmt::Write as _;

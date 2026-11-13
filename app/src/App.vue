@@ -154,6 +154,9 @@ const modelStatusText = ref<string | null>(null);
 /// answer from Rust, which is already in the current language.
 const modelStatus = computed(() => modelStatusText.value ?? t("model.status"));
 const checkingModel = ref(false);
+const appVersion = ref("");
+const appUpdateStatus = ref("");
+const checkingApp = ref(false);
 const autostart = ref(false);
 const testMode = ref(false);
 
@@ -1068,6 +1071,17 @@ async function checkModel() {
   }
 }
 
+async function checkAppUpdate() {
+  checkingApp.value = true;
+  try {
+    appUpdateStatus.value = await invoke<string>("check_app_update");
+  } catch (e) {
+    appUpdateStatus.value = String(e);
+  } finally {
+    checkingApp.value = false;
+  }
+}
+
 async function applyAutostart() {
   try {
     await invoke("set_autostart", { enabled: autostart.value });
@@ -1092,6 +1106,8 @@ provide(APP_CONTEXT, {
   abSide,
   abSpeaker,
   abVisible,
+  appUpdateStatus,
+  appVersion,
   applyAutostart,
   applyPreset,
   askApplyTake,
@@ -1107,6 +1123,8 @@ provide(APP_CONTEXT, {
   calibrating,
   capturingHotkey,
   checkAbSpeaker,
+  checkAppUpdate,
+  checkingApp,
   checkingModel,
   checkModel,
   deleteProfile,
@@ -1203,6 +1221,7 @@ provide(APP_CONTEXT, {
 onMounted(async () => {
   try {
     settings.value = await invoke<Settings>("get_settings");
+    appVersion.value = await invoke<string>("app_version");
     setLocale(settings.value.language);
     applyTheme(settings.value.theme);
     if (!settings.value.onboarded) showWizard.value = true;

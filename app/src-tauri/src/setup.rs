@@ -169,6 +169,8 @@ pub(crate) fn run() {
             crate::commands::cable_present,
             crate::commands::install_cable,
             crate::commands::check_model_update,
+            crate::commands::check_app_update,
+            crate::commands::app_version,
             crate::commands::play_profile,
             crate::commands::play_ab_pair,
             crate::commands::set_ab_side,

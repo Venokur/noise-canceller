@@ -8,7 +8,7 @@ import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, evaluateSpeakerThreshold, evaluatingThreshold, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, saveDiagnostics, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, appUpdateStatus, appVersion, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkAppUpdate, checkingApp, checkingModel, checkModel, error, evaluateSpeakerThreshold, evaluatingThreshold, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, saveDiagnostics, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, speakerRecommendation, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -631,6 +631,18 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                     { value: 'light', label: t('settings.theme.light') },
                   ]"
                 />
+              </div>
+              <div :class="settingRow">
+                <AppLabel
+                  :text="t('settings.app.version')"
+                  :hint="appUpdateStatus || t('settings.app.versionHint', { version: appVersion || '—' })"
+                />
+                <div class="flex justify-end">
+                  <button :class="btn" :disabled="checkingApp" @click="checkAppUpdate">
+                    <AppIcon v-if="checkingApp" name="spinner" :size="14" class="spin" />
+                    {{ checkingApp ? t("settings.app.checking") : t("settings.app.check") }}
+                  </button>
+                </div>
               </div>
               <div :class="settingRow">
                 <AppLabel :text="t('model.label')" :hint="modelStatus" />

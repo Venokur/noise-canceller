@@ -346,6 +346,10 @@
   "settings.diag.thresholdApply": "Применить",
 
   "settings.app.autostart": "Запускать с Windows",
+  "settings.app.version": "Версия приложения",
+  "settings.app.versionHint": "Установлена версия {version}. Проверка идёт на github.com по нажатию.",
+  "settings.app.check": "Проверить обновления",
+  "settings.app.checking": "Проверяю…",
   "settings.app.autostartHint": "Автозапуск при входе в систему: приложение стартует свёрнутым в трей.",
   "settings.app.tray": "Свернуть в трей при закрытии",
   "settings.app.trayHint": "Крестик прячет окно в трей, обработка при этом продолжает работать.",

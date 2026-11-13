@@ -346,6 +346,10 @@
   "settings.diag.thresholdApply": "Apply",
 
   "settings.app.autostart": "Start with Windows",
+  "settings.app.version": "App version",
+  "settings.app.versionHint": "Version {version} is installed. The check goes to github.com when you press it.",
+  "settings.app.check": "Check for updates",
+  "settings.app.checking": "Checking…",
   "settings.app.autostartHint": "Launch at sign-in: the app starts minimized to the tray.",
   "settings.app.tray": "Minimize to tray on close",
   "settings.app.trayHint": "The close button hides the window in the tray and processing keeps running.",
