@@ -5,6 +5,7 @@ import TitleBar from "./components/TitleBar.vue";
 import AppSelect from "./components/AppSelect.vue";
 import AppIcon from "./components/AppIcon.vue";
 import AppToast from "./components/AppToast.vue";
+import AppConfirm from "./components/AppConfirm.vue";
 import { useToasts } from "./composables/useToasts";
 import SoundView from "./views/SoundView.vue";
 import SettingsView from "./views/SettingsView.vue";
@@ -103,6 +104,7 @@ const abClean = ref<string | null>(null);
 const history = ref<AbEntry[]>([]);
 const abNormalize = ref(true);
 const showWizard = ref(false);
+const resetDialog = ref(false);
 const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
@@ -660,8 +662,12 @@ async function removeRecording(entry: AbEntry) {
   }
 }
 
-async function resetSettings() {
-  if (!window.confirm("Сбросить все настройки к заводским?")) return;
+function resetSettings() {
+  resetDialog.value = true;
+}
+
+async function applyResetSettings() {
+  resetDialog.value = false;
   error.value = "";
   try {
     const result = await invoke<SettingsResult>("reset_settings");
@@ -1160,6 +1166,15 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
         </div>
       </transition-group>
     </div>
+
+    <AppConfirm
+      v-if="resetDialog"
+      title="Сбросить настройки?"
+      text="Все параметры вернутся к заводским: устройства, профиль, громкость и обработка звука. Записи A/B и профили голоса останутся на диске."
+      confirm-label="Сбросить"
+      @confirm="applyResetSettings"
+      @cancel="resetDialog = false"
+    />
 
     <!-- first-run wizard -->
     <div v-if="showWizard && settings" class="fixed inset-0 z-[90] grid place-items-center bg-black/45 p-5">

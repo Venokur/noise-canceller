@@ -28,8 +28,15 @@ const tint = (kind: string): string => {
   >
     <span class="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-full" :class="tint(kind)"></span>
     <div class="min-w-0 flex-1">
-      <div class="text-[12.5px] leading-snug font-medium text-[var(--text)]">{{ title }}</div>
-      <div v-if="text" class="mt-0.5 text-[11.5px] leading-snug text-[var(--muted)]">{{ text }}</div>
+      <div class="text-[12.5px] leading-snug font-medium text-[var(--text)] break-words [overflow-wrap:anywhere]">
+        {{ title }}
+      </div>
+      <div
+        v-if="text"
+        class="mt-0.5 text-[11.5px] leading-snug text-[var(--muted)] break-words [overflow-wrap:anywhere]"
+      >
+        {{ text }}
+      </div>
     </div>
     <button
       class="-mt-0.5 -mr-1 grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--surface-alt)] hover:text-[var(--text)]"
