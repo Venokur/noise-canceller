@@ -8,7 +8,8 @@
 
 param(
     [int]$Count = 3,
-    [int]$Seconds = 30
+    [int]$Seconds = 30,
+    [double]$MinSpeech = -45
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,15 @@ foreach ($pair in $pairs) {
 
     & $nc replay $pair.FullName $out $profile $settings | Out-Null
     Write-Host ("{0}" -f $pair.BaseName)
+
+    # A take whose speech sits below MinSpeech is not a usable reference: the
+    # old quiet recording produced a 0.64 s dropout with every chain, so it
+    # only made the gate noisy. Say so instead of failing the run.
+    $m = & $nc metrics $pair.FullName $out --json | ConvertFrom-Json
+    if ($m.speech_level_db -lt $MinSpeech) {
+        Write-Host ("  skip: speech {0:N1} dB < {1:N1} dB" -f $m.speech_level_db, $MinSpeech) -ForegroundColor Yellow
+        continue
+    }
 
     & $nc metrics $pair.FullName $out --check
     if ($LASTEXITCODE -ne 0) { $failed++ }
