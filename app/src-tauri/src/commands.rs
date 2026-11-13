@@ -564,9 +564,12 @@ pub(crate) fn reset_settings(
 }
 
 #[tauri::command]
-pub(crate) fn export_settings(state: State<'_, AppState>) -> Result<String, String> {
+pub(crate) fn export_settings(state: State<'_, AppState>, path: String) -> Result<String, String> {
     let settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
-    let path = paths::data_dir().join("settings-export.json");
+    let mut path = std::path::PathBuf::from(path);
+    if path.extension().is_none() {
+        path.set_extension("json");
+    }
     settings.save(&path);
     noise_canceller_core::log::info(&format!("settings exported to {}", path.display()));
     Ok(path.to_string_lossy().to_string())
@@ -576,8 +579,9 @@ pub(crate) fn export_settings(state: State<'_, AppState>) -> Result<String, Stri
 pub(crate) fn import_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    path: String,
 ) -> Result<SettingsResult, String> {
-    let path = paths::data_dir().join("settings-export.json");
+    let path = std::path::PathBuf::from(path);
     if !path.exists() {
         let lang = state
             .settings
@@ -585,15 +589,12 @@ pub(crate) fn import_settings(
             .map(|s| Lang::from_settings(&s))
             .unwrap_or_default();
         return Err(lang
-            .text(
-                "нет файла settings-export.json в папке data",
-                "there is no settings-export.json in the data folder",
-            )
+            .text("файл настроек не найден", "the settings file was not found")
             .to_string());
     }
     let settings = Settings::load(&path);
     let warning = apply_settings(&app, &state, settings.clone(), true);
-    noise_canceller_core::log::info("settings imported");
+    noise_canceller_core::log::info(&format!("settings imported from {}", path.display()));
     Ok(SettingsResult { settings, warning })
 }
 

@@ -46,6 +46,7 @@ pub(crate) fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
         // WebView2 can show a white frame if the window becomes visible before
         // the page has painted. Keep it hidden until the first page has loaded,
         // then show it and nudge the size once so the compositor commits.

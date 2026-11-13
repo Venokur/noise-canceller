@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import TitleBar from "./components/TitleBar.vue";
 import AppSelect from "./components/AppSelect.vue";
 import AppIcon from "./components/AppIcon.vue";
@@ -717,8 +718,13 @@ async function applyResetSettings() {
 async function exportSettings() {
   error.value = "";
   try {
-    const path = await invoke<string>("export_settings");
-    notify(t("toast.settingsSaved"), "ok", path);
+    const path = await save({
+      defaultPath: "settings-export.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!path) return;
+    const saved = await invoke<string>("export_settings", { path });
+    notify(t("toast.settingsSaved"), "ok", saved);
   } catch (e) {
     error.value = String(e);
   }
@@ -727,9 +733,14 @@ async function exportSettings() {
 async function importSettings() {
   error.value = "";
   try {
-    const result = await invoke<SettingsResult>("import_settings");
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!picked || Array.isArray(picked)) return;
+    const result = await invoke<SettingsResult>("import_settings", { path: picked });
     settings.value = result.settings;
-    applyTheme(settings.value.theme);
+    applyTheme(result.settings.theme);
     await refreshDevices();
     await refreshProfiles();
     if (result.warning) notify(t("toast.hotkeyTitle"), "warn", result.warning);

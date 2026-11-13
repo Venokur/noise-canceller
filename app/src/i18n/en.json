@@ -291,7 +291,7 @@
   "settings.app.export": "Export settings",
   "settings.app.import": "Import settings",
   "settings.app.reset": "Reset settings",
-  "settings.app.exportHint": "Export writes data/settings-export.json; put the file there for an import as well.",
+  "settings.app.exportHint": "Export writes the settings file wherever you choose; import reads it back and restarts processing if it is running.",
 
   "cable.downloading": "Downloading the driver…",
   "cable.installer": "The installer has started. Press “Install Driver” and allow the installation.",

@@ -291,7 +291,7 @@
   "settings.app.export": "Экспорт настроек",
   "settings.app.import": "Импорт настроек",
   "settings.app.reset": "Сбросить настройки",
-  "settings.app.exportHint": "Экспорт кладёт файл в data/settings-export.json; для импорта положите его туда же.",
+  "settings.app.exportHint": "Экспорт сохраняет файл настроек в выбранное место; импорт открывает его и перезапускает обработку, если она включена.",
 
   "cable.downloading": "Скачиваю драйвер…",
   "cable.installer": "Установщик запущен. Нажмите «Install Driver» и разрешите установку.",
