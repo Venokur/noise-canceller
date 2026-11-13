@@ -57,6 +57,9 @@ pub struct Pipeline {
     chunk: usize,
     max_suppression: f32,
     residual_mix: f32,
+    /// smoothed amount of pre-residual signal mixed back when the residual
+    /// denoiser (DPDFNet) cuts below the suppression limit
+    residual_cap: f32,
     cap_mix: f32,
     vad_gain: f32,
     vad_attack: f32,
@@ -205,6 +208,7 @@ impl Pipeline {
             chunk,
             max_suppression: settings.max_suppression_db.clamp(0.0, 48.0),
             residual_mix: settings.residual_mix.clamp(0.0, 1.0),
+            residual_cap: 0.0,
             cap_mix: 0.0,
             vad_gain: 1.0,
             vad_attack: 1.0 - (-1000.0f32 / 5.0 / 16_000.0).exp(),
@@ -284,6 +288,7 @@ impl Pipeline {
             chunk,
             max_suppression,
             residual_mix,
+            residual_cap,
             cap_mix,
             vad_gain,
             vad_attack,
@@ -543,6 +548,24 @@ impl Pipeline {
                 }
             }
             None => wet_out.copy_from_slice(mix),
+        }
+
+        // The cap above only sees VoxLock. DPDFNet runs after it and can cut a
+        // quiet syllable another 10-20 dB, so the "never quieter than N dB"
+        // promise was not true for the whole chain. Mix the pre-residual block
+        // back until the total reaches the same limit.
+        if *max_suppression > 0.0 && cap_voice && in_rms > 2e-3 {
+            let post_rms = rms_of(wet_out);
+            let need = cap_dry_mix(in_rms, post_rms, *max_suppression);
+            let coef = if need > *residual_cap { 0.35 } else { 0.25 };
+            *residual_cap += (need - *residual_cap) * coef;
+            if *residual_cap > 0.001 {
+                for i in 0..wet_out.len().min(mix.len()) {
+                    wet_out[i] = wet_out[i] * (1.0 - *residual_cap) + mix[i] * *residual_cap;
+                }
+            }
+        } else {
+            *residual_cap *= 0.8;
         }
 
         // what the next block's leak guard has to judge
