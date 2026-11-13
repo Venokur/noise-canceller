@@ -141,6 +141,8 @@
   "sound.cableText": "Zoom, Meet and Discord will not see the cleaned sound without VB-CABLE. One button, administrator rights once.",
   "sound.cableInstall": "Install the virtual microphone",
   "sound.devices": "Devices",
+  "sound.windowsSound": "Windows sound",
+  "sound.windowsSoundHint": "Open the Windows sound settings: that is where CABLE Output becomes the microphone for Zoom, Discord and the rest.",
   "sound.mono": "mono",
   "sound.channels": "{n} ch",
   "sound.channel": "Microphone channel",

@@ -85,6 +85,16 @@ pub(crate) fn save_diagnostics(state: State<'_, AppState>) -> Result<String, Str
     Ok(path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+pub(crate) fn open_sound_settings() -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg("ms-settings:sound")
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 pub(crate) fn input_channels(name: Option<String>) -> u16 {
     devices::input_channels(name.as_deref())

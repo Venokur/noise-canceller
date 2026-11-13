@@ -157,6 +157,7 @@ pub(crate) fn run() {
             crate::commands::prune_recordings,
             crate::commands::set_muted,
             crate::commands::open_log,
+            crate::commands::open_sound_settings,
             crate::commands::open_licenses,
             crate::commands::reset_settings,
             crate::commands::export_settings,

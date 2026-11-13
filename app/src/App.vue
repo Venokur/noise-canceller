@@ -941,6 +941,15 @@ async function saveDiagnostics() {
   }
 }
 
+async function openSoundSettings() {
+  error.value = "";
+  try {
+    await invoke("open_sound_settings");
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 async function openLicenses() {
   error.value = "";
   try {
@@ -1069,6 +1078,7 @@ provide(APP_CONTEXT, {
   modelStatus,
   openLicenses,
   openLog,
+  openSoundSettings,
   outputDb,
   outputLevel,
   outputOptions,
