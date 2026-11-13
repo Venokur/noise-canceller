@@ -54,6 +54,7 @@ export interface Settings {
   hotkeyMode: string;
   basicUi: boolean;
   keepRecordings: number;
+  defaultsRev: number;
 }
 
 export interface Stats {
@@ -78,6 +79,12 @@ export interface Stats {
   slewPpm: number;
   threads: number;
   healthy: boolean;
+}
+
+export interface SettingsResult {
+  settings: Settings;
+  /** non-fatal: saved, but the mute shortcut could not be registered */
+  warning: string | null;
 }
 
 export interface Quality {

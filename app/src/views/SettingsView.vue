@@ -7,7 +7,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { applyAutostart, applyPreset, autostart, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, startHotkeyCapture, stats, switchSection, searching, settingsQuery, filterSettings } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings } = inject(APP_CONTEXT)!;
 </script>
 
 <template>

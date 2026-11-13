@@ -9,8 +9,11 @@ import { useToasts } from "./composables/useToasts";
 import SoundView from "./views/SoundView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import { APP_CONTEXT } from "./appContext";
+import { isCableInput, isCableOutput } from "./cable";
 import { useSettingsSearch } from "./composables/useSettingsSearch";
 import { useSystemInfo } from "./composables/useSystemInfo";
+import { useTheme, useHotkeyCapture } from "./composables/useShell";
+import { useCable } from "./composables/useCable";
 import type {
   AbEntry,
   AbMetrics,
@@ -20,6 +23,7 @@ import type {
   ProfileScore,
   Quality,
   Settings,
+  SettingsResult,
   Stats,
 } from "./types";
 
@@ -82,26 +86,21 @@ const showWizard = ref(false);
 const profileScores = ref<ProfileScore[]>([]);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
-const capturingHotkey = ref(false);
 let slowStreak = 0;
 let slowWarnAt = 0;
 let quietMicWarned = false;
 
 const cableOk = ref(true);
-const installingCable = ref(false);
-const cableMessage = ref("");
 
 const modelStatus = ref("Модель VoxLock · int8 · встроена");
 const checkingModel = ref(false);
 const autostart = ref(false);
 const testMode = ref(false);
-const theme = ref("dark");
 
 let timer: number | undefined;
 let deviceTimer: number | undefined;
 let healthRetryAt = 0;
 let probeTimer: number | undefined;
-let cableTimer: number | undefined;
 let spectrumTimer: number | undefined;
 let abMisses = 0;
 const deviceLost = ref(false);
@@ -126,7 +125,6 @@ const deviceTest = ref(false);
 let saveTimer: number | undefined;
 let recordTimer: number | undefined;
 let restartTimer: number | undefined;
-let media: MediaQueryList | undefined;
 
 // Actions are monochrome on purpose: colour in this window means "audio is
 // flowing", so only the record dot and the signal states are allowed to use it.
@@ -136,7 +134,13 @@ const btnGhost = "btn btn-ghost";
 const settingRow = "srow";
 
 const running = computed(() => stats.value.running);
-const isDark = computed(() => theme.value === "dark");
+const { theme, isDark, applyTheme, toggleTheme } = useTheme(settings);
+const { capturingHotkey, startHotkeyCapture } = useHotkeyCapture(settings);
+const { installingCable, cableMessage, installCable } = useCable({
+  refreshDevices: () => refreshDevices(),
+  cableOk,
+  error,
+});
 const statusText = computed(() =>
   error.value ? "Ошибка" : starting.value ? "Запуск модели…" : running.value ? "Работает" : "Выключено"
 );
@@ -168,17 +172,13 @@ function applyPreset(patch: Record<string, unknown>) {
 const inputOptions = computed(() => inputs.value.map((n) => ({ value: n, label: n })));
 const outputOptions = computed(() => outputs.value.map((n) => ({ value: n, label: n })));
 const previewOutput = computed(
-  () => outputs.value.find((n) => !isCable(n)) ?? outputs.value[0] ?? ""
+  () => outputs.value.find((n) => !isCableOutput(n)) ?? outputs.value[0] ?? ""
 );
 
 // the device the user picked for listening; the cable is never a preview target
 const testOutput = computed(() =>
-  selectedOutput.value && !isCable(selectedOutput.value) ? selectedOutput.value : previewOutput.value
+  selectedOutput.value && !isCableOutput(selectedOutput.value) ? selectedOutput.value : previewOutput.value
 );
-
-function isCable(name: string): boolean {
-  return /CABLE Input|VB-Audio|VB-CABLE/i.test(name);
-}
 
 function toLevel(rms: number): number {
   const db = 20 * Math.log10(rms + 1e-7);
@@ -188,13 +188,6 @@ function toLevel(rms: number): number {
 function shortName(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] ?? path;
-}
-
-/// The cable's *capture* side. Using it as the microphone means the app
-/// processes its own output (and every app playing into the cable), which is a
-/// feedback loop, not a microphone: it must never be picked automatically.
-function isCableInput(name: string): boolean {
-  return /CABLE Output|VB-Audio|VB-CABLE/i.test(name);
 }
 
 async function refreshDevices() {
@@ -220,7 +213,7 @@ async function refreshDevices() {
     if (settings.value?.outputDevice && outs.includes(settings.value.outputDevice)) {
       selectedOutput.value = settings.value.outputDevice;
     }
-    cableOk.value = outs.some((n) => isCable(n));
+    cableOk.value = outs.some((n) => isCableOutput(n));
   } catch (e) {
     error.value = String(e);
   }
@@ -362,44 +355,6 @@ async function matchLevel() {
   }
 }
 
-function startHotkeyCapture() {
-  capturingHotkey.value = true;
-}
-
-function onHotkeyKey(event: KeyboardEvent) {
-  if (!capturingHotkey.value) return;
-  event.preventDefault();
-  event.stopPropagation();
-  if (event.key === "Escape") {
-    capturingHotkey.value = false;
-    return;
-  }
-  const modifiers: string[] = [];
-  if (event.ctrlKey) modifiers.push("Ctrl");
-  if (event.altKey) modifiers.push("Alt");
-  if (event.shiftKey) modifiers.push("Shift");
-  const modifierCodes = [
-    "ControlLeft",
-    "ControlRight",
-    "AltLeft",
-    "AltRight",
-    "ShiftLeft",
-    "ShiftRight",
-    "MetaLeft",
-    "MetaRight",
-  ];
-  if (modifierCodes.includes(event.code) || modifiers.length === 0) return;
-  const key = event.code.startsWith("Key")
-    ? event.code.slice(3)
-    : event.code.startsWith("Digit")
-      ? event.code.slice(5)
-      : event.code;
-  if (settings.value) {
-    settings.value.muteHotkey = [...modifiers, key].join("+");
-  }
-  capturingHotkey.value = false;
-}
-
 async function startEngine(test: boolean) {
   if (starting.value) return;
   if (!selectedInput.value || isCableInput(selectedInput.value)) {
@@ -416,12 +371,20 @@ async function startEngine(test: boolean) {
     const voice = settings.value?.mode === "profile" ? settings.value?.profilePath ?? null : null;
     const wanted = test ? testOutput.value : selectedOutput.value;
     const output = wanted && outputs.value.includes(wanted) ? wanted : test ? previewOutput.value : "";
-    await invoke("start", {
+    const payload = {
       input: selectedInput.value || null,
       output: output || null,
       voice,
       testMode: test,
-    });
+    };
+    let result = await invoke<{ started: boolean }>("start", payload);
+    if (!result.started) {
+      // the engine was already up with the old devices or the other test mode:
+      // the command cannot change them in place, so restart it once
+      await invoke("stop");
+      result = await invoke<{ started: boolean }>("start", payload);
+      if (!result.started) throw new Error("движок не перезапустился — закройте и откройте приложение");
+    }
     testMode.value = test;
     stats.value = await invoke<Stats>("stats");
   } catch (e) {
@@ -757,10 +720,12 @@ async function resetSettings() {
   if (!window.confirm("Сбросить все настройки к заводским?")) return;
   error.value = "";
   try {
-    settings.value = await invoke<Settings>("reset_settings");
+    const result = await invoke<SettingsResult>("reset_settings");
+    settings.value = result.settings;
     applyTheme(settings.value.theme);
     await refreshDevices();
     await refreshProfiles();
+    if (result.warning) notify("Хоткей не зарегистрирован", "warn", result.warning);
   } catch (e) {
     error.value = String(e);
   }
@@ -770,7 +735,7 @@ async function exportSettings() {
   error.value = "";
   try {
     const path = await invoke<string>("export_settings");
-    cableMessage.value = `Настройки сохранены: ${path}`;
+    notify("Настройки сохранены", "ok", path);
   } catch (e) {
     error.value = String(e);
   }
@@ -779,10 +744,12 @@ async function exportSettings() {
 async function importSettings() {
   error.value = "";
   try {
-    settings.value = await invoke<Settings>("import_settings");
+    const result = await invoke<SettingsResult>("import_settings");
+    settings.value = result.settings;
     applyTheme(settings.value.theme);
     await refreshDevices();
     await refreshProfiles();
+    if (result.warning) notify("Хоткей не зарегистрирован", "warn", result.warning);
   } catch (e) {
     error.value = String(e);
   }
@@ -831,42 +798,6 @@ async function checkModel() {
   }
 }
 
-async function installCable() {
-  if (installingCable.value) return;
-  installingCable.value = true;
-  cableMessage.value = "Скачиваю драйвер…";
-  error.value = "";
-  try {
-    await invoke<string>("install_cable");
-    cableMessage.value = "Установщик запущен. Нажмите «Install Driver» и разрешите установку.";
-    const started = Date.now();
-    if (cableTimer) window.clearInterval(cableTimer);
-    cableTimer = window.setInterval(async () => {
-      await refreshDevices();
-      if (cableOk.value) {
-        if (cableTimer) window.clearInterval(cableTimer);
-        cableTimer = undefined;
-        cableMessage.value = "Готово: виртуальный микрофон найден.";
-        installingCable.value = false;
-        return;
-      }
-      // the installer can be closed without installing: stop waiting instead
-      // of leaving the block in "installing" forever
-      if (Date.now() - started > 150_000) {
-        if (cableTimer) window.clearInterval(cableTimer);
-        cableTimer = undefined;
-        installingCable.value = false;
-        cableMessage.value =
-          "Установка не завершена. Закройте установщик и запустите ещё раз; если драйвер уже встал, перезагрузите компьютер.";
-      }
-    }, 2000);
-  } catch (e) {
-    cableMessage.value = "";
-    error.value = String(e);
-    installingCable.value = false;
-  }
-}
-
 async function applyAutostart() {
   try {
     await invoke("set_autostart", { enabled: autostart.value });
@@ -875,21 +806,6 @@ async function applyAutostart() {
   }
 }
 
-function applyTheme(value: string) {
-  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  theme.value = value === "system" ? (systemDark ? "dark" : "light") : value;
-  document.documentElement.dataset.theme = theme.value;
-}
-
-function onSystemTheme() {
-  if (settings.value?.theme === "system") applyTheme("system");
-}
-
-function toggleTheme() {
-  const next = isDark.value ? "light" : "dark";
-  if (settings.value) settings.value.theme = next;
-  applyTheme(next);
-}
 
 // the two screens get the state and the actions through one object:
 // the shell stays the only place that owns timers and engine calls
@@ -905,6 +821,7 @@ provide(APP_CONTEXT, {
   applyAutostart,
   applyPreset,
   autostart,
+  autoThreads,
   btn,
   btnGhost,
   btnPrimary,
@@ -928,6 +845,7 @@ provide(APP_CONTEXT, {
   installCable,
   installingCable,
   matchLevel,
+  maxThreads,
   micReady,
   modelStatus,
   openLicenses,
@@ -975,11 +893,13 @@ provide(APP_CONTEXT, {
   shortName,
   shownSpectrum,
   showWizard,
+  slowConfig,
   spectrumLive,
   startHotkeyCapture,
   starting,
   stats,
   switchSection,
+  sysInfo,
   tab,
   testMode,
   testOutput,
@@ -1011,7 +931,6 @@ onMounted(async () => {
     error.value = String(e);
   }
 
-  window.addEventListener("keydown", onHotkeyKey, true);
   if (profileWeak.value) {
     notify(
       "Профиль голоса слабый",
@@ -1023,8 +942,6 @@ onMounted(async () => {
     await startEngine(false);
   }
 
-  media = window.matchMedia("(prefers-color-scheme: dark)");
-  media.addEventListener("change", onSystemTheme);
 
   timer = window.setInterval(async () => {
     try {
@@ -1144,13 +1061,10 @@ onUnmounted(() => {
   if (timer) window.clearInterval(timer);
   if (deviceTimer) window.clearInterval(deviceTimer);
   if (probeTimer) window.clearInterval(probeTimer);
-  if (cableTimer) window.clearInterval(cableTimer);
   if (spectrumTimer) window.clearInterval(spectrumTimer);
   if (saveTimer) window.clearTimeout(saveTimer);
   if (recordTimer) window.clearInterval(recordTimer);
   if (restartTimer) window.clearTimeout(restartTimer);
-  media?.removeEventListener("change", onSystemTheme);
-  window.removeEventListener("keydown", onHotkeyKey, true);
 });
 
 watch(
