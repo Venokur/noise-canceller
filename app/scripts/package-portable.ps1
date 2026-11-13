@@ -4,7 +4,7 @@
 #   powershell -File scripts\package-portable.ps1
 #   powershell -File scripts\package-portable.ps1 -Zip
 #
-# What it copies: the exe, the two models, the native DLLs, licenses\ and
+# What it copies: the exe, the models, the native DLLs, licenses\ and
 # THIRD_PARTY_NOTICES.txt. What it leaves alone: portable\data (the user's own
 # settings, profiles and recordings) and the reference wavs, which are only
 # needed by `nc selftest`.
@@ -119,6 +119,8 @@ function Copy-Licenses {
     }
     Copy-Item (Join-Path $repo "LICENSE") (Join-Path $Out "LICENSE.txt") -Force
     Copy-Item (Join-Path $repo "THIRD_PARTY_NOTICES.md") (Join-Path $Out "THIRD_PARTY_NOTICES.txt") -Force
+    Copy-Item (Join-Path $repo "LICENSING.md") (Join-Path $Out "LICENSING.txt") -Force
+    Copy-Item (Join-Path $repo "MODEL_LICENSES.json") (Join-Path $Out "MODEL_LICENSES.json") -Force
 }
 
 if (-not $SkipExe) {
@@ -225,6 +227,8 @@ if ($Zip) {
     $expected = @(
         "noise-canceller.exe",
         "LICENSE.txt",
+        "LICENSING.txt",
+        "MODEL_LICENSES.json",
         "README.txt",
         "THIRD_PARTY_NOTICES.txt",
         "models",

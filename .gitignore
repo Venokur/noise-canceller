@@ -11,6 +11,8 @@ portable/native/
 portable/*.exe
 portable/licenses/
 portable/LICENSE.txt
+portable/LICENSING.txt
+portable/MODEL_LICENSES.json
 portable/THIRD_PARTY_NOTICES.txt
 noise-canceller-*.zip
 release/
