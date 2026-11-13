@@ -1,6 +1,6 @@
 //! Plays a recorded wav through an output device (profile preview).
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -13,6 +13,16 @@ use crate::wav;
 
 /// Set by `stop()`; the stream fades to silence and `play` returns.
 static CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Which side of the A/B pair is audible: 0 = first (raw), 1 = second (clean).
+/// The pair player crossfades between them, so switching during playback is
+/// instant and always at the same timestamp.
+static AB_SIDE: AtomicU8 = AtomicU8::new(0);
+
+/// Switches the live A/B pair. Safe to call when nothing plays.
+pub fn set_pair_side(clean: bool) {
+    AB_SIDE.store(u8::from(clean), Ordering::Relaxed);
+}
 
 /// Stops whatever preview is playing. Safe to call when nothing plays.
 pub fn stop() {
@@ -33,6 +43,156 @@ pub fn play_normalized(
     lang: Lang,
 ) -> Result<()> {
     play_inner(path, device_name, Some(-24.0), lang)
+}
+
+/// Plays a finished A/B pair from the same position and switches between the
+/// two sides with a short crossfade. Both files are normalised to the same
+/// speech level first, otherwise the processed take is 10-15 dB louder and the
+/// comparison is about volume, not clarity.
+pub fn play_pair(
+    raw: &std::path::Path,
+    clean: &std::path::Path,
+    device_name: Option<&str>,
+    normalize_levels: bool,
+    initial_clean: bool,
+    lang: Lang,
+) -> Result<()> {
+    CANCEL.store(false, Ordering::Relaxed);
+    AB_SIDE.store(u8::from(initial_clean), Ordering::Relaxed);
+
+    let (mut first, first_rate) = wav::read_mono(raw)?;
+    let (mut second, second_rate) = wav::read_mono(clean)?;
+    if first.is_empty() || second.is_empty() {
+        return Err(anyhow!(lang.text("файл пуст", "the file is empty")));
+    }
+    if normalize_levels {
+        normalize(&mut first, first_rate, -24.0);
+        normalize(&mut second, second_rate, -24.0);
+    }
+
+    let host = cpal::default_host();
+    let device = devices::pick_output(&host, device_name, lang)?;
+    let config = device.default_output_config()?;
+    let out_rate = config.sample_rate();
+    let channels = config.channels() as usize;
+
+    let first = resample_to(first, first_rate, out_rate);
+    let second = resample_to(second, second_rate, out_rate);
+    let len = first.len().max(second.len());
+    let mut a = first;
+    let mut b = second;
+    a.resize(len, 0.0);
+    b.resize(len, 0.0);
+
+    let data = Arc::new((a, b));
+    let cursor = Arc::new(AtomicUsize::new(0));
+    let finished = Arc::new(AtomicBool::new(false));
+    // a 15 ms ramp hides the switch without smearing the comparison
+    let blend = 1.0 - (-1000.0 / 15.0 / out_rate as f64).exp();
+
+    fn err(error: cpal::Error) {
+        eprintln!("playback error: {error}");
+    }
+
+    let stream = {
+        let data = data.clone();
+        let cursor = cursor.clone();
+        let finished = finished.clone();
+
+        match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                config.config(),
+                move |buffer: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let mut mix = f32::from(AB_SIDE.load(Ordering::Relaxed));
+                    for frame in buffer.chunks_mut(channels) {
+                        if CANCEL.load(Ordering::Relaxed) {
+                            for slot in frame.iter_mut() {
+                                *slot = 0.0;
+                            }
+                            finished.store(true, Ordering::Relaxed);
+                            continue;
+                        }
+                        let index = cursor.fetch_add(1, Ordering::Relaxed);
+                        let target = f32::from(AB_SIDE.load(Ordering::Relaxed));
+                        mix += (target - mix) * blend as f32;
+                        let value = data.0.get(index).copied().unwrap_or(0.0) * (1.0 - mix)
+                            + data.1.get(index).copied().unwrap_or(0.0) * mix;
+                        for slot in frame.iter_mut() {
+                            *slot = value;
+                        }
+                        if index >= data.0.len() {
+                            finished.store(true, Ordering::Relaxed);
+                        }
+                    }
+                },
+                err,
+                None,
+            )?,
+            cpal::SampleFormat::I16 => {
+                let data = data.clone();
+                let cursor = cursor.clone();
+                let finished = finished.clone();
+                device.build_output_stream(
+                    config.config(),
+                    move |buffer: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                        let mut mix = f32::from(AB_SIDE.load(Ordering::Relaxed));
+                        for frame in buffer.chunks_mut(channels) {
+                            if CANCEL.load(Ordering::Relaxed) {
+                                for slot in frame.iter_mut() {
+                                    *slot = 0;
+                                }
+                                finished.store(true, Ordering::Relaxed);
+                                continue;
+                            }
+                            let index = cursor.fetch_add(1, Ordering::Relaxed);
+                            let target = f32::from(AB_SIDE.load(Ordering::Relaxed));
+                            mix += (target - mix) * blend as f32;
+                            let value = data.0.get(index).copied().unwrap_or(0.0) * (1.0 - mix)
+                                + data.1.get(index).copied().unwrap_or(0.0) * mix;
+                            let sample = (value * 32767.0) as i16;
+                            for slot in frame.iter_mut() {
+                                *slot = sample;
+                            }
+                            if index >= data.0.len() {
+                                finished.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    },
+                    err,
+                    None,
+                )?
+            }
+            other => return Err(anyhow!("unsupported output format: {other:?}")),
+        }
+    };
+
+    stream.play()?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !finished.load(Ordering::Relaxed)
+        && !CANCEL.load(Ordering::Relaxed)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+
+    let tail = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    while std::time::Instant::now() < tail {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    Ok(())
+}
+
+fn resample_to(samples: Vec<f32>, rate: u32, out_rate: u32) -> Vec<f32> {
+    if rate == out_rate {
+        return samples;
+    }
+    let mut resampler = Resampler::new(rate, out_rate);
+    let mut out = vec![0.0f32; resampler.max_output(samples.len()) + 64];
+    let count = resampler.process(&samples, &mut out);
+    out.truncate(count);
+    out
 }
 
 fn play_inner(

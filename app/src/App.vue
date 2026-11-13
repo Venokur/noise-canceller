@@ -112,6 +112,7 @@ const abRaw = ref<string | null>(null);
 const abClean = ref<string | null>(null);
 const history = ref<AbEntry[]>([]);
 const abNormalize = ref(true);
+const abSide = ref<"raw" | "clean">("raw");
 const showWizard = ref(false);
 const resetDialog = ref(false);
 const takeToApply = ref<AbEntry | null>(null);
@@ -584,6 +585,48 @@ function playFile(path: string | null, key: string) {
   return togglePlay(path, key);
 }
 
+/// The A/B pair plays as one stream: clicking either side switches it at the
+/// same timestamp instead of restarting a separate file. The first click starts
+/// the pair; the second click on the active side stops it.
+async function playAb(side: "raw" | "clean") {
+  if (!abRaw.value || !abClean.value) return;
+  if (playingKey.value === "pair") {
+    if (abSide.value === side) {
+      await stopPreview();
+      return;
+    }
+    abSide.value = side;
+    try {
+      await invoke("set_ab_side", { clean: side === "clean" });
+    } catch (e) {
+      error.value = String(e);
+    }
+    return;
+  }
+  await stopPreview();
+  playingKey.value = "pair";
+  abSide.value = side;
+  error.value = "";
+  try {
+    void invoke("play_ab_pair", {
+      raw: abRaw.value,
+      clean: abClean.value,
+      output: testOutput.value || null,
+      normalize: abNormalize.value,
+      initialClean: side === "clean",
+    })
+      .catch((e) => {
+        error.value = String(e);
+      })
+      .finally(() => {
+        if (playingKey.value === "pair") playingKey.value = null;
+      });
+  } catch (e) {
+    playingKey.value = null;
+    error.value = String(e);
+  }
+}
+
 function playProfile() {
   if (!selectedProfile.value) return;
   return togglePlay(selectedProfile.value, "profile");
@@ -871,6 +914,7 @@ provide(APP_CONTEXT, {
   abProgress,
   abRaw,
   abRunning,
+  abSide,
   applyAutostart,
   applyPreset,
   askApplyTake,
@@ -912,6 +956,7 @@ provide(APP_CONTEXT, {
   pickOutput,
   pickProfile,
   playFile,
+  playAb,
   playingKey,
   playProfile,
   presets,

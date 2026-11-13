@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, abSide, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playAb, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -390,12 +390,12 @@ const noiseStage = computed(() => {
             :title="abFolder || undefined"
           >
             <div class="flex gap-1.5">
-              <button class="playbtn" :data-on="playingKey === 'raw'" @click="playFile(abRaw, 'raw')">
-                <AppIcon :name="playingKey === 'raw' ? 'stop' : 'play'" :size="12" />
+              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === 'raw'" @click="playAb('raw')">
+                <AppIcon :name="playingKey === 'pair' && abSide === 'raw' ? 'stop' : 'play'" :size="12" />
                 {{ t("sound.raw") }}
               </button>
-              <button class="playbtn" :data-on="playingKey === 'clean'" @click="playFile(abClean, 'clean')">
-                <AppIcon :name="playingKey === 'clean' ? 'stop' : 'play'" :size="12" />
+              <button class="playbtn" :data-on="playingKey === 'pair' && abSide === 'clean'" @click="playAb('clean')">
+                <AppIcon :name="playingKey === 'pair' && abSide === 'clean' ? 'stop' : 'play'" :size="12" />
                 {{ t("sound.clean") }}
               </button>
             </div>

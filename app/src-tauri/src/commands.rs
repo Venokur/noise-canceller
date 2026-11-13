@@ -283,6 +283,41 @@ pub(crate) async fn play_profile(
     .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub(crate) async fn play_ab_pair(
+    state: State<'_, AppState>,
+    raw: String,
+    clean: String,
+    output: Option<String>,
+    normalize: Option<bool>,
+    initial_clean: Option<bool>,
+) -> Result<(), String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = output.as_deref().filter(|s| !s.is_empty());
+        noise_canceller_core::playback::play_pair(
+            std::path::Path::new(&raw),
+            std::path::Path::new(&clean),
+            target,
+            normalize.unwrap_or(true),
+            initial_clean.unwrap_or(false),
+            lang,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn set_ab_side(clean: bool) {
+    noise_canceller_core::playback::set_pair_side(clean);
+}
+
 /// Runs a PowerShell script with no console window. Both the cable installer and
 /// the model check used to carry their own copy of this invocation, and the
 /// `CREATE_NO_WINDOW` flag was easy to forget in a new one.

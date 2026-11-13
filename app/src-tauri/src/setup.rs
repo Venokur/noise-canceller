@@ -141,6 +141,8 @@ pub(crate) fn run() {
             crate::commands::install_cable,
             crate::commands::check_model_update,
             crate::commands::play_profile,
+            crate::commands::play_ab_pair,
+            crate::commands::set_ab_side,
             crate::commands::stop_playback,
             crate::commands::set_autostart,
             crate::commands::autostart_enabled,

@@ -152,7 +152,7 @@
   "sound.switching": "Switching…",
   "sound.stopTest": "Stop the check",
   "sound.test": "Test in headphones",
-  "sound.abHint": "Raw and processed sound side by side — listen in headphones.",
+  "sound.abHint": "Raw and processed at the same position: switch on the fly, listen in headphones.",
   "sound.abNeedCable": "The take goes through processing: connect the virtual cable or turn on the headphone check.",
   "sound.raw": "Raw",
   "sound.clean": "Processed",
