@@ -41,6 +41,7 @@ pub(crate) fn apply_mute(app: &tauri::AppHandle, muted: bool) {
     if let Some(state) = app.try_state::<AppState>() {
         state.with_engine(|engine| engine.set_muted(muted));
     }
+    refresh_tray(app);
 }
 
 pub(crate) fn toggle_mute(app: &tauri::AppHandle) {
@@ -53,6 +54,7 @@ pub(crate) fn toggle_mute(app: &tauri::AppHandle) {
             noise_canceller_core::log::info(if next { "mute on" } else { "mute off" });
         }
     }
+    refresh_tray(app);
 }
 
 pub(crate) fn register_hotkey(app: &tauri::AppHandle, hotkey: &str, lang: Lang) -> Option<String> {
@@ -139,6 +141,22 @@ fn refresh_tray(app: &tauri::AppHandle) {
         &[("name", &profile)],
     ));
     let _ = tray.mute.set_checked(muted);
+    if let Some(icon) = app.tray_by_id("main") {
+        let text = if muted {
+            lang.text(
+                "Noise Canceller · микрофон выключен",
+                "Noise Canceller · microphone muted",
+            )
+        } else if running {
+            lang.text(
+                "Noise Canceller · обработка включена",
+                "Noise Canceller · processing is on",
+            )
+        } else {
+            lang.text("Noise Canceller · выключено", "Noise Canceller · off")
+        };
+        let _ = icon.set_tooltip(Some(text));
+    }
 }
 
 /// Renames the items that do not change while the app runs. The status and the
