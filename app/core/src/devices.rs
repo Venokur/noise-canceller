@@ -8,6 +8,8 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait};
 
+use crate::lang::Lang;
+
 /// Shown in the UI, so the name has to survive a round trip through settings.
 pub fn name_of(device: &cpal::Device) -> Option<String> {
     device
@@ -75,7 +77,12 @@ pub fn cable_present() -> bool {
 /// The device the user chose, or the system default when nothing was chosen.
 /// A chosen name that is gone is an error: silently falling back to the default
 /// made the app process the wrong microphone after a device was unplugged.
-pub fn pick(host: &cpal::Host, name: Option<&str>, input: bool) -> Result<cpal::Device> {
+pub fn pick(
+    host: &cpal::Host,
+    name: Option<&str>,
+    input: bool,
+    lang: Lang,
+) -> Result<cpal::Device> {
     if let Some(target) = name.filter(|n| !n.is_empty()) {
         let list = if input {
             host.input_devices()
@@ -87,24 +94,27 @@ pub fn pick(host: &cpal::Host, name: Option<&str>, input: bool) -> Result<cpal::
                 return Ok(device);
             }
         }
-        return Err(anyhow!(
-            "устройство «{target}» не найдено — обновите список устройств"
-        ));
+        return Err(anyhow!(lang.fmt(
+            "устройство «{target}» не найдено — обновите список устройств",
+            "device “{target}” not found — refresh the list of devices",
+            &[("target", target)],
+        )));
     }
 
     if input {
         host.default_input_device()
-            .ok_or_else(|| anyhow!("микрофон не найден"))
+            .ok_or_else(|| anyhow!(lang.text("микрофон не найден", "no microphone found")))
     } else {
-        host.default_output_device()
-            .ok_or_else(|| anyhow!("устройство вывода не найдено"))
+        host.default_output_device().ok_or_else(|| {
+            anyhow!(lang.text("устройство вывода не найдено", "no output device found"))
+        })
     }
 }
 
-pub fn pick_input(host: &cpal::Host, name: Option<&str>) -> Result<cpal::Device> {
-    pick(host, name, true)
+pub fn pick_input(host: &cpal::Host, name: Option<&str>, lang: Lang) -> Result<cpal::Device> {
+    pick(host, name, true, lang)
 }
 
-pub fn pick_output(host: &cpal::Host, name: Option<&str>) -> Result<cpal::Device> {
-    pick(host, name, false)
+pub fn pick_output(host: &cpal::Host, name: Option<&str>, lang: Lang) -> Result<cpal::Device> {
+    pick(host, name, false, lang)
 }

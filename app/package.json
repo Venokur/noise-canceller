@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check:ui": "node scripts/check-ui.mjs",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

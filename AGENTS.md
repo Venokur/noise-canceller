@@ -62,6 +62,7 @@ app/
   src/         Vue: App.vue (оболочка: заголовок, вкладки, тосты, мастер),
                views/{SoundView,SettingsView}.vue, components/{TitleBar,AppSelect,AppSwitch,AppSlider,AppLabel,AppIcon,AppToast},
                composables/{useToasts,useSettingsSearch,useSystemInfo,useShell,useCable}.ts,
+               i18n/ (ru.json — источник, en.json — перевод, index.ts: t/u/setLocale),
                cable.ts (что считать виртуальным кабелем),
                appContext.ts (что оболочка отдаёт экранам), types.ts (формы DTO)
   models/voxlock/  enroll.onnx, chunk_int8.onnx, test_wavs
@@ -341,7 +342,7 @@ powershell -File scripts\licenses.ps1 -Check      # список лицензи�
 последние A/B через `nc replay` и падает, если провал > 0.4 с, паузы ближе 12 дБ
 к речи, громкость уехала от сырого больше чем на 20 дБ или речь вне −55…−10 dBFS.
 CI (`.github/workflows/ci.yml`) гоняет `cargo fmt --check`, clippy `-D warnings`, тесты, сборку фронта
-и Tauri.
+и Tauri, а также `npm run check:ui` и `npm run check:i18n`.
 
 Те же цифры для одной пары: `nc metrics <raw.wav> <clean.wav>` — печатает уровень
 речи, разницу с оригиналом, «паузы тише речи» и самый длинный провал; с `--json`
@@ -648,6 +649,7 @@ npm.cmd run tauri build -- --no-bundle
 | `basic_ui` | прятать DSP-ползунки под «Дополнительно» |
 | `keep_recordings` | сколько последних A/B-пар хранить в `data/recordings` |
 | `defaults_rev` | версия заводских значений: при загрузке старый файл мигрируется один раз |
+| `language` | `ru` / `en`; заводское значение `auto` разрешается из Windows при загрузке (`GetUserDefaultUILanguage`), дальше это выбор пользователя. Трей и ошибки движка берут язык отсюда |
 
 Все настройки проходят `Settings::sanitize()` после загрузки и в `set_settings`:
 буфер 40–250 мс, блок 20–200 мс, AGC 0–30 дБ, `keep_recordings` 1–100, известные
@@ -744,7 +746,12 @@ Scicom voice-isolator не берём: лицензия `other`, файла LICE
 
 ## Стиль
 
-- UI-тексты по-русски, идентификаторы по-английски;
+- UI-тексты — только через `t()` из `app/src/i18n` (ru — источник, en — перевод),
+  идентификаторы по-английски. Кириллица вне `src/i18n` валит
+  `npm run check:i18n`, как и расхождение ключей или `{подстановок}`; единицы
+  (`дБ`, `мс`, `кГц`) берутся из `u`, а не пишутся в разметке. Тексты Rust
+  (трей, ошибки движка, проверка модели) выбираются `Lang` из
+  `Settings.language`, оба варианта стоят рядом в одном вызове;
 - настройки только через `Settings` (serde), сохранение с debounce 300 мс;
 - **цвет значит одно — «звук идёт»**: акцент (`--accent`, зелёный) принадлежит
   состояниям сигнала (питание включено, точки стадий, спектр, активный таб), а

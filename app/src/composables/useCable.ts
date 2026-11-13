@@ -2,10 +2,12 @@
 //
 // The installer returns as soon as it starts, so the only honest signal is the
 // device list. The wait is bounded: if the user closes the installer without
-// installing, the block must not stay on "Установка…" forever.
+// installing, the block must not stay on "installing" forever.
 
 import { onUnmounted, ref, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+
+import { t } from "../i18n";
 
 interface CableDeps {
   refreshDevices: () => Promise<void>;
@@ -30,18 +32,18 @@ export function useCable({ refreshDevices, cableOk, error }: CableDeps) {
   async function installCable() {
     if (installingCable.value) return;
     installingCable.value = true;
-    cableMessage.value = "Скачиваю драйвер…";
+    cableMessage.value = t("cable.downloading");
     error.value = "";
     try {
       await invoke<string>("install_cable");
-      cableMessage.value = "Установщик запущен. Нажмите «Install Driver» и разрешите установку.";
+      cableMessage.value = t("cable.installer");
       const started = Date.now();
       stopPolling();
       timer = window.setInterval(async () => {
         await refreshDevices();
         if (cableOk.value) {
           stopPolling();
-          cableMessage.value = "Готово: виртуальный микрофон найден.";
+          cableMessage.value = t("cable.ready");
           installingCable.value = false;
           return;
         }
@@ -50,8 +52,7 @@ export function useCable({ refreshDevices, cableOk, error }: CableDeps) {
         if (Date.now() - started > 150_000) {
           stopPolling();
           installingCable.value = false;
-          cableMessage.value =
-            "Установка не завершена. Закройте установщик и запустите ещё раз; если драйвер уже встал, перезагрузите компьютер.";
+          cableMessage.value = t("cable.timeout");
         }
       }, 2000);
     } catch (e) {

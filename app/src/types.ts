@@ -8,6 +8,8 @@
 export interface Settings {
   enabled: boolean;
   theme: string;
+  /** "ru" or "en": resolved from Windows on the first launch, then the user's */
+  language: string;
   mode: string;
   profilePath: string | null;
   isolationStrength: number;

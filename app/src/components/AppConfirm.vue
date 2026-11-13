@@ -9,6 +9,7 @@
 
 import { onMounted, ref } from "vue";
 import AppIcon from "./AppIcon.vue";
+import { t } from "../i18n";
 
 const props = withDefaults(
   defineProps<{
@@ -21,8 +22,8 @@ const props = withDefaults(
   }>(),
   {
     text: "",
-    confirmLabel: "Продолжить",
-    cancelLabel: "Отмена",
+    confirmLabel: "",
+    cancelLabel: "",
     focus: "cancel",
   },
 );
@@ -88,10 +89,10 @@ function onKeydown(event: KeyboardEvent) {
 
       <div class="mt-5 flex justify-end gap-2">
         <button ref="cancelButton" type="button" class="btn btn-ghost" @click="emit('cancel')">
-          {{ cancelLabel }}
+          {{ cancelLabel || t("common.cancel") }}
         </button>
         <button ref="confirmButton" type="button" class="btn btn-primary" @click="emit('confirm')">
-          {{ confirmLabel }}
+          {{ confirmLabel || t("common.continue") }}
         </button>
       </div>
     </div>

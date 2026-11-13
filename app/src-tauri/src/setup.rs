@@ -1,6 +1,7 @@
 //! The Tauri builder: plugins, first paint, tray, window events and the command
 //! list. Kept apart from `main` so the entry point stays a one-liner.
 
+use noise_canceller_core::lang::Lang;
 use noise_canceller_core::paths;
 use noise_canceller_core::recordings;
 use noise_canceller_core::settings::Settings;
@@ -15,6 +16,9 @@ pub(crate) fn run() {
     settings.save(&settings_path);
     let start_minimized = settings.start_minimized;
     let start_hotkey = settings.mute_hotkey.clone();
+    // the tray is created before the window: its labels need the language now,
+    // not after the frontend has loaded
+    let lang = Lang::from_settings(&settings);
     noise_canceller_core::log::info("app start");
     let pruned = recordings::prune(settings.keep_recordings as usize);
     if pruned > 0 {
@@ -64,7 +68,7 @@ pub(crate) fn run() {
             }
         })
         .setup(move |app| {
-            crate::tray::install(app, &start_hotkey, start_minimized)?;
+            crate::tray::install(app, &start_hotkey, lang, start_minimized)?;
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {

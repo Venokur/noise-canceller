@@ -2,6 +2,7 @@ pub mod air;
 pub mod devices;
 pub mod dsp;
 pub mod engine;
+pub mod lang;
 pub mod log;
 pub mod model;
 pub mod paths;

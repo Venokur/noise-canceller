@@ -64,6 +64,11 @@ pub struct Settings {
     pub enabled: bool,
     pub theme: Theme,
 
+    /// "ru" or "en". `Default` is "auto": `sanitize` resolves it from Windows
+    /// once, so a fresh install speaks the language of the machine and the user
+    /// can change it afterwards.
+    pub language: String,
+
     /// "profile" or "auto"
     pub mode: String,
     pub profile_path: Option<String>,
@@ -158,6 +163,7 @@ impl Default for Settings {
         Self {
             enabled: true,
             theme: Theme::Dark,
+            language: "auto".into(),
             mode: "profile".into(),
             profile_path: None,
             isolation_strength: 1.0,
@@ -266,6 +272,13 @@ impl Settings {
         if !matches!(self.hotkey_mode.as_str(), "toggle" | "hold") {
             self.hotkey_mode = "toggle".into();
         }
+        // "auto" exists only until the first load: after that the file carries a
+        // concrete language, so changing the Windows language later does not
+        // silently switch a running app
+        self.language = match self.language.as_str() {
+            "ru" | "en" => self.language.clone(),
+            _ => crate::lang::system_language().into(),
+        };
         if self.mute_hotkey.trim().is_empty() {
             self.mute_hotkey = "Ctrl+Alt+M".into();
         }
@@ -560,6 +573,33 @@ mod tests {
         assert_eq!(settings.tone_low_db, 0.0);
         assert_eq!(settings.tone_high_db, 0.0);
         assert_eq!(settings.air_amount, 0.10);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_language_is_always_concrete_after_a_load() {
+        let dir = std::env::temp_dir().join(format!("nc-lang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // a file from before the field existed resolves to a real language, not "auto"
+        std::fs::write(&path, r#"{"defaultsRev":16}"#).unwrap();
+        let settings = Settings::load(&path);
+        assert!(matches!(settings.language.as_str(), "ru" | "en"));
+
+        // a chosen language survives the round trip untouched
+        std::fs::write(&path, r#"{"language":"en"}"#).unwrap();
+        assert_eq!(Settings::load(&path).language, "en");
+
+        // a hand-edited value cannot leave the window without a language
+        let mut settings = Settings {
+            language: "klingon".into(),
+            ..Settings::default()
+        };
+        settings.sanitize();
+        assert!(matches!(settings.language.as_str(), "ru" | "en"));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

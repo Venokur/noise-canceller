@@ -7,6 +7,7 @@ import { computed, ref, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
 import { shortName } from "../format";
+import { t } from "../i18n";
 import type { Quality, Settings, ProfileScore } from "../types";
 
 interface ProfileDeps {
@@ -66,10 +67,14 @@ export function useProfiles({ settings, error, restart }: ProfileDeps) {
   const profileMeta = computed(() => {
     if (profileQuality.value) {
       const q = profileQuality.value;
-      return `${q.score} / 100 · речь ${(q.speechPercent * 100).toFixed(0)}% · SNR ${q.snrDb.toFixed(0)} дБ`;
+      return t("profile.meta", {
+        score: q.score,
+        speech: (q.speechPercent * 100).toFixed(0),
+        snr: q.snrDb.toFixed(0),
+      });
     }
     const score = activeProfileScore.value;
-    if (score) return `SNR ${score.snrDb.toFixed(0)} дБ`;
+    if (score) return t("profile.snr", { snr: score.snrDb.toFixed(0) });
     return "";
   });
 

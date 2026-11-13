@@ -9,6 +9,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 
 use crate::devices;
 use crate::engine::BANDS;
+use crate::lang::Lang;
 use crate::paths;
 use crate::resample::Resampler;
 use crate::spectrum::Spectrum;
@@ -43,8 +44,8 @@ pub struct Profile {
 /// Records a short take and grades it without saving a profile. Used by the
 /// "check microphone" button: the user speaks once and sees whether the level
 /// and the signal-to-noise ratio are sane.
-pub fn probe(input_name: Option<&str>, seconds: f32) -> Result<Quality> {
-    let profile = record(input_name, seconds)?;
+pub fn probe(input_name: Option<&str>, seconds: f32, lang: Lang) -> Result<Quality> {
+    let profile = record(input_name, seconds, lang)?;
     let _ = std::fs::remove_file(&profile.path);
     Ok(profile.quality)
 }
@@ -59,14 +60,16 @@ pub fn score_file(path: &std::path::Path) -> Result<Quality> {
         samples.push(sample? as f32 / 32768.0);
     }
     if samples.is_empty() {
-        return Err(anyhow!("профиль пуст"));
+        // an internal invariant, not a UI message: callers only score files the
+        // recorder wrote, and the UI treats a failure as "no score"
+        return Err(anyhow!("profile is empty"));
     }
     Ok(evaluate(&samples, spec.sample_rate))
 }
 
-pub fn record(input_name: Option<&str>, seconds: f32) -> Result<Profile> {
+pub fn record(input_name: Option<&str>, seconds: f32, lang: Lang) -> Result<Profile> {
     let host = cpal::default_host();
-    let device = devices::pick_input(&host, input_name)?;
+    let device = devices::pick_input(&host, input_name, lang)?;
     let config = device.default_input_config()?;
     let rate = config.sample_rate();
     let channels = config.channels() as usize;

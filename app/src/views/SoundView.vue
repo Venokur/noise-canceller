@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileMeta, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, testMode, testOutput, toggleAb, togglePower, toggleTest } = inject(APP_CONTEXT)!;
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileMeta, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 /// Which denoiser actually sits after VoxLock: the chain has to name the one
 /// the user picked, not the model it used to ship with.
@@ -19,7 +19,7 @@ const noiseStage = computed(() => {
     case "gtcrn":
       return "GTCRN";
     default:
-      return "Шумодав";
+      return t("sound.stageNoise");
   }
 });
 </script>
@@ -35,10 +35,10 @@ const noiseStage = computed(() => {
                 :disabled="busy || starting || (!micReady && !running)"
                 :title="
                   running
-                    ? 'Выключить обработку'
+                    ? t('sound.powerOff')
                     : micReady
-                      ? 'Включить обработку'
-                      : 'Микрофон не найден — выберите его в разделе «Устройства»'
+                      ? t('sound.powerOn')
+                      : t('sound.powerNoMic')
                 "
                 @click="togglePower"
               >
@@ -46,7 +46,7 @@ const noiseStage = computed(() => {
                 <AppIcon v-else name="power" :size="26" :stroke="2" />
               </button>
               <span class="mt-2 text-[11.5px] text-[var(--muted)]">
-                {{ running ? "Выключить" : starting ? "Запуск…" : micReady ? "Включить" : "Нет микрофона" }}
+                {{ running ? t("sound.turnOff") : starting ? t("sound.starting") : micReady ? t("sound.turnOn") : t("sound.noMicShort") }}
               </span>
             </div>
 
@@ -54,21 +54,21 @@ const noiseStage = computed(() => {
               class="flex min-w-0 items-center justify-between gap-6"
             >
               <div class="min-w-0">
-                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Микрофон</div>
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">{{ t("sound.input") }}</div>
                 <div class="truncate text-[13px]" :title="selectedInput">
-                  {{ shortName(selectedInput) || "Не выбран" }}
+                  {{ shortName(selectedInput) || t("common.none") }}
                 </div>
                 <div class="mt-[7px] flex items-center gap-2">
                   <span class="meter"><i :style="{ width: inputLevel * 100 + '%' }"></i></span>
                   <span class="flex w-[54px] shrink-0 justify-end font-mono text-[10.5px] tabular-nums">
-                    <span v-if="stats.inputPeakDb > -1" class="text-[var(--danger)]">перегруз</span>
+                    <span v-if="stats.inputPeakDb > -1" class="text-[var(--danger)]">{{ t("sound.clipping") }}</span>
                     <span v-else class="text-[var(--muted)]">{{ inputDb }}</span>
                   </span>
                 </div>
               </div>
 
               <div class="min-w-0">
-                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Обработка</div>
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">{{ t("sound.processing") }}</div>
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[var(--muted)]">
                   <span class="flex items-center gap-1.5">
                     <span class="dot" :data-off="!settings.voiceIsolation"></span>VoxLock
@@ -83,9 +83,9 @@ const noiseStage = computed(() => {
               </div>
 
               <div class="min-w-0">
-                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">Выход</div>
+                <div class="mb-[3px] text-[11.5px] text-[var(--muted)]">{{ t("sound.output") }}</div>
                 <div class="truncate text-[13px]" :title="testMode ? testOutput : 'CABLE Input'">
-                  {{ testMode ? shortName(testOutput) || "Устройство вывода" : "CABLE Input" }}
+                  {{ testMode ? shortName(testOutput) || t("common.outputDevice") : "CABLE Input" }}
                 </div>
                 <div class="mt-[7px] flex items-center gap-2">
                   <span class="meter"><i :style="{ width: outputLevel * 100 + '%' }"></i></span>
@@ -131,15 +131,14 @@ const noiseStage = computed(() => {
           v-if="!cableOk"
           class="mt-5 rounded-[14px] border border-[var(--danger)] bg-[var(--surface)] px-[18px] py-4"
         >
-          <div class="text-[14px] font-semibold text-[var(--danger)]">Нужен виртуальный микрофон</div>
+          <div class="text-[14px] font-semibold text-[var(--danger)]">{{ t("sound.cableTitle") }}</div>
           <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
-            Zoom, Meet и Discord не увидят очищенный звук без VB-CABLE. Установка одной кнопкой, права
-            администратора один раз.
+            {{ t("sound.cableText") }}
           </p>
           <div class="mt-3 flex flex-wrap items-center gap-2.5">
             <button :class="btnPrimary" :disabled="installingCable" @click="installCable">
               <AppIcon v-if="installingCable" name="spinner" :size="14" class="spin" />
-              {{ installingCable ? "Установка…" : "Установить виртуальный микрофон" }}
+              {{ installingCable ? t("wizard.installing") : t("sound.cableInstall") }}
             </button>
             <span class="text-[11.5px] text-[var(--muted)]">{{ cableMessage }}</span>
           </div>
@@ -148,71 +147,74 @@ const noiseStage = computed(() => {
         <!-- devices -->
         <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
           <div class="mb-2.5 flex items-center gap-2.5">
-            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Устройства</h2>
-            <span class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">48 кГц · моно</span>
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">{{ t("sound.devices") }}</h2>
+            <span class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">{{ t("sound.format") }}</span>
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div class="min-w-0">
-              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">Микрофон</span>
+              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">{{ t("sound.input") }}</span>
               <AppSelect
                 :model-value="selectedInput"
                 :options="inputOptions"
                 :disabled="reconnecting || starting"
-                placeholder="Нет устройств"
+                :placeholder="t('sound.noDevices')"
                 @update:model-value="pickInput"
               />
             </div>
             <div class="min-w-0">
-              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">Наушники</span>
+              <span class="mb-[5px] block text-[11.5px] text-[var(--muted)]">{{ t("sound.headphones") }}</span>
               <AppSelect
                 :model-value="selectedOutput"
                 :options="outputOptions"
                 :disabled="reconnecting || starting"
-                placeholder="Нет устройств"
+                :placeholder="t('sound.noDevices')"
                 @update:model-value="pickOutput"
               />
             </div>
           </div>
           <p v-if="inputIsCable" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
-            Выбран виртуальный кабель как микрофон: приложение будет слышать собственный выход и звук
-            других программ. Выберите настоящий микрофон.
+            {{ t("sound.cableAsMic") }}
           </p>
           <div class="mt-2 flex flex-wrap items-center gap-1">
             <button :class="btnGhost" :disabled="refreshing" @click="refreshDevicesManually">
               <AppIcon name="refresh" :size="14" :class="{ spin: refreshing }" />
-              {{ refreshing ? "Обновляю…" : "Обновить" }}
+              {{ refreshing ? t("sound.refreshing") : t("common.refresh") }}
             </button>
             <button :class="btnGhost" :disabled="probing" @click="probeMic">
               <AppIcon name="mic" :size="14" />
               {{
-                probing ? (probeLeft > 0 ? `Слушаю… ${probeLeft} с` : "Слушаю…") : "Проверить микрофон"
+                probing ? (probeLeft > 0 ? t("wizard.listening", { s: probeLeft }) : t("wizard.listen")) : t("wizard.probe")
               }}
             </button>
             <span v-if="reconnecting" class="ml-2 flex items-center gap-1.5 text-[11.5px] text-[var(--muted)]">
               <AppIcon name="spinner" :size="12" class="spin" />
-              Переподключаю устройства…
+              {{ t("sound.reconnecting") }}
             </span>
             <span v-else-if="probeResult" class="ml-2 font-mono text-[11px] tabular-nums text-[var(--muted)]">
-              {{ probeResult.peakDb.toFixed(0) }} дБ · речь
-              {{ (probeResult.speechPercent * 100).toFixed(0) }}% · SNR
-              {{ probeResult.snrDb.toFixed(0) }} дБ
+              {{
+                t("sound.probeResult", {
+                  db: probeResult.peakDb.toFixed(0),
+                  speech: (probeResult.speechPercent * 100).toFixed(0),
+                  snr: probeResult.snrDb.toFixed(0),
+                })
+              }}
             </span>
           </div>
           <p v-if="probeResult" class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">{{ probeHint }}</p>
           <div class="mt-3 flex items-center gap-3">
-            <span class="shrink-0 text-[11.5px] whitespace-nowrap text-[var(--muted)]">Громкость выхода</span>
+            <span class="shrink-0 text-[11.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.outputVolume") }}</span>
             <div class="w-[220px] shrink-0">
               <AppSlider
-                label="Громкость выхода"
+                :label="t('sound.outputVolume')"
                 v-model="settings.outputGainDb"
                 :min="-18"
                 :max="18"
                 :step="0.5"
-                :format="(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} дБ`"
+                :format="(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} ${u.db}`"
               />
             </div>
             <span class="min-w-0 truncate text-[11px] text-[var(--muted)]">
-              после всей обработки, шумодав не трогает
+              {{ t("sound.outputVolumeHint") }}
             </span>
           </div>
         </section>
@@ -220,7 +222,7 @@ const noiseStage = computed(() => {
         <!-- profile -->
         <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
           <div class="mb-2.5 flex items-center gap-2.5">
-            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Профиль голоса</h2>
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">{{ t("sound.profile") }}</h2>
             <span v-if="profileMeta" class="ml-auto font-mono text-[11.5px] tabular-nums text-[var(--muted)]">
               {{ profileMeta }}
             </span>
@@ -232,38 +234,38 @@ const noiseStage = computed(() => {
             <button
               :class="btnPrimary"
               :disabled="recording || !micReady"
-              :title="micReady ? 'Записать профиль голоса' : 'Сначала выберите микрофон в разделе «Устройства»'"
+              :title="micReady ? t('wizard.recordTitle') : t('sound.profileRecordNeedMic')"
               @click="recordProfile"
             >
               <span v-if="recording" class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
               <AppIcon v-else name="mic" :size="14" />
-              {{ recording ? `Запись… ${recordLeft} с` : "Записать 15 с" }}
+              {{ recording ? t("wizard.recording", { s: recordLeft }) : t("wizard.record") }}
             </button>
             <button
               class="iconbtn"
               :disabled="!selectedProfile"
-              :title="playingKey === 'profile' ? 'Остановить' : 'Прослушать профиль'"
+              :title="playingKey === 'profile' ? t('sound.stop') : t('sound.playProfile')"
               @click="playProfile"
             >
               <AppIcon :name="playingKey === 'profile' ? 'stop' : 'play'" :size="14" />
             </button>
-            <button class="iconbtn danger" :disabled="!selectedProfile" title="Удалить профиль" @click="deleteProfile">
+            <button class="iconbtn danger" :disabled="!selectedProfile" :title="t('sound.deleteProfile')" @click="deleteProfile">
               <AppIcon name="trash" :size="14" />
             </button>
           </div>
           <p v-if="profileWeak" class="mt-2 text-[12px] leading-relaxed text-[var(--danger)]">
-            Профиль слабый: модель будет хуже узнавать голос. Запишите новый — 15 секунд в тишине.
+            {{ t("sound.profileWeak") }}
           </p>
           <div class="mt-2.5 flex items-center gap-2.5 text-[12.5px] text-[var(--muted)]">
             <AppSwitch v-model="settings.autoProfile" @update:model-value="refreshProfiles" />
-            <span>Выбирать лучший профиль автоматически</span>
+            <span>{{ t("sound.autoProfile") }}</span>
           </div>
         </section>
 
         <!-- A/B -->
         <section class="mt-[18px] border-t border-[var(--stroke)] pt-3">
           <div class="mb-2.5 flex items-center gap-2.5">
-            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">Проверка A/B</h2>
+            <h2 class="text-[15px] font-semibold tracking-[-0.01em]">{{ t("sound.ab") }}</h2>
             <div class="seg ml-auto">
               <button
                 v-for="sec in [10, 30, 60]"
@@ -272,7 +274,7 @@ const noiseStage = computed(() => {
                 :data-on="settings.abSeconds === sec"
                 @click="settings.abSeconds = sec"
               >
-                {{ sec }} с
+                {{ sec }} {{ u.s }}
               </button>
             </div>
           </div>
@@ -281,14 +283,14 @@ const noiseStage = computed(() => {
               <span class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
               {{
                 abRunning
-                  ? `Запись… ${Math.round(abProgress * (settings?.abSeconds ?? 30))} с`
-                  : `Записать A/B (${settings?.abSeconds ?? 30} с)`
+                  ? t("wizard.recording", { s: Math.round(abProgress * (settings?.abSeconds ?? 30)) })
+                  : t("sound.abRecord", { s: settings?.abSeconds ?? 30 })
               }}
             </button>
             <button
               :class="testMode ? btn : btnPrimary"
               :disabled="busy || starting || (!micReady && !testMode)"
-              :title="micReady || testMode ? '' : 'Микрофон не найден'"
+              :title="micReady || testMode ? '' : t('sound.noMicFound')"
               @click="toggleTest"
             >
               <AppIcon
@@ -298,19 +300,19 @@ const noiseStage = computed(() => {
               />
               {{
                 busy || starting
-                  ? "Переключаю…"
+                  ? t("sound.switching")
                   : testMode
-                    ? "Остановить проверку"
-                    : "Проверить в наушниках"
+                    ? t("sound.stopTest")
+                    : t("sound.test")
               }}
             </button>
-            <span class="text-[11.5px] text-[var(--muted)]">Сырой и обработанный звук рядом, слушайте в наушниках.</span>
+            <span class="text-[11.5px] text-[var(--muted)]">{{ t("sound.abHint") }}</span>
           </div>
           <div v-if="abRunning" class="mt-2 h-0.5 overflow-hidden rounded-full bg-[var(--stroke)]">
             <div class="h-full rounded-full bg-[var(--danger)]" :style="{ width: abProgress * 100 + '%' }"></div>
           </div>
           <p v-if="!running" class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
-            Запись идёт через обработку: подключите виртуальный кабель или включите проверку в наушниках.
+            {{ t("sound.abNeedCable") }}
           </p>
 
           <div
@@ -321,11 +323,11 @@ const noiseStage = computed(() => {
             <div class="flex gap-1.5">
               <button class="playbtn" :data-on="playingKey === 'raw'" @click="playFile(abRaw, 'raw')">
                 <AppIcon :name="playingKey === 'raw' ? 'stop' : 'play'" :size="12" />
-                Сырой
+                {{ t("sound.raw") }}
               </button>
               <button class="playbtn" :data-on="playingKey === 'clean'" @click="playFile(abClean, 'clean')">
                 <AppIcon :name="playingKey === 'clean' ? 'stop' : 'play'" :size="12" />
-                Обработанный
+                {{ t("sound.clean") }}
               </button>
             </div>
 
@@ -333,45 +335,45 @@ const noiseStage = computed(() => {
               <div class="flex items-start gap-4 font-mono tabular-nums">
                 <span class="block w-[76px]">
                   <b class="block text-[12.5px] font-normal">
-                    {{ abMetrics ? abMetrics.speechLevelDb.toFixed(0) + " дБ" : "—" }}
+                    {{ abMetrics ? abMetrics.speechLevelDb.toFixed(0) + " " + u.db : "—" }}
                   </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">речь</span>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricSpeech") }}</span>
                 </span>
                 <span class="block w-[76px]">
                   <b class="block text-[12.5px] font-normal">
-                    {{ abMetrics ? Math.max(0, abMetrics.pauseContrastDb).toFixed(0) + " дБ" : "—" }}
+                    {{ abMetrics ? Math.max(0, abMetrics.pauseContrastDb).toFixed(0) + " " + u.db : "—" }}
                   </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">паузы</span>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricPauses") }}</span>
                 </span>
                 <span class="block w-[76px]">
                   <b class="block text-[12.5px] font-normal">
-                    {{ abDelta === null ? "—" : Math.abs(abDelta).toFixed(1) + " дБ" }}
+                    {{ abDelta === null ? "—" : Math.abs(abDelta).toFixed(1) + " " + u.db }}
                   </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">к оригиналу</span>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricDelta") }}</span>
                 </span>
                 <span class="block w-[76px]">
                   <b
                     class="block text-[12.5px] font-normal"
                     :class="abMetrics && abMetrics.longestDropoutS > 0.4 ? 'text-[var(--danger)]' : ''"
                   >
-                    {{ abMetrics ? abMetrics.longestDropoutS.toFixed(2) + " с" : "—" }}
+                    {{ abMetrics ? abMetrics.longestDropoutS.toFixed(2) + " " + u.s : "—" }}
                   </b>
-                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">провал</span>
+                  <span class="mt-0.5 block text-[10.5px] whitespace-nowrap text-[var(--muted)]">{{ t("sound.metricDropout") }}</span>
                 </span>
               </div>
 
               <label class="flex items-center gap-2 text-[11.5px] whitespace-nowrap text-[var(--muted)]">
                 <AppSwitch v-model="abNormalize" />
-                выравнивать громкость
+                {{ t("sound.normalize") }}
               </label>
-              <button class="iconbtn" title="Сравнять громкость с оригиналом" @click="matchLevel">
+              <button class="iconbtn" :title="t('sound.matchLevel')" @click="matchLevel">
                 <AppIcon name="sliders" :size="14" />
               </button>
             </div>
           </div>
 
           <div v-if="history.length" class="mt-3 flex flex-wrap items-center gap-1.5">
-            <span class="mr-0.5 text-[11.5px] text-[var(--muted)]">История</span>
+            <span class="mr-0.5 text-[11.5px] text-[var(--muted)]">{{ t("sound.history") }}</span>
             <div
               v-for="entry in history"
               :key="entry.stamp"
@@ -384,7 +386,7 @@ const noiseStage = computed(() => {
               </button>
               <button
                 class="mr-0.5 grid h-4 w-4 cursor-pointer place-items-center rounded text-[var(--muted)] opacity-0 transition hover:text-[var(--danger)] group-hover:opacity-100"
-                title="Удалить запись"
+                :title="t('sound.deleteTake')"
                 @click="removeRecording(entry)"
               >
                 <AppIcon name="close" :size="10" />

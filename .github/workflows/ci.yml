@@ -49,6 +49,10 @@ jobs:
         working-directory: app
         run: npm run check:ui
 
+      - name: i18n check
+        working-directory: app
+        run: npm run check:i18n
+
       - name: Format
         working-directory: app
         run: cargo fmt --all --check

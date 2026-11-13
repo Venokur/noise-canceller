@@ -17,6 +17,7 @@ import { useTheme, useHotkeyCapture } from "./composables/useShell";
 import { useCable } from "./composables/useCable";
 import { useProfiles } from "./composables/useProfiles";
 import { shortName } from "./format";
+import { currentLocale, setLocale, t, u } from "./i18n";
 import type {
   AbEntry,
   AbMetrics,
@@ -114,7 +115,10 @@ let quietMicWarned = false;
 
 const cableOk = ref(true);
 
-const modelStatus = ref("Модель VoxLock · int8 · встроена");
+const modelStatusText = ref<string | null>(null);
+/// The default text is a localized placeholder; a check replaces it with the
+/// answer from Rust, which is already in the current language.
+const modelStatus = computed(() => modelStatusText.value ?? t("model.status"));
 const checkingModel = ref(false);
 const autostart = ref(false);
 const testMode = ref(false);
@@ -164,7 +168,13 @@ const { installingCable, cableMessage, installCable } = useCable({
   error,
 });
 const statusText = computed(() =>
-  error.value ? "Ошибка" : starting.value ? "Запуск модели…" : running.value ? "Работает" : "Выключено"
+  error.value
+    ? t("status.error")
+    : starting.value
+      ? t("status.starting")
+      : running.value
+        ? t("status.working")
+        : t("common.off"),
 );
 const dotClass = computed(() =>
   error.value
@@ -175,16 +185,16 @@ const dotClass = computed(() =>
 );
 const inputLevel = computed(() => toLevel(stats.value.inputRms));
 const outputLevel = computed(() => toLevel(stats.value.outputRms));
-const inputDb = computed(() => (stats.value.inputRms > 1e-5 ? `${(20 * Math.log10(stats.value.inputRms)).toFixed(0)} дБ` : "—"));
-const outputDb = computed(() => (stats.value.outputRms > 1e-5 ? `${(20 * Math.log10(stats.value.outputRms)).toFixed(0)} дБ` : "—"));
+const inputDb = computed(() => (stats.value.inputRms > 1e-5 ? `${(20 * Math.log10(stats.value.inputRms)).toFixed(0)} ${u.db}` : "—"));
+const outputDb = computed(() => (stats.value.outputRms > 1e-5 ? `${(20 * Math.log10(stats.value.outputRms)).toFixed(0)} ${u.db}` : "—"));
 
 
-const presets = [
-  { id: "home", label: "Дом", patch: { gateThresholdDb: -60, gateRatio: 2, gateReleaseMs: 300, agcTargetDb: -24, agcMaxGainDb: 12, highPassHz: 85, comfortNoiseEnabled: false } },
-  { id: "office", label: "Офис", patch: { gateThresholdDb: -52, gateRatio: 3, gateReleaseMs: 250, agcTargetDb: -22, highPassHz: 100, comfortNoiseEnabled: true, comfortNoiseDb: -64 } },
-  { id: "street", label: "Улица", patch: { gateThresholdDb: -46, gateRatio: 4, gateReleaseMs: 200, agcTargetDb: -20, highPassHz: 120, comfortNoiseEnabled: true, comfortNoiseDb: -60 } },
-  { id: "stream", label: "Стрим", patch: { gateThresholdDb: -58, gateRatio: 2.5, gateReleaseMs: 300, agcTargetDb: -24, highPassHz: 80, comfortNoiseEnabled: false, outputGainDb: -6 } },
-];
+const presets = computed(() => [
+  { id: "home", label: t("preset.home"), patch: { gateThresholdDb: -60, gateRatio: 2, gateReleaseMs: 300, agcTargetDb: -24, agcMaxGainDb: 12, highPassHz: 85, comfortNoiseEnabled: false } },
+  { id: "office", label: t("preset.office"), patch: { gateThresholdDb: -52, gateRatio: 3, gateReleaseMs: 250, agcTargetDb: -22, highPassHz: 100, comfortNoiseEnabled: true, comfortNoiseDb: -64 } },
+  { id: "street", label: t("preset.street"), patch: { gateThresholdDb: -46, gateRatio: 4, gateReleaseMs: 200, agcTargetDb: -20, highPassHz: 120, comfortNoiseEnabled: true, comfortNoiseDb: -60 } },
+  { id: "stream", label: t("preset.stream"), patch: { gateThresholdDb: -58, gateRatio: 2.5, gateReleaseMs: 300, agcTargetDb: -24, highPassHz: 80, comfortNoiseEnabled: false, outputGainDb: -6 } },
+]);
 
 function applyPreset(patch: Record<string, unknown>) {
   if (!settings.value) return;
@@ -262,21 +272,21 @@ const readouts = computed(() => {
   const suppressed = stats.value.suppressionDb > 0.5;
   const cap = settings.value?.maxSuppressionDb ?? 0;
   return [
-    { label: "Задержка", value: latency, unit: latency === "—" ? "" : "мс" },
-    { label: "Нагрузка", value: load, unit: load === "—" ? "" : "%" },
+    { label: t("readout.latency"), value: latency, unit: latency === "—" ? "" : u.ms },
+    { label: t("readout.load"), value: load, unit: load === "—" ? "" : "%" },
     {
-      label: "Подавление",
+      label: t("readout.suppression"),
       value: suppressed ? `−${stats.value.suppressionDb.toFixed(0)}` : "—",
-      unit: suppressed ? (cap > 0 ? `дБ / ${cap.toFixed(0)}` : "дБ") : "",
+      unit: suppressed ? (cap > 0 ? `${u.db} / ${cap.toFixed(0)}` : u.db) : "",
     },
   ];
 });
 
 /// Where the sound actually goes, spelled out next to the status dot.
 const routeText = computed(() => {
-  const input = shortName(selectedInput.value) || "микрофон не выбран";
+  const input = shortName(selectedInput.value) || t("route.noMic");
   const output = testMode.value
-    ? shortName(testOutput.value) || "устройство вывода"
+    ? shortName(testOutput.value) || t("common.outputDevice")
     : "CABLE Input";
   return `${input} → ${output}`;
 });
@@ -284,14 +294,14 @@ const routeText = computed(() => {
 /// Score and SNR of the profile in use, shown next to the section title.
 /// The score already sits in the picker label, so only the SNR is repeated here
 /// unless the profile was recorded seconds ago.
-const settingsSections = [
-  { id: "voice", label: "Голос" },
-  { id: "clean", label: "Чистка сигнала" },
-  { id: "latency", label: "Задержка и нагрузка" },
-  { id: "control", label: "Управление" },
-  { id: "diag", label: "Диагностика" },
-  { id: "app", label: "Приложение" },
-];
+const settingsSections = computed(() => [
+  { id: "voice", label: t("section.voice") },
+  { id: "clean", label: t("section.clean") },
+  { id: "latency", label: t("section.latency") },
+  { id: "control", label: t("section.control") },
+  { id: "diag", label: t("section.diag") },
+  { id: "app", label: t("section.app") },
+]);
 const settingsSection = ref("voice");
 const scrollEl = ref<HTMLElement | null>(null);
 const { settingsQuery, searching, filterSettings } = useSettingsSearch();
@@ -315,9 +325,12 @@ async function matchLevel() {
     const next = Math.max(-18, Math.min(18, settings.value.outputGainDb - delta));
     settings.value.outputGainDb = Math.round(next * 2) / 2;
     notify(
-      "Громкость выровнена",
+      t("toast.levelMatched"),
       "ok",
-      `Выход сдвинут на ${delta >= 0 ? "−" : "+"}${Math.abs(delta).toFixed(1)} дБ относительно оригинала.`,
+      t("toast.levelMatchedText", {
+        sign: delta >= 0 ? "−" : "+",
+        db: Math.abs(delta).toFixed(1),
+      }),
     );
   } catch (e) {
     error.value = String(e);
@@ -329,8 +342,8 @@ async function startEngine(test: boolean) {
   if (!selectedInput.value || isCableInput(selectedInput.value)) {
     testMode.value = false;
     error.value = selectedInput.value
-      ? "Выбран виртуальный кабель вместо микрофона — так приложение слышит собственный выход. Выберите настоящий микрофон."
-      : "Микрофон не найден. Подключите микрофон и нажмите «Обновить».";
+      ? t("error.cableAsMic")
+      : t("error.noMic");
     return;
   }
   starting.value = true;
@@ -352,7 +365,7 @@ async function startEngine(test: boolean) {
       // the command cannot change them in place, so restart it once
       await invoke("stop");
       result = await invoke<{ started: boolean }>("start", payload);
-      if (!result.started) throw new Error("движок не перезапустился — закройте и откройте приложение");
+      if (!result.started) throw new Error(t("error.engineRestart"));
     }
     testMode.value = test;
     stats.value = await invoke<Stats>("stats");
@@ -469,10 +482,10 @@ function stopSpectrumPolling() {
 const probeHint = computed(() => {
   const q = probeResult.value;
   if (!q) return "";
-  if (q.clipPercent > 1) return "есть перегруз, убавьте ручку микрофона";
-  if (q.peakDb < -30) return "микрофон тихий, поднимите ручку";
-  if (q.speechPercent < 0.2) return "речи почти не слышно";
-  return "уровень в норме";
+  if (q.clipPercent > 1) return t("probe.hint.clip");
+  if (q.peakDb < -30) return t("probe.hint.quiet");
+  if (q.speechPercent < 0.2) return t("probe.hint.noSpeech");
+  return t("probe.hint.ok");
 });
 
 async function recordProfile() {
@@ -594,13 +607,13 @@ async function pollAb() {
     } else if (++abMisses >= 5) {
       // the engine went away mid-take: do not poll forever
       abRunning.value = false;
-      error.value = "Запись прервана: обработка остановилась.";
+      error.value = t("error.abInterrupted");
       return;
     }
   } catch {
     if (++abMisses >= 5) {
       abRunning.value = false;
-      error.value = "Запись прервана: обработка остановилась.";
+      error.value = t("error.abInterrupted");
       return;
     }
   }
@@ -609,7 +622,7 @@ async function pollAb() {
 
 function formatStamp(stamp: number): string {
   const date = new Date(stamp * 1000);
-  return date.toLocaleString([], {
+  return date.toLocaleString(currentLocale.value, {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -675,7 +688,7 @@ async function applyResetSettings() {
     applyTheme(settings.value.theme);
     await refreshDevices();
     await refreshProfiles();
-    if (result.warning) notify("Хоткей не зарегистрирован", "warn", result.warning);
+    if (result.warning) notify(t("toast.hotkeyTitle"), "warn", result.warning);
   } catch (e) {
     error.value = String(e);
   }
@@ -685,7 +698,7 @@ async function exportSettings() {
   error.value = "";
   try {
     const path = await invoke<string>("export_settings");
-    notify("Настройки сохранены", "ok", path);
+    notify(t("toast.settingsSaved"), "ok", path);
   } catch (e) {
     error.value = String(e);
   }
@@ -699,7 +712,7 @@ async function importSettings() {
     applyTheme(settings.value.theme);
     await refreshDevices();
     await refreshProfiles();
-    if (result.warning) notify("Хоткей не зарегистрирован", "warn", result.warning);
+    if (result.warning) notify(t("toast.hotkeyTitle"), "warn", result.warning);
   } catch (e) {
     error.value = String(e);
   }
@@ -772,9 +785,9 @@ function closeWizard() {
 async function checkModel() {
   checkingModel.value = true;
   try {
-    modelStatus.value = await invoke<string>("check_model_update");
+    modelStatusText.value = await invoke<string>("check_model_update");
   } catch (e) {
-    modelStatus.value = String(e);
+    modelStatusText.value = String(e);
   } finally {
     checkingModel.value = false;
   }
@@ -882,17 +895,20 @@ provide(APP_CONTEXT, {
   stats,
   switchSection,
   sysInfo,
+  t,
   tab,
   testMode,
   testOutput,
   toggleAb,
   togglePower,
   toggleTest,
+  u,
 });
 
 onMounted(async () => {
   try {
     settings.value = await invoke<Settings>("get_settings");
+    setLocale(settings.value.language);
     applyTheme(settings.value.theme);
     if (!settings.value.onboarded) showWizard.value = true;
     await loadSystemInfo();
@@ -914,11 +930,7 @@ onMounted(async () => {
   }
 
   if (profileWeak.value) {
-    notify(
-      "Профиль голоса слабый",
-      "warn",
-      "Запишите новый — 15 секунд в тишине, обычным голосом.",
-    );
+    notify(t("toast.profileWeakTitle"), "warn", t("toast.profileWeakText"));
   }
   if (settings.value?.autoStart && cableOk.value) {
     await startEngine(false);
@@ -932,20 +944,20 @@ onMounted(async () => {
       // but nothing comes out, so restart the engine and say why
       if (stats.value.running && !stats.value.healthy && Date.now() > healthRetryAt) {
         healthRetryAt = Date.now() + 4000;
-        error.value = "Обработка остановилась — перезапускаю движок…";
+        error.value = t("error.processingStopped");
         await stopEngine();
         await startEngine(testMode.value);
         // `startEngine` reports a failure by leaving `running` false and writing
         // `error`; clearing the error unconditionally hid a failed restart
         if (running.value) {
           error.value = "";
-          notify("Движок перезапущен", "ok", "Обработка снова работает.");
+          notify(t("toast.engineRestarted"), "ok", t("toast.engineRestartedText"));
         } else {
           notify(
-            "Движок не поднялся",
+            t("toast.engineFailed"),
             "warn",
-            error.value.replace("Обработка остановилась — перезапускаю движок…", "").trim() ||
-              "Проверьте устройства и лог.",
+            error.value.replace(t("error.processingStopped"), "").trim() ||
+              t("toast.engineFailedText"),
           );
         }
       }
@@ -956,9 +968,9 @@ onMounted(async () => {
         if (slowStreak >= 20 && Date.now() > slowWarnAt) {
           slowWarnAt = Date.now() + 60_000;
           notify(
-            "Процессор не успевает",
+            t("toast.slowTitle"),
             "warn",
-            `Обработка занимает ${(stats.value.rtf * 100).toFixed(0)} % реального времени. Поставьте блок 60 мс или больше потоков.`,
+            t("toast.slowText", { pct: (stats.value.rtf * 100).toFixed(0) }),
           );
         }
       } else {
@@ -969,9 +981,9 @@ onMounted(async () => {
       if (stats.value.running && stats.value.levelerGainDb > 16 && !quietMicWarned) {
         quietMicWarned = true;
         notify(
-          "Микрофон очень тихий",
+          t("toast.quietTitle"),
           "warn",
-          "Выравнивание работает на пределе (+18 дБ) и поднимает шум комнаты. Поднимите громкость микрофона в Windows.",
+          t("toast.quietText"),
         );
       }
     } catch {
@@ -994,15 +1006,15 @@ onMounted(async () => {
         deviceTest.value = testMode.value;
         await stopEngine();
         deviceLost.value = true;
-        error.value = "Устройство отключилось. Ждём подключения…";
-        notify("Микрофон отключился", "warn", "Ждём, пока устройство вернётся.");
+        error.value = t("error.deviceLost");
+        notify(t("toast.micGoneTitle"), "warn", t("toast.micGoneText"));
         return;
       }
 
       if (deviceLost.value && !inputGone && !outputGone) {
         deviceLost.value = false;
         error.value = "";
-        notify("Микрофон снова на связи", "ok");
+        notify(t("toast.micBack"), "ok");
         await startEngine(deviceTest.value);
       }
 
@@ -1066,6 +1078,16 @@ watch(
 );
 
 watch(
+  () => settings.value?.language,
+  (language) => {
+    setLocale(language);
+    // the settings search walks the rendered DOM: after a language switch the
+    // old query would keep rows hidden until the next keystroke
+    if (searching.value) void filterSettings(settingsQuery.value);
+  },
+);
+
+watch(
   () => [settings.value?.chunkMs, settings.value?.denoiserThreads, settings.value?.autoThreads],
   () => {
     void loadSystemInfo();
@@ -1113,28 +1135,28 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
         <button
           v-if="stats.muted"
           class="ml-1 flex h-5 shrink-0 cursor-pointer items-center gap-1.5 rounded-md bg-[var(--danger-soft)] px-1.5 text-[10.5px] text-[var(--danger)]"
-          title="Включить микрофон"
+          :title="t('nav.unmute')"
           @mousedown.stop
           @click.stop="setMuted(false)"
         >
           <AppIcon name="mic" :size="11" />
-          Микрофон выключен
+          {{ t("nav.muted") }}
         </button>
       </template>
 
       <template #nav>
         <button class="tab" :data-active="tab === 'sound'" @mousedown.stop @click="tab = 'sound'">
-          Звук
+          {{ t("nav.sound") }}
         </button>
         <button class="tab" :data-active="tab === 'settings'" @mousedown.stop @click="tab = 'settings'">
-          Настройки
+          {{ t("nav.settings") }}
         </button>
       </template>
 
       <template #actions>
         <button
           class="winbtn"
-          :title="isDark ? 'Светлая тема' : 'Тёмная тема'"
+          :title="isDark ? t('nav.lightTheme') : t('nav.darkTheme')"
           @mousedown.stop
           @click.stop="toggleTheme"
         >
@@ -1154,7 +1176,7 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
     <div class="pointer-events-none fixed right-4 bottom-4 z-[95] flex w-[330px] max-w-[calc(100vw-32px)] flex-col gap-2">
       <!-- an error stays until dismissed: it is a card, not a toast, but it lives
            in the same fixed column so it never moves the page -->
-      <AppToast v-if="error" kind="warn" title="Ошибка" :text="error" @close="error = ''" />
+      <AppToast v-if="error" kind="warn" :title="t('status.error')" :text="error" @close="error = ''" />
       <transition-group name="toast" tag="div" class="relative flex flex-col gap-2">
         <div v-for="toast in toasts" :key="toast.id" class="relative">
           <AppToast
@@ -1169,9 +1191,9 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
 
     <AppConfirm
       v-if="resetDialog"
-      title="Сбросить настройки?"
-      text="Все параметры вернутся к заводским: устройства, профиль, громкость и обработка звука. Записи A/B и профили голоса останутся на диске."
-      confirm-label="Сбросить"
+      :title="t('confirm.resetTitle')"
+      :text="t('confirm.resetText')"
+      :confirm-label="t('confirm.reset')"
       @confirm="applyResetSettings"
       @cancel="resetDialog = false"
     />
@@ -1189,12 +1211,12 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
       >
         <div class="flex items-start justify-between gap-3">
           <div>
-            <h2 id="wizard-title" class="text-[17px] font-semibold tracking-[-0.01em]">Настройка за три шага</h2>
+            <h2 id="wizard-title" class="text-[17px] font-semibold tracking-[-0.01em]">{{ t("wizard.title") }}</h2>
             <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
-              Можно пропустить и вернуться позже: «Настройки» → «Мастер настройки».
+              {{ t("wizard.subtitle") }}
             </p>
           </div>
-          <button class="iconbtn" title="Закрыть" @click="closeWizard">
+          <button class="iconbtn" :title="t('common.close')" @click="closeWizard">
             <AppIcon name="close" :size="14" />
           </button>
         </div>
@@ -1203,12 +1225,12 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
           <div class="flex gap-4 border-t border-[var(--stroke)] py-4">
             <span class="mt-0.5 font-mono text-[11px] text-[var(--muted)]">1</span>
             <div class="min-w-0 flex-1">
-              <div class="text-[13px] font-medium">Виртуальный микрофон</div>
+              <div class="text-[13px] font-medium">{{ t("wizard.step1") }}</div>
               <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
                 {{
                   cableOk
-                    ? "VB-CABLE найден — обработанный звук увидят Zoom, Meet и Discord."
-                    : "Без него другие программы не увидят очищенный звук."
+                    ? t("wizard.cableOk")
+                    : t("wizard.cableMissing")
                 }}
               </p>
               <button
@@ -1219,7 +1241,7 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
                 @click="installCable"
               >
                 <AppIcon v-if="installingCable" name="spinner" :size="14" class="spin" />
-                {{ installingCable ? "Установка…" : "Установить VB-CABLE" }}
+                {{ installingCable ? t("wizard.installing") : t("wizard.install") }}
               </button>
               <p v-if="cableMessage" class="mt-1 text-[11.5px] text-[var(--muted)]">{{ cableMessage }}</p>
             </div>
@@ -1228,23 +1250,27 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
           <div class="flex gap-4 border-t border-[var(--stroke)] py-4">
             <span class="mt-0.5 font-mono text-[11px] text-[var(--muted)]">2</span>
             <div class="min-w-0 flex-1">
-              <div class="text-[13px] font-medium">Микрофон</div>
+              <div class="text-[13px] font-medium">{{ t("wizard.step2") }}</div>
               <div class="mt-2">
                 <AppSelect
                   :model-value="selectedInput"
                   :options="inputOptions"
-                  placeholder="Нет устройств"
+                  :placeholder="t('sound.noDevices')"
                   @update:model-value="pickInput"
                 />
               </div>
               <button :class="btn" class="mt-2" :disabled="probing" @click="probeMic">
                 <AppIcon name="mic" :size="14" />
                 {{
-                  probing ? (probeLeft > 0 ? `Слушаю… ${probeLeft} с` : "Слушаю…") : "Проверить микрофон"
+                  probing
+                    ? probeLeft > 0
+                      ? t("wizard.listening", { s: probeLeft })
+                      : t("wizard.listen")
+                    : t("wizard.probe")
                 }}
               </button>
               <p v-if="probeResult" class="mt-1 text-[11.5px] text-[var(--muted)]">
-                Уровень {{ probeResult.peakDb.toFixed(0) }} дБ — {{ probeHint }}
+                {{ t("wizard.level", { db: probeResult.peakDb.toFixed(0), hint: probeHint }) }}
               </p>
             </div>
           </div>
@@ -1252,31 +1278,31 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
           <div class="flex gap-4 border-t border-[var(--stroke)] py-4">
             <span class="mt-0.5 font-mono text-[11px] text-[var(--muted)]">3</span>
             <div class="min-w-0 flex-1">
-              <div class="text-[13px] font-medium">Профиль голоса</div>
+              <div class="text-[13px] font-medium">{{ t("wizard.step3") }}</div>
               <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
-                Прочитайте любой текст 15 секунд в тишине — модель запомнит тембр.
+                {{ t("wizard.profileHint") }}
               </p>
               <button
                 :class="btnPrimary"
                 class="mt-2"
                 :disabled="recording || !micReady"
-                :title="micReady ? 'Записать профиль голоса' : 'Сначала выберите микрофон'"
+                :title="micReady ? t('wizard.recordTitle') : t('wizard.recordNeedMic')"
                 @click="recordProfile"
               >
                 <span v-if="recording" class="h-2 w-2 shrink-0 rounded-full bg-[var(--danger)]"></span>
                 <AppIcon v-else name="mic" :size="14" />
-                {{ recording ? `Запись… ${recordLeft} с` : "Записать 15 с" }}
+                {{ recording ? t("wizard.recording", { s: recordLeft }) : t("wizard.record") }}
               </button>
               <p v-if="profileQuality" class="mt-1 text-[11.5px] text-[var(--muted)]">
-                Оценка {{ profileQuality.score }}/100 · SNR {{ profileQuality.snrDb.toFixed(0) }} дБ
+                {{ t("wizard.quality", { score: profileQuality.score, snr: profileQuality.snrDb.toFixed(0) }) }}
               </p>
             </div>
           </div>
         </div>
 
         <div class="mt-5 flex items-center justify-end gap-2">
-          <button :class="btnGhost" @click="closeWizard">Пропустить</button>
-          <button :class="btnPrimary" @click="closeWizard">Готово</button>
+          <button :class="btnGhost" @click="closeWizard">{{ t("wizard.skip") }}</button>
+          <button :class="btnPrimary" @click="closeWizard">{{ t("wizard.done") }}</button>
         </div>
       </div>
     </div>

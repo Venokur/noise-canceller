@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppIcon from "./AppIcon.vue";
+import { t } from "../i18n";
 
 withDefaults(
   defineProps<{
@@ -40,7 +41,7 @@ const tint = (kind: string): string => {
     </div>
     <button
       class="-mt-0.5 -mr-1 grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--surface-alt)] hover:text-[var(--text)]"
-      title="Закрыть"
+      :title="t('common.close')"
       @click="emit('close')"
     >
       <AppIcon name="close" :size="12" />

@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crate::devices;
+use crate::lang::Lang;
 use crate::paths;
 use crate::recordings;
 use crate::settings::{self, Settings};
@@ -266,29 +267,33 @@ impl Engine {
     ) -> Result<Self> {
         install_panic_hook();
 
+        let lang = Lang::from_settings(&settings);
         let host = cpal::default_host();
-        let input = devices::pick_input(&host, input_name.as_deref())?;
+        let input = devices::pick_input(&host, input_name.as_deref(), lang)?;
         // the cable's capture side is our own output: processing it is a
         // feedback loop (and every app playing into the cable is "the speaker")
         if let Some(name) = devices::name_of(&input) {
             if devices::is_cable_name(&name) {
-                return Err(anyhow!(
-                    "«{name}» — это виртуальный кабель, а не микрофон: приложение услышит собственный выход. Выберите настоящий микрофон."
-                ));
+                return Err(anyhow!(lang.fmt(
+                    "«{name}» — это виртуальный кабель, а не микрофон: приложение услышит собственный выход. Выберите настоящий микрофон.",
+                    "“{name}” is a virtual cable, not a microphone: the app would hear its own output. Choose a real microphone.",
+                    &[("name", &name)],
+                )));
             }
         }
 
         // a normal run must never speak into the speakers: that is what the
         // explicit "test in speakers" mode is for
         let output = if test_mode {
-            devices::pick_output(&host, output_name.as_deref())?
+            devices::pick_output(&host, output_name.as_deref(), lang)?
         } else {
             match devices::find_cable(&host) {
                 Some(device) => device,
                 None => {
-                    return Err(anyhow!(
-                        "виртуальный микрофон не найден — установите VB-CABLE или включите проверку в колонках"
-                    ))
+                    return Err(anyhow!(lang.text(
+                        "виртуальный микрофон не найден — установите VB-CABLE или включите проверку в колонках",
+                        "the virtual microphone was not found — install VB-CABLE or turn on the speaker check",
+                    )))
                 }
             }
         };
@@ -315,9 +320,17 @@ impl Engine {
             &paths::chunk_model(),
         )?;
         let backend = if settings.voice_isolation {
-            format!("VoxLock · CPU · {} мс блок", chunk_ms.round() as u32)
+            lang.fmt(
+                "VoxLock · CPU · {ms} мс блок",
+                "VoxLock · CPU · {ms} ms block",
+                &[("ms", &(chunk_ms.round() as u32).to_string())],
+            )
         } else {
-            format!("Шумодав без изоляции · {} мс блок", chunk_ms.round() as u32)
+            lang.fmt(
+                "Шумодав без изоляции · {ms} мс блок",
+                "Denoiser without isolation · {ms} ms block",
+                &[("ms", &(chunk_ms.round() as u32).to_string())],
+            )
         };
 
         let shared = Shared::new(settings.clone());

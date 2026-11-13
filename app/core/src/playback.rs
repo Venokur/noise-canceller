@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
 
 use crate::devices;
+use crate::lang::Lang;
 use crate::resample::Resampler;
 use crate::wav;
 
@@ -19,33 +20,38 @@ pub fn stop() {
 }
 
 /// Blocking preview: returns when the file has been played.
-pub fn play(path: &std::path::Path, device_name: Option<&str>) -> Result<()> {
-    play_inner(path, device_name, None)
+pub fn play(path: &std::path::Path, device_name: Option<&str>, lang: Lang) -> Result<()> {
+    play_inner(path, device_name, None, lang)
 }
 
 /// Same, but first brings the speech in the file to `target_db` (dBFS RMS).
 /// Used by the A/B buttons: the processed take is 10-15 dB louder than the raw
 /// one, and that difference hides what the comparison is about.
-pub fn play_normalized(path: &std::path::Path, device_name: Option<&str>) -> Result<()> {
-    play_inner(path, device_name, Some(-24.0))
+pub fn play_normalized(
+    path: &std::path::Path,
+    device_name: Option<&str>,
+    lang: Lang,
+) -> Result<()> {
+    play_inner(path, device_name, Some(-24.0), lang)
 }
 
 fn play_inner(
     path: &std::path::Path,
     device_name: Option<&str>,
     target_db: Option<f32>,
+    lang: Lang,
 ) -> Result<()> {
     CANCEL.store(false, Ordering::Relaxed);
     let (mut samples, rate) = wav::read_mono(path)?;
     if samples.is_empty() {
-        return Err(anyhow!("файл пуст"));
+        return Err(anyhow!(lang.text("файл пуст", "the file is empty")));
     }
     if let Some(target) = target_db {
         normalize(&mut samples, rate, target);
     }
 
     let host = cpal::default_host();
-    let device = devices::pick_output(&host, device_name)?;
+    let device = devices::pick_output(&host, device_name, lang)?;
     let config = device.default_output_config()?;
     let out_rate = config.sample_rate();
     let channels = config.channels() as usize;
@@ -295,12 +301,12 @@ fn percentile(values: &[f32], percent: f32) -> f32 {
 /// absolute -50 dB threshold: in a room with a television the background sits at
 /// -45 dB, an absolute threshold calls it speech, and a take that correctly
 /// silenced the noise looked like one long dropout.
-pub fn ab_metrics(raw: &std::path::Path, clean: &std::path::Path) -> Result<AbMetrics> {
+pub fn ab_metrics(raw: &std::path::Path, clean: &std::path::Path, lang: Lang) -> Result<AbMetrics> {
     let (raw_samples, rate) = wav::read_mono(raw)?;
     let (clean_samples, _) = wav::read_mono(clean)?;
     let n = raw_samples.len().min(clean_samples.len());
     if n == 0 {
-        return Err(anyhow!("запись пуста"));
+        return Err(anyhow!(lang.text("запись пуста", "the take is empty")));
     }
     let window = (rate as usize / 50).max(1); // 20 ms
     let raw_env = envelope(&raw_samples[..n], window);
@@ -392,7 +398,7 @@ mod tests {
         wav::write_mono(&raw_path, &raw, rate).expect("write raw");
         wav::write_mono(&clean_path, &clean, rate).expect("write clean");
 
-        let m = ab_metrics(&raw_path, &clean_path).expect("metrics");
+        let m = ab_metrics(&raw_path, &clean_path, crate::lang::Lang::Ru).expect("metrics");
         let _ = std::fs::remove_dir_all(&dir);
 
         assert!(

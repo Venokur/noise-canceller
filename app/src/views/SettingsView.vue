@@ -6,8 +6,9 @@ import AppSelect from "../components/AppSelect.vue";
 import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
+import { LANGUAGE_OPTIONS } from "../i18n";
 
-const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings } = inject(APP_CONTEXT)!;
+const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnPrimary, capturingHotkey, checkingModel, checkModel, error, exportSettings, importSettings, maxThreads, modelStatus, openLicenses, openLog, presets, resetSettings, restartSoon, settingRow, settings, settingsSection, settingsSections, showWizard, slowConfig, startHotkeyCapture, stats, switchSection, sysInfo, searching, settingsQuery, filterSettings, t, u } = inject(APP_CONTEXT)!;
 </script>
 
 <template>
@@ -34,7 +35,7 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 <input
                   :value="settingsQuery"
                   class="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-                  placeholder="Поиск по настройкам"
+                  :placeholder="t('settings.search')"
                   @input="filterSettings(($event.target as HTMLInputElement).value)"
                 />
               </label>
@@ -45,12 +46,12 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                   :model-value="!settings.basicUi"
                   @update:model-value="(v: boolean) => (settings!.basicUi = !v)"
                 />
-                Дополнительно
+                {{ t("settings.advanced") }}
               </label>
             </div>
 
             <div v-if="!searching" class="mt-3 flex flex-wrap items-center gap-1.5">
-              <span class="mr-1 text-[11.5px] text-[var(--muted)]">Пресеты</span>
+              <span class="mr-1 text-[11.5px] text-[var(--muted)]">{{ t("settings.presets") }}</span>
               <button
                 v-for="preset in presets"
                 :key="preset.id"
@@ -63,11 +64,11 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
 
             <!-- voice -->
             <div v-if="searching || settingsSection === 'voice'" class="sblock">
-              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Голос</h2>
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.voice") }}</h2>
               <div :class="settingRow">
                 <AppLabel
-                  text="Оставлять только мой голос"
-                  hint="VoxLock пропускает только ваш голос. Выключено — остаётся обычный шумодав: легче процессору и профиль не нужен."
+                  :text="t('settings.voice.onlyMine')"
+                  :hint="t('settings.voice.onlyMineHint')"
                 />
                 <div class="flex justify-end">
                   <AppSwitch v-model="settings.voiceIsolation" @update:model-value="() => restartSoon()" />
@@ -75,11 +76,11 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               </div>
               <div v-if="settings.voiceIsolation" :class="settingRow">
                 <AppLabel
-                  text="Сила изоляции"
-                  hint="Сколько очищенного моделью сигнала идёт в выход. 1.00 — максимальная изоляция, ниже — естественнее, но слышнее фон."
+                  :text="t('settings.voice.strength')"
+                  :hint="t('settings.voice.strengthHint')"
                 />
                 <AppSlider
-                  label="Сила изоляции"
+                  :label="t('settings.voice.strength')"
                   v-model="settings.isolationStrength"
                   :min="0"
                   :max="1"
@@ -89,281 +90,281 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               </div>
               <div v-if="settings.voiceIsolation" :class="settingRow">
                 <AppLabel
-                  text="Предел подавления"
-                  hint="Защита от провалов: пока вы говорите, выход модели не станет тише входа больше чем на эту величину. Включается только на ваших фразах — музыку и телевизор в паузах он не возвращает. 0 — без защиты: максимальная изоляция, но модель иногда может проглотить слово."
+                  :text="t('settings.voice.maxSuppression')"
+                  :hint="t('settings.voice.maxSuppressionHint')"
                 />
                 <AppSlider
-                  label="Предел подавления"
+                  :label="t('settings.voice.maxSuppression')"
                   v-model="settings.maxSuppressionDb"
                   :min="0"
                   :max="40"
                   :step="1"
-                  :format="(v) => (v <= 0 ? 'без предела' : `${v} дБ`)"
+                  :format="(v) => (v <= 0 ? t('settings.voice.noLimit') : `${v} ${u.db}`)"
                 />
               </div>
               <div v-if="settings.voiceIsolation" :class="settingRow">
                 <AppLabel
-                  text="Режим"
-                  hint="«По профилю» ищет записанный тембр — точнее всего. «Авто» работает без профиля, но чаще пропускает чужие голоса."
+                  :text="t('settings.voice.mode')"
+                  :hint="t('settings.voice.modeHint')"
                 />
                 <AppSelect
                   v-model="settings.mode"
                   :options="[
-                    { value: 'profile', label: 'По профилю голоса' },
-                    { value: 'auto', label: 'Авто-определение' },
+                    { value: 'profile', label: t('settings.voice.modeProfile') },
+                    { value: 'auto', label: t('settings.voice.modeAuto') },
                   ]"
                   @update:model-value="() => restartSoon()"
                 />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Тембр"
-                  hint="Две полки после автогромкости: «тело» на 200 Гц и разборчивость на 3 кГц. 0 дБ — звук не меняется."
+                  :text="t('settings.voice.tone')"
+                  :hint="t('settings.voice.toneHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.toneEnabled" /></div>
               </div>
               <div v-if="settings.toneEnabled" :class="settingRow">
                 <AppLabel
-                  text="Тело"
-                  hint="Полка на 200 Гц. Вниз убирает бубнёж и остатки гула, вверх добавляет плотность. Выше +3 дБ возвращает то, что снимает срез низов."
+                  :text="t('settings.voice.body')"
+                  :hint="t('settings.voice.bodyHint')"
                 />
                 <AppSlider
-                  label="Тело"
-                  v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+                  :label="t('settings.voice.body')"
+                  v-model="settings.toneLowDb" :min="-6" :max="3" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
               </div>
               <div v-if="settings.toneEnabled" :class="settingRow">
                 <AppLabel
-                  text="Разборчивость"
-                  hint="Полка на 3 кГц — там согласные. Вверх делает речь яснее, но поднимает и остаточный шип, поэтому предел ±6 дБ. Выше 8 кГц полосы нет: модель работает на 16 кГц."
+                  :text="t('settings.voice.presence')"
+                  :hint="t('settings.voice.presenceHint')"
                 />
                 <AppSlider
-                  label="Разборчивость"
-                  v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+                  :label="t('settings.voice.presence')"
+                  v-model="settings.toneHighDb" :min="-6" :max="6" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
               </div>
             </div>
 
             <!-- clean -->
             <div v-if="searching || settingsSection === 'clean'" class="sblock">
-              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Чистка сигнала</h2>
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.clean") }}</h2>
               <div :class="settingRow">
                 <AppLabel
-                  text="Усиление тихого микрофона"
-                  hint="Поднимает тихий микрофон до −26 dBFS перед моделью. Влияет на разборчивость и ровность громкости."
+                  :text="t('settings.clean.leveling')"
+                  :hint="t('settings.clean.levelingHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.inputLeveling" /></div>
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Остаточный шум"
-                  hint="Чем агрессивнее, тем сильнее давит фон и чужие голоса, но тем выше нагрузка и риск подъесть тихие слоги. GTCRN — баланс, DPDFNet и UL-UNAS — сильнее."
+                  :text="t('settings.clean.residual')"
+                  :hint="t('settings.clean.residualHint')"
                 />
                 <AppSelect
                   v-model="settings.residualDenoise"
                   :options="[
-                    { value: 'off', label: 'Выключено' },
-                    { value: 'gtcrn', label: 'GTCRN · лёгкий' },
-                    { value: 'dpdfnet', label: 'DPDFNet · агрессивный' },
-                    { value: 'ulunas', label: 'UL-UNAS · самый сильный' },
+                    { value: 'off', label: t('settings.clean.residualOff') },
+                    { value: 'gtcrn', label: t('settings.clean.residualGtcrn') },
+                    { value: 'dpdfnet', label: t('settings.clean.residualDpdfnet') },
+                    { value: 'ulunas', label: t('settings.clean.residualUlunas') },
                   ]"
                   @update:model-value="() => restartSoon()"
                 />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="VAD-гейт"
-                  hint="Закрывает выход в паузах по детектору речи, а не по уровню. Фон между словами исчезает, тихие слова не режутся."
+                  :text="t('settings.clean.vad')"
+                  :hint="t('settings.clean.vadHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.vadGate" /></div>
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Срез низов"
-                  hint="Фильтр 4-го порядка убирает гул, ветер и низкочастотный стук по столу."
+                  :text="t('settings.clean.highPass')"
+                  :hint="t('settings.clean.highPassHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.highPassEnabled" /></div>
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Частота среза"
-                  hint="Ниже этой частоты сигнал ослабляется. 80–120 Гц убирают гул, выше — начинает худеть сам голос."
+                  :text="t('settings.clean.cutoff')"
+                  :hint="t('settings.clean.cutoffHint')"
                 />
                 <AppSlider
-                  v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} Гц`" />
+                  v-model="settings.highPassHz" :min="20" :max="300" :step="5" :format="(v) => `${v} ${u.hz}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Воздух"
-                  hint="Добавляет верх выше 8 кГц, которого у 16-кГц модели нет: голос перестаёт звучать «в подушку». Это не шумодав и не изоляция — полоса 0–8 кГц, громкость и чужие голоса не меняются. 0 % — выключено."
+                  :text="t('settings.clean.air')"
+                  :hint="t('settings.clean.airHint')"
                 />
                 <AppSlider
-                  label="Воздух"
+                  :label="t('settings.clean.air')"
                   v-model="settings.airAmount" :min="0" :max="1" :step="0.05" :format="(v) => `${Math.round(v * 100)} %`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Гейт"
-                  hint="Пороговый шумодав для остатков сигнала: закрывает всё, что тише порога."
+                  :text="t('settings.clean.gate')"
+                  :hint="t('settings.clean.gateHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.gateEnabled" /></div>
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Порог гейта"
-                  hint="Уровень закрытия гейта. Выше — чище паузы, но можно срезать тихие слова; ниже — мягче."
+                  :text="t('settings.clean.gateThreshold')"
+                  :hint="t('settings.clean.gateThresholdHint')"
                 />
                 <AppSlider
-                  label="Порог гейта"
-                  v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} дБ`" />
+                  :label="t('settings.clean.gateThreshold')"
+                  v-model="settings.gateThresholdDb" :min="-90" :max="-20" :step="1" :format="(v) => `${v} ${u.db}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Степень"
-                  hint="Насколько сильно гейт глушит ниже порога: 1 — мягко, 10 — почти в ноль."
+                  :text="t('settings.clean.gateRatio')"
+                  :hint="t('settings.clean.gateRatioHint')"
                 />
                 <AppSlider
-                  label="Степень"
+                  :label="t('settings.clean.gateRatio')"
                   v-model="settings.gateRatio" :min="1" :max="10" :step="0.5" :format="(v) => v.toFixed(1)" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Атака"
-                  hint="Как быстро открывается гейт. Больше — плавнее, но начало слова может приглушаться."
+                  :text="t('settings.clean.attack')"
+                  :hint="t('settings.clean.attackHint')"
                 />
                 <AppSlider
-                  label="Атака"
-                  v-model="settings.gateAttackMs" :min="1" :max="100" :step="1" :format="(v) => `${v} мс`" />
+                  :label="t('settings.clean.attack')"
+                  v-model="settings.gateAttackMs" :min="1" :max="100" :step="1" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Восстановление"
-                  hint="Как быстро гейт закрывается. Больше — не режет концы слов, но дольше тянет фон."
+                  :text="t('settings.clean.release')"
+                  :hint="t('settings.clean.releaseHint')"
                 />
                 <AppSlider
-                  label="Восстановление"
-                  v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} мс`" />
+                  :label="t('settings.clean.release')"
+                  v-model="settings.gateReleaseMs" :min="20" :max="600" :step="10" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Удержание"
-                  hint="Сколько гейт остаётся открытым после спада уровня, чтобы не обрубать концы слов."
+                  :text="t('settings.clean.hold')"
+                  :hint="t('settings.clean.holdHint')"
                 />
                 <AppSlider
-                  label="Удержание"
-                  v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} мс`" />
+                  :label="t('settings.clean.hold')"
+                  v-model="settings.gateHoldMs" :min="0" :max="500" :step="10" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Автогромкость"
-                  hint="Выравнивает громкость фраз: подтягивает тихие и приглушает громкие, но медленно, чтобы не дёргать уровень внутри слова. Работает только на вашей речи."
+                  :text="t('settings.clean.agc')"
+                  :hint="t('settings.clean.agcHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.agcEnabled" /></div>
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Целевой уровень"
-                  hint="К какому уровню AGC тянет речь. Ниже — тише и безопаснее, выше — громче, но ближе к перегрузу."
+                  :text="t('settings.clean.agcTarget')"
+                  :hint="t('settings.clean.agcTargetHint')"
                 />
                 <AppSlider
-                  label="Целевой уровень"
-                  v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} дБ`" />
+                  :label="t('settings.clean.agcTarget')"
+                  v-model="settings.agcTargetDb" :min="-36" :max="-8" :step="1" :format="(v) => `${v} ${u.db}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Макс. усиление"
-                  hint="Предел подъёма AGC. Большой поднимает и остатки шума; для тихого микрофона хватает 12–18 дБ."
+                  :text="t('settings.clean.agcMax')"
+                  :hint="t('settings.clean.agcMaxHint')"
                 />
                 <AppSlider
-                  label="Макс. усиление"
-                  v-model="settings.agcMaxGainDb" :min="0" :max="30" :step="1" :format="(v) => `${v} дБ`" />
+                  :label="t('settings.clean.agcMax')"
+                  v-model="settings.agcMaxGainDb" :min="0" :max="30" :step="1" :format="(v) => `${v} ${u.db}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Лимитер"
-                  hint="Не даёт сигналу выйти за 0 дБ и срезает пики. Лучше держать включённым."
+                  :text="t('settings.clean.limiter')"
+                  :hint="t('settings.clean.limiterHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.limiterEnabled" /></div>
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Комфортный шум"
-                  hint="Тихий ровный фон в паузах вместо «звонкой» тишины. По умолчанию выключен."
+                  :text="t('settings.clean.comfort')"
+                  :hint="t('settings.clean.comfortHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.comfortNoiseEnabled" /></div>
               </div>
               <div v-if="!settings.basicUi && settings.comfortNoiseEnabled" :class="settingRow">
-                <AppLabel text="Уровень шума" hint="Громкость комфортного шума: −60…−70 дБ почти не слышно." />
+                <AppLabel :text="t('settings.clean.comfortLevel')" :hint="t('settings.clean.comfortLevelHint')" />
                 <AppSlider
-                  label="Уровень шума"
-                  v-model="settings.comfortNoiseDb" :min="-90" :max="-30" :step="1" :format="(v) => `${v} дБ`" />
+                  :label="t('settings.clean.comfortLevel')"
+                  v-model="settings.comfortNoiseDb" :min="-90" :max="-30" :step="1" :format="(v) => `${v} ${u.db}`" />
               </div>
               <div v-if="!settings.basicUi" :class="settingRow">
                 <AppLabel
-                  text="Выходная громкость"
-                  hint="Общее усиление после всей обработки. Меняет только громкость, шумодав не трогает."
+                  :text="t('settings.clean.outputVolume')"
+                  :hint="t('settings.clean.outputVolumeHint')"
                 />
                 <AppSlider
-                  label="Громкость выхода"
-                  v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} дБ`" />
+                  :label="t('sound.outputVolume')"
+                  v-model="settings.outputGainDb" :min="-18" :max="18" :step="0.5" :format="(v) => `${v.toFixed(1)} ${u.db}`" />
               </div>
             </div>
 
             <!-- latency -->
             <div v-if="searching || settingsSection === 'latency'" class="sblock">
-              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Задержка и нагрузка</h2>
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.latency") }}</h2>
               <div :class="settingRow">
                 <AppLabel
-                  text="Буфер автоматически"
-                  hint="Подбирает минимальный буфер без пропусков: при пропуске +20 мс, после 90 с без пропусков −10 мс. Значение запоминается между запусками."
+                  :text="t('settings.latency.bufferAuto')"
+                  :hint="t('settings.latency.bufferAutoHint')"
                 />
                 <div class="flex justify-end"><AppSwitch v-model="settings.bufferAuto" /></div>
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Буфер"
+                  :text="t('settings.latency.buffer')"
                   :hint="
                     settings.bufferAuto
-                      ? 'Текущее значение подобрано автоматически. Выключите авто, чтобы задать вручную.'
-                      : 'Запас в кольце вывода. Больше — стабильнее и без пропусков, но выше задержка.'
+                      ? t('settings.latency.bufferAutoHintShort')
+                      : t('settings.latency.bufferHint')
                   "
                 />
                 <AppSlider
                   v-if="!settings.bufferAuto"
-                  label="Буфер"
+                  :label="t('settings.latency.buffer')"
                   v-model="settings.bufferMs"
                   :min="20"
                   :max="250"
                   :step="10"
-                  :format="(v) => `${v} мс`"
+                  :format="(v) => `${v} ${u.ms}`"
                 />
                 <div v-else class="text-right font-mono text-[12px] tabular-nums">
-                  {{ stats.bufferMs ? stats.bufferMs.toFixed(0) + " мс" : "—" }}
-                  <span class="text-[var(--muted)]">· авто</span>
+                  {{ stats.bufferMs ? stats.bufferMs.toFixed(0) + " " + u.ms : "—" }}
+                  <span class="text-[var(--muted)]">· {{ t("common.auto") }}</span>
                 </div>
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Блок модели"
-                  hint="Размер блока VoxLock: меньше — ниже задержка и выше нагрузка. 60 мс — баланс."
+                  :text="t('settings.latency.block')"
+                  :hint="t('settings.latency.blockHint')"
                 />
                 <AppSlider
-                  label="Блок модели"
-                  v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} мс`" />
+                  :label="t('settings.latency.block')"
+                  v-model="settings.chunkMs" :min="20" :max="120" :step="20" :format="(v) => `${v} ${u.ms}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Потоки модели"
-                  hint="Сколько ядер отдаётся VoxLock. До 4 потоков время обработки падает почти вдвое, дальше почти не помогает. «Автоматически» подбирает число по конфигурации машины и размеру блока."
+                  :text="t('settings.latency.threads')"
+                  :hint="t('settings.latency.threadsHint')"
                 />
                 <div class="flex items-center justify-end gap-2.5">
                   <AppSwitch v-model="settings.autoThreads" />
                   <span class="text-[11.5px] text-[var(--muted)]">
-                    Автоматически<span v-if="settings.autoThreads"> · {{ autoThreads }}</span>
+                    {{ t("settings.latency.auto") }}<span v-if="settings.autoThreads"> · {{ autoThreads }}</span>
                   </span>
                   <button
                     v-if="!settings.autoThreads"
                     :class="btnGhost"
                     class="!h-auto !px-2 !py-1"
-                    title="Подставить рекомендованное число потоков"
+                    :title="t('settings.latency.autoHint')"
                     @click="settings.denoiserThreads = autoThreads"
                   >
                     {{ autoThreads }}
@@ -371,56 +372,58 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
                 </div>
               </div>
               <div v-if="!settings.autoThreads" :class="settingRow">
-                <AppLabel text="Сколько потоков" />
+                <AppLabel :text="t('settings.latency.count')" />
                 <AppSlider
-                  label="Сколько потоков"
+                  :label="t('settings.latency.count')"
                   v-model="settings.denoiserThreads"
                   :min="1"
                   :max="maxThreads"
                   :step="1"
-                  :format="(v) => `${v} из ${maxThreads}`"
+                  :format="(v) => t('settings.latency.of', { v, max: maxThreads })"
                 />
               </div>
               <p class="mt-2 text-[11.5px] leading-relaxed text-[var(--muted)]">
-                Система:
+                {{ t("settings.latency.system") }}
                 <span class="text-[var(--text)]">
-                  {{ sysInfo?.logicalCores ?? "—" }} логических ядер<span v-if="sysInfo">
-                    ({{ sysInfo.physicalCores }} физических)</span
+                  {{ sysInfo?.logicalCores ?? "—" }} {{ t("settings.latency.logical") }}<span v-if="sysInfo">
+                    ({{ sysInfo.physicalCores }} {{ t("settings.latency.physical") }})</span
                   >
                 </span>
-                · рекомендуется <span class="text-[var(--text)]">{{ autoThreads }}</span
-                >. До четырёх потоков время обработки падает почти вдвое, выше — почти не помогает, но
-                забирает ядра у игры.
+                · {{ t("settings.latency.recommended") }} <span class="text-[var(--text)]">{{ autoThreads }}</span
+                >. {{ t("settings.latency.why") }}
               </p>
               <p v-if="slowConfig" class="mt-1 text-[12px] leading-relaxed text-[var(--danger)]">
-                На блоке {{ settings.chunkMs }} мс с
-                {{ settings.autoThreads ? autoThreads : settings.denoiserThreads }} поток(ами) модель не
-                успевает за реальным временем — звук будет рваться. Поставьте 60 мс или больше потоков.
+                {{
+                  t("settings.latency.slow", {
+                    block: settings.chunkMs,
+                    threads: settings.autoThreads ? autoThreads : settings.denoiserThreads,
+                  })
+                }}
               </p>
             </div>
 
             <!-- control -->
             <div v-if="searching || settingsSection === 'control'" class="sblock">
-              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Управление</h2>
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.control") }}</h2>
               <div :class="settingRow">
                 <AppLabel
-                  text="Выключение микрофона"
-                  hint="Глобальное сочетание работает из любой программы. «Удержание» — пока клавиша нажата, микрофон включён (push-to-talk). Escape отменяет запись сочетания."
+                  :text="t('settings.control.mute')"
+                  :hint="t('settings.control.muteHint')"
                 />
                 <div class="flex items-center justify-end gap-2">
                   <button :class="capturingHotkey ? btnPrimary : btn" @click="startHotkeyCapture">
                     <AppIcon name="mic" :size="14" />
-                    {{ capturingHotkey ? "Нажмите сочетание…" : settings.muteHotkey }}
+                    {{ capturingHotkey ? t("settings.control.capture") : settings.muteHotkey }}
                   </button>
                 </div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Режим клавиши" />
+                <AppLabel :text="t('settings.control.mode')" />
                 <AppSelect
                   v-model="settings.hotkeyMode"
                   :options="[
-                    { value: 'toggle', label: 'Переключение' },
-                    { value: 'hold', label: 'Удержание (PTT)' },
+                    { value: 'toggle', label: t('settings.control.toggle') },
+                    { value: 'hold', label: t('settings.control.hold') },
                   ]"
                 />
               </div>
@@ -428,44 +431,44 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
 
             <!-- diagnostics -->
             <div v-if="searching || settingsSection === 'diag'" class="sblock">
-              <h2 class="mt-5 mb-2 text-[15px] font-semibold tracking-[-0.01em]">Диагностика</h2>
+              <h2 class="mt-5 mb-2 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.diag") }}</h2>
               <div class="kv">
-                <span>Усиление выравнивания</span>
+                <span>{{ t("settings.diag.leveler") }}</span>
                 <span :class="stats.levelerGainDb > 16 ? 'text-[var(--danger)]' : ''">
-                  {{ stats.levelerGainDb.toFixed(1) }} дБ
+                  {{ stats.levelerGainDb.toFixed(1) }} {{ u.db }}
                 </span>
-                <span>Потоков модели</span>
+                <span>{{ t("settings.diag.threads") }}</span>
                 <span>
                   {{ stats.threads || "—"
-                  }}<span v-if="settings?.autoThreads && stats.threads" class="text-[var(--muted)]"> · авто</span>
+                  }}<span v-if="settings?.autoThreads && stats.threads" class="text-[var(--muted)]"> · {{ t("common.auto") }}</span>
                 </span>
-                <span>Сбросов модели</span>
+                <span>{{ t("settings.diag.resets") }}</span>
                 <span>{{ stats.guardResets }}</span>
-                <span title="Сэмплы, которые не успели доехать до вывода; в скобках — примерная длительность. Растёт — обработка не успевает.">
-                  Пропущено сэмплов
+                <span :title="t('settings.diag.underrunsHint')">
+                  {{ t("settings.diag.underruns") }}
                 </span>
                 <span>
                   {{ stats.underruns
                   }}<span v-if="stats.underruns && stats.outRate" class="text-[var(--muted)]">
-                    · ≈ {{ ((stats.underruns / stats.outRate) * 1000).toFixed(0) }} мс</span
+                    · ≈ {{ ((stats.underruns / stats.outRate) * 1000).toFixed(0) }} {{ u.ms }}</span
                   >
                 </span>
-                <span title="Блоки, которые не влезли в кольцо вывода и были потеряны. Ноль — норма.">
-                  Переполнений буфера
+                <span :title="t('settings.diag.overflowsHint')">
+                  {{ t("settings.diag.overflows") }}
                 </span>
                 <span>{{ stats.overflows }}</span>
-                <span title="Сэмплы микрофона, потерянные из-за переполнения входного кольца. Ноль — норма.">
-                  Потеряно на входе
+                <span :title="t('settings.diag.captureDropsHint')">
+                  {{ t("settings.diag.captureDrops") }}
                 </span>
                 <span>{{ stats.captureDrops }}</span>
-                <span>Подавление</span>
+                <span>{{ t("readout.suppression") }}</span>
                 <span>
-                  {{ stats.suppressionDb > 0.5 ? "−" + stats.suppressionDb.toFixed(0) + " дБ" : "—" }}
+                  {{ stats.suppressionDb > 0.5 ? "−" + stats.suppressionDb.toFixed(0) + " " + u.db : "—" }}
                 </span>
-                <span>Пик входа</span>
-                <span>{{ stats.inputPeakDb > -100 ? stats.inputPeakDb.toFixed(0) + " дБ" : "—" }}</span>
-                <span title="Подстройка под расхождение часов микрофона и вывода. 0 ppm — конвертер работает ровно, темп и тембр не меняются.">
-                  Расхождение часов
+                <span>{{ t("settings.diag.inputPeak") }}</span>
+                <span>{{ stats.inputPeakDb > -100 ? stats.inputPeakDb.toFixed(0) + " " + u.db : "—" }}</span>
+                <span :title="t('settings.diag.clockHint')">
+                  {{ t("settings.diag.clock") }}
                 </span>
                 <span>
                   {{
@@ -478,74 +481,78 @@ const { applyAutostart, applyPreset, autostart, autoThreads, btn, btnGhost, btnP
               <div class="mt-3 flex flex-wrap items-center gap-1">
                 <button :class="btnGhost" @click="openLog">
                   <AppIcon name="file" :size="14" />
-                  Открыть лог
+                  {{ t("settings.diag.log") }}
                 </button>
-                <button :class="btnGhost" @click="showWizard = true">Мастер настройки</button>
+                <button :class="btnGhost" @click="showWizard = true">{{ t("settings.diag.wizard") }}</button>
               </div>
               <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
-                Лог пишется в data/app.log: старт и стоп движка, ошибки устройств, сбросы модели.
+                {{ t("settings.diag.logHint") }}
               </p>
             </div>
 
             <!-- app -->
             <div v-if="searching || settingsSection === 'app'" class="sblock">
-              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">Приложение</h2>
+              <h2 class="mt-5 mb-1 text-[15px] font-semibold tracking-[-0.01em]">{{ t("section.app") }}</h2>
               <div :class="settingRow">
-                <AppLabel text="Модель VoxLock" :hint="modelStatus" />
+                <AppLabel :text="t('settings.language')" :hint="t('settings.languageHint')" />
+                <AppSelect v-model="settings.language" :options="LANGUAGE_OPTIONS" />
+              </div>
+              <div :class="settingRow">
+                <AppLabel :text="t('model.label')" :hint="modelStatus" />
                 <div class="flex justify-end">
                   <button :class="btn" :disabled="checkingModel" @click="checkModel">
                     <AppIcon v-if="checkingModel" name="spinner" :size="14" class="spin" />
-                    {{ checkingModel ? "Проверяю…" : "Проверить обновления" }}
+                    {{ checkingModel ? t("model.checking") : t("model.check") }}
                   </button>
                 </div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Запускать с Windows" hint="Автозапуск при входе в систему: приложение стартует свёрнутым в трей." />
+                <AppLabel :text="t('settings.app.autostart')" :hint="t('settings.app.autostartHint')" />
                 <div class="flex justify-end"><AppSwitch v-model="autostart" @update:model-value="applyAutostart" /></div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Свернуть в трей при закрытии" hint="Крестик прячет окно в трей, обработка при этом продолжает работать." />
+                <AppLabel :text="t('settings.app.tray')" :hint="t('settings.app.trayHint')" />
                 <div class="flex justify-end"><AppSwitch v-model="settings.closeToTray" /></div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Запускать свёрнутым" hint="При старте окно не показывается: приложение сразу живёт в трее и обрабатывает звук." />
+                <AppLabel :text="t('settings.app.minimized')" :hint="t('settings.app.minimizedHint')" />
                 <div class="flex justify-end"><AppSwitch v-model="settings.startMinimized" /></div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Включать обработку сразу" hint="Как только виртуальный кабель доступен — обработка запускается без нажатия кнопки." />
+                <AppLabel :text="t('settings.app.autoStart')" :hint="t('settings.app.autoStartHint')" />
                 <div class="flex justify-end"><AppSwitch v-model="settings.autoStart" /></div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Следовать системному микрофону" hint="Если в Windows выбран другой микрофон по умолчанию, приложение переключится на него." />
+                <AppLabel :text="t('settings.app.followMic')" :hint="t('settings.app.followMicHint')" />
                 <div class="flex justify-end"><AppSwitch v-model="settings.followDefaultInput" /></div>
               </div>
               <div :class="settingRow">
-                <AppLabel text="Хранить записей A/B" hint="Сколько последних пар хранить в data/recordings; старые удаляются." />
+                <AppLabel :text="t('settings.app.keepAb')" :hint="t('settings.app.keepAbHint')" />
                 <AppSlider
-                  label="Хранить записей A/B"
+                  :label="t('settings.app.keepAb')"
                   v-model="settings.keepRecordings" :min="5" :max="100" :step="5" :format="(v) => `${v}`" />
               </div>
               <div :class="settingRow">
                 <AppLabel
-                  text="Лицензии"
-                  hint="Программа распространяется под MIT. Рядом с ней лежат тексты лицензий третьих сторон: моделей VoxLock, GTCRN, Silero и библиотек sherpa-onnx, ONNX Runtime."
+                  :text="t('settings.app.licenses')"
+                  :hint="t('settings.app.licensesHint')"
                 />
                 <div class="flex justify-end">
                   <button :class="btn" @click="openLicenses">
                     <AppIcon name="file" :size="14" />
-                    Открыть
+                    {{ t("common.open") }}
                   </button>
                 </div>
               </div>
               <div class="mt-4 flex flex-wrap items-center gap-1">
-                <button :class="btnGhost" @click="exportSettings">Экспорт настроек</button>
-                <button :class="btnGhost" @click="importSettings">Импорт настроек</button>
+                <button :class="btnGhost" @click="exportSettings">{{ t("settings.app.export") }}</button>
+                <button :class="btnGhost" @click="importSettings">{{ t("settings.app.import") }}</button>
                 <button :class="btnGhost" class="hover:!text-[var(--danger)]" @click="resetSettings">
-                  Сбросить настройки
+                  {{ t("settings.app.reset") }}
                 </button>
               </div>
               <p class="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
-                Экспорт кладёт файл в data/settings-export.json; для импорта положите его туда же.
+                {{ t("settings.app.exportHint") }}
               </p>
             </div>
           </div>

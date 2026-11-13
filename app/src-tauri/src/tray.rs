@@ -6,6 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use noise_canceller_core::lang::Lang;
 use noise_canceller_core::paths;
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, ContextMenu, Menu, MenuItem};
@@ -16,12 +17,15 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use crate::state::AppState;
 
 /// Tray menu kept in state: showing it ourselves places it at the cursor,
-/// going down.
+/// going down. Every label is stored, because the language can change while the
+/// app runs and the items have to be renamed in place.
 struct TrayState {
     menu: Menu<tauri::Wry>,
     status: MenuItem<tauri::Wry>,
     profile: MenuItem<tauri::Wry>,
     mute: CheckMenuItem<tauri::Wry>,
+    open: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
 }
 
 pub(crate) fn show_main(app: &tauri::AppHandle) {
@@ -51,7 +55,7 @@ pub(crate) fn toggle_mute(app: &tauri::AppHandle) {
     }
 }
 
-pub(crate) fn register_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Option<String> {
+pub(crate) fn register_hotkey(app: &tauri::AppHandle, hotkey: &str, lang: Lang) -> Option<String> {
     let _ = app.global_shortcut().unregister_all();
     match hotkey.parse::<Shortcut>() {
         Ok(shortcut) => {
@@ -59,15 +63,21 @@ pub(crate) fn register_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Option<St
                 noise_canceller_core::log::info(&format!(
                     "hotkey '{hotkey}' registration failed: {err}"
                 ));
-                return Some(format!(
-                    "Не удалось занять сочетание {hotkey}: {err}. Его уже использует другая программа."
+                return Some(lang.fmt(
+                    "Не удалось занять сочетание {hotkey}: {err}. Его уже использует другая программа.",
+                    "Could not register the shortcut {hotkey}: {err}. Another program already uses it.",
+                    &[("hotkey", hotkey), ("err", &err.to_string())],
                 ));
             }
             None
         }
         Err(err) => {
             noise_canceller_core::log::info(&format!("hotkey '{hotkey}' is not valid: {err}"));
-            Some(format!("Сочетание {hotkey} не распознано: {err}"))
+            Some(lang.fmt(
+                "Сочетание {hotkey} не распознано: {err}",
+                "The shortcut {hotkey} was not recognised: {err}",
+                &[("hotkey", hotkey), ("err", &err.to_string())],
+            ))
         }
     }
 }
@@ -109,20 +119,41 @@ fn refresh_tray(app: &tauri::AppHandle) {
     let muted = state.with_engine(|engine| engine.is_muted());
     let running = muted.is_some();
     let muted = muted.unwrap_or(false);
-    let profile = state
+    // one lock for both: the language decides the words and the profile name
+    let (lang, profile_path) = state
         .settings
         .lock()
-        .ok()
-        .and_then(|s| s.profile_path.clone())
+        .map(|s| (Lang::from_settings(&s), s.profile_path.clone()))
+        .unwrap_or((Lang::Ru, None));
+    let profile = profile_path
         .map(|p| p.rsplit(['\\', '/']).next().unwrap_or(&p).to_string())
-        .unwrap_or_else(|| "авто".to_string());
+        .unwrap_or_else(|| lang.text("авто", "auto").to_string());
     let _ = tray.status.set_text(if running {
-        "Обработка включена"
+        lang.text("Обработка включена", "Processing is on")
     } else {
-        "Выключено"
+        lang.text("Выключено", "Off")
     });
-    let _ = tray.profile.set_text(format!("Профиль: {profile}"));
+    let _ = tray.profile.set_text(lang.fmt(
+        "Профиль: {name}",
+        "Profile: {name}",
+        &[("name", &profile)],
+    ));
     let _ = tray.mute.set_checked(muted);
+}
+
+/// Renames the items that do not change while the app runs. The status and the
+/// profile name are refreshed by `refresh_tray` on every menu opening, but
+/// "Open" and "Quit" would keep the language they were created with.
+pub(crate) fn relabel(app: &tauri::AppHandle, lang: Lang) {
+    let Some(tray) = app.try_state::<TrayState>() else {
+        return;
+    };
+    let _ = tray
+        .mute
+        .set_text(lang.text("Микрофон выключен", "Microphone muted"));
+    let _ = tray.open.set_text(lang.text("Открыть", "Open"));
+    let _ = tray.quit.set_text(lang.text("Выход", "Quit"));
+    refresh_tray(app);
 }
 
 /// Only the size is remembered: the window always opens in the middle of the
@@ -217,21 +248,23 @@ fn restore_window(app: &tauri::AppHandle) {
 pub(crate) fn install(
     app: &mut tauri::App,
     start_hotkey: &str,
+    lang: Lang,
     start_minimized: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 
-    let status = MenuItemBuilder::with_id("status", "Выключено")
+    let status = MenuItemBuilder::with_id("status", lang.text("Выключено", "Off"))
         .enabled(false)
         .build(app)?;
-    let profile = MenuItemBuilder::with_id("profile", "Профиль: —")
+    let profile = MenuItemBuilder::with_id("profile", lang.text("Профиль: —", "Profile: —"))
         .enabled(false)
         .build(app)?;
-    let mute = CheckMenuItemBuilder::with_id("mute", "Микрофон выключен")
-        .checked(false)
-        .build(app)?;
-    let open = MenuItemBuilder::with_id("open", "Открыть").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Выход").build(app)?;
+    let mute =
+        CheckMenuItemBuilder::with_id("mute", lang.text("Микрофон выключен", "Microphone muted"))
+            .checked(false)
+            .build(app)?;
+    let open = MenuItemBuilder::with_id("open", lang.text("Открыть", "Open")).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", lang.text("Выход", "Quit")).build(app)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
@@ -242,6 +275,8 @@ pub(crate) fn install(
         status: status.clone(),
         profile: profile.clone(),
         mute: mute.clone(),
+        open: open.clone(),
+        quit: quit.clone(),
     });
 
     let mut builder = TrayIconBuilder::with_id("main")
@@ -276,7 +311,7 @@ pub(crate) fn install(
     }
     builder.build(app)?;
 
-    register_hotkey(app.handle(), start_hotkey);
+    register_hotkey(app.handle(), start_hotkey, lang);
     // the window is created hidden: restore its size and center it while the
     // page is loading; `on_page_load` shows it after the first paint
     restore_window(app.handle());

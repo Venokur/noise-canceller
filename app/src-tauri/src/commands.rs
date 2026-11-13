@@ -8,6 +8,7 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 
 use noise_canceller_core::engine::Engine;
+use noise_canceller_core::lang::Lang;
 use noise_canceller_core::paths;
 use noise_canceller_core::settings::Settings;
 use noise_canceller_core::{devices, recordings};
@@ -130,13 +131,20 @@ pub(crate) fn apply_settings(
     settings: Settings,
     rearm_hotkey: bool,
 ) -> Option<String> {
+    let previous_language = state.settings.lock().ok().map(|s| s.language.clone());
     settings.save(&state.settings_path);
     if let Ok(mut guard) = state.settings.lock() {
         *guard = settings.clone();
     }
+    let lang = Lang::from_settings(&settings);
+    // the tray was built with the old language: rename it before the window
+    // redraws, so the two never disagree for longer than a save
+    if previous_language.as_deref() != Some(settings.language.as_str()) {
+        crate::tray::relabel(app, lang);
+    }
     state.with_engine(|engine| engine.update_settings(&settings));
     if rearm_hotkey {
-        register_hotkey(app, &settings.mute_hotkey)
+        register_hotkey(app, &settings.mute_hotkey, lang)
     } else {
         None
     }
@@ -144,11 +152,17 @@ pub(crate) fn apply_settings(
 
 #[tauri::command]
 pub(crate) async fn probe_mic(
+    state: State<'_, AppState>,
     input: Option<String>,
     seconds: f32,
 ) -> Result<noise_canceller_core::profile::Quality, String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        noise_canceller_core::profile::probe(input.as_deref(), seconds)
+        noise_canceller_core::profile::probe(input.as_deref(), seconds, lang)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -162,11 +176,17 @@ pub(crate) fn probe_spectrum() -> Vec<f32> {
 
 #[tauri::command]
 pub(crate) async fn record_profile(
+    state: State<'_, AppState>,
     input: Option<String>,
     seconds: f32,
 ) -> Result<noise_canceller_core::profile::Profile, String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        noise_canceller_core::profile::record(input.as_deref(), seconds)
+        noise_canceller_core::profile::record(input.as_deref(), seconds, lang)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -185,9 +205,18 @@ pub(crate) fn delete_profile(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub(crate) fn ab_start(state: State<'_, AppState>, seconds: f32) -> Result<(), String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     state
         .with_engine(|engine| engine.start_ab(seconds).map_err(|e| e.to_string()))
-        .unwrap_or_else(|| Err("engine is not running".to_string()))
+        .unwrap_or_else(|| {
+            Err(lang
+                .text("движок не запущен", "the engine is not running")
+                .to_string())
+        })
 }
 
 #[tauri::command]
@@ -222,16 +251,26 @@ pub(crate) fn stop_playback() {
 
 #[tauri::command]
 pub(crate) async fn play_profile(
+    state: State<'_, AppState>,
     path: String,
     output: Option<String>,
     normalize: Option<bool>,
 ) -> Result<(), String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let target = output.as_deref().filter(|s| !s.is_empty());
         if normalize.unwrap_or(false) {
-            noise_canceller_core::playback::play_normalized(std::path::Path::new(&path), target)
+            noise_canceller_core::playback::play_normalized(
+                std::path::Path::new(&path),
+                target,
+                lang,
+            )
         } else {
-            noise_canceller_core::playback::play(std::path::Path::new(&path), target)
+            noise_canceller_core::playback::play(std::path::Path::new(&path), target, lang)
         }
     })
     .await
@@ -287,9 +326,15 @@ Start-Process -FilePath $exe.FullName -Verb RunAs -WorkingDirectory $exe.Directo
 }
 
 #[tauri::command]
-pub(crate) async fn check_model_update() -> Result<String, String> {
+pub(crate) async fn check_model_update(state: State<'_, AppState>) -> Result<String, String> {
     const SCRIPT: &str =
         "$m = Invoke-RestMethod 'https://huggingface.co/api/models/arbazsiddiqui/voxlock'; $m.sha";
+
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
 
     let output = tauri::async_runtime::spawn_blocking(move || powershell(SCRIPT))
         .await
@@ -297,12 +342,22 @@ pub(crate) async fn check_model_update() -> Result<String, String> {
         .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
-        return Err("не удалось связаться с huggingface.co".to_string());
+        return Err(lang
+            .text(
+                "не удалось связаться с huggingface.co",
+                "could not reach huggingface.co",
+            )
+            .to_string());
     }
 
     let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if sha.is_empty() {
-        return Err("пустой ответ от huggingface.co".to_string());
+        return Err(lang
+            .text(
+                "пустой ответ от huggingface.co",
+                "huggingface.co returned an empty answer",
+            )
+            .to_string());
     }
 
     let state_path = paths::data_dir().join("model-state.json");
@@ -324,15 +379,23 @@ pub(crate) async fn check_model_update() -> Result<String, String> {
     match known {
         None => {
             write(&sha);
-            Ok(format!(
-                "Модель VoxLock · ревизия {short} · отслеживание включено"
+            Ok(lang.fmt(
+                "Модель VoxLock · ревизия {short} · отслеживание включено",
+                "VoxLock model · revision {short} · tracking enabled",
+                &[("short", &short)],
             ))
         }
-        Some(previous) if previous == sha => Ok(format!("Модель актуальна · ревизия {short}")),
+        Some(previous) if previous == sha => Ok(lang.fmt(
+            "Модель актуальна · ревизия {short}",
+            "The model is up to date · revision {short}",
+            &[("short", &short)],
+        )),
         Some(_) => {
             write(&sha);
-            Ok(format!(
-                "На huggingface.co есть новая ревизия ({short}) — она появится в следующем обновлении приложения"
+            Ok(lang.fmt(
+                "На huggingface.co есть новая ревизия ({short}) — она появится в следующем обновлении приложения",
+                "A new revision ({short}) is available on huggingface.co — it will arrive with the next app update",
+                &[("short", &short)],
             ))
         }
     }
@@ -443,7 +506,12 @@ pub(crate) fn open_log() -> Result<(), String> {
 /// Licenses travel next to the exe: `THIRD_PARTY_NOTICES.txt` and `licenses/`.
 /// In a dev build they sit one level up, in the repository root.
 #[tauri::command]
-pub(crate) fn open_licenses() -> Result<(), String> {
+pub(crate) fn open_licenses(state: State<'_, AppState>) -> Result<(), String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     let root = paths::root_dir();
     let candidates = [root.clone(), root.parent().unwrap_or(&root).to_path_buf()];
 
@@ -465,7 +533,12 @@ pub(crate) fn open_licenses() -> Result<(), String> {
         }
     }
 
-    Err("файлы лицензий не найдены рядом с программой".to_string())
+    Err(lang
+        .text(
+            "файлы лицензий не найдены рядом с программой",
+            "the license files were not found next to the program",
+        )
+        .to_string())
 }
 
 #[tauri::command]
@@ -473,7 +546,10 @@ pub(crate) fn reset_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<SettingsResult, String> {
-    let fresh = Settings::default();
+    let mut fresh = Settings::default();
+    // resolve "auto" now: the window renders this snapshot, and an unresolved
+    // language would show as an empty picker
+    fresh.sanitize();
     let warning = apply_settings(&app, &state, fresh.clone(), true);
     noise_canceller_core::log::info("settings reset to defaults");
     Ok(SettingsResult {
@@ -498,7 +574,17 @@ pub(crate) fn import_settings(
 ) -> Result<SettingsResult, String> {
     let path = paths::data_dir().join("settings-export.json");
     if !path.exists() {
-        return Err("нет файла settings-export.json в папке data".to_string());
+        let lang = state
+            .settings
+            .lock()
+            .map(|s| Lang::from_settings(&s))
+            .unwrap_or_default();
+        return Err(lang
+            .text(
+                "нет файла settings-export.json в папке data",
+                "there is no settings-export.json in the data folder",
+            )
+            .to_string());
     }
     let settings = Settings::load(&path);
     let warning = apply_settings(&app, &state, settings.clone(), true);
@@ -583,10 +669,16 @@ pub(crate) fn ab_level_delta(stamp: u64) -> Result<f32, String> {
 /// `AbMetrics::problems()`, the same code `nc metrics --check` runs, so the card
 /// and the regression cannot disagree.
 #[tauri::command(async)]
-pub(crate) fn ab_metrics(stamp: u64) -> Result<AbMetricsDto, String> {
+pub(crate) fn ab_metrics(state: State<'_, AppState>, stamp: u64) -> Result<AbMetricsDto, String> {
+    let lang = state
+        .settings
+        .lock()
+        .map(|s| Lang::from_settings(&s))
+        .unwrap_or_default();
     let m = noise_canceller_core::playback::ab_metrics(
         &recordings::raw(stamp),
         &recordings::clean(stamp),
+        lang,
     )
     .map_err(|e| e.to_string())?;
     Ok(AbMetricsDto {

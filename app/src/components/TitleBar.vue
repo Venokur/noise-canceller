@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { invoke } from "@tauri-apps/api/core";
 import AppIcon from "./AppIcon.vue";
+import { t } from "../i18n";
 
 function minimize() {
   invoke("window_minimize");
@@ -38,13 +39,13 @@ function startDrag(event: MouseEvent) {
     <div class="flex items-center justify-end gap-1">
       <slot name="actions" />
       <span class="mx-1 h-4 w-px bg-[var(--stroke)]"></span>
-      <button class="winbtn" title="Свернуть" @mousedown.stop @click.stop="minimize">
+      <button class="winbtn" :title="t('window.minimize')" @mousedown.stop @click.stop="minimize">
         <AppIcon name="minus" :size="12" :stroke="1.6" />
       </button>
-      <button class="winbtn" title="Развернуть" @mousedown.stop @click.stop="maximize">
+      <button class="winbtn" :title="t('window.maximize')" @mousedown.stop @click.stop="maximize">
         <AppIcon name="maximize" :size="10" :stroke="1.6" />
       </button>
-      <button class="winbtn close" title="Закрыть" @mousedown.stop @click.stop="close">
+      <button class="winbtn close" :title="t('common.close')" @mousedown.stop @click.stop="close">
         <AppIcon name="close" :size="12" :stroke="1.6" />
       </button>
     </div>

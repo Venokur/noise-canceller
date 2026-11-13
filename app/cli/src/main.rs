@@ -3,6 +3,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use noise_canceller_core::air::Air;
 use noise_canceller_core::dsp::Chain;
+use noise_canceller_core::lang::Lang;
 use noise_canceller_core::paths;
 use noise_canceller_core::resample::Resampler;
 use noise_canceller_core::settings::Settings;
@@ -59,6 +60,7 @@ fn metrics_file() -> Result<()> {
     let m = noise_canceller_core::playback::ab_metrics(
         std::path::Path::new(files[0]),
         std::path::Path::new(files[1]),
+        Lang::En,
     )?;
 
     if json {
@@ -157,7 +159,7 @@ fn record_profile() -> Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(5.0);
 
-    let profile = noise_canceller_core::profile::record(None, seconds)?;
+    let profile = noise_canceller_core::profile::record(None, seconds, Lang::En)?;
     println!("saved {}", profile.path);
     println!(
         "duration={:.1}s speech={:.0}% snr={:.1}dB peak={:.1}dB clip={:.2}% score={}",
