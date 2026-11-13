@@ -680,6 +680,25 @@ pub(crate) fn ab_level_delta(stamp: u64) -> Result<f32, String> {
 /// `AbMetrics::problems()`, the same code `nc metrics --check` runs, so the card
 /// and the regression cannot disagree.
 #[tauri::command(async)]
+pub(crate) fn ab_settings(state: State<'_, AppState>, stamp: u64) -> Result<Settings, String> {
+    let path = noise_canceller_core::recordings::snapshot(stamp);
+    if !path.exists() {
+        let lang = state
+            .settings
+            .lock()
+            .map(|s| Lang::from_settings(&s))
+            .unwrap_or_default();
+        return Err(lang
+            .text(
+                "снимок настроек этого дубля не найден",
+                "the settings snapshot for this take was not found",
+            )
+            .to_string());
+    }
+    Ok(Settings::load(&path))
+}
+
+#[tauri::command(async)]
 pub(crate) fn ab_metrics(state: State<'_, AppState>, stamp: u64) -> Result<AbMetricsDto, String> {
     let lang = state
         .settings

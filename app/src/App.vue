@@ -114,6 +114,7 @@ const history = ref<AbEntry[]>([]);
 const abNormalize = ref(true);
 const showWizard = ref(false);
 const resetDialog = ref(false);
+const takeToApply = ref<AbEntry | null>(null);
 const wizardEl = ref<HTMLElement | null>(null);
 const abDelta = ref<number | null>(null);
 const abMetrics = ref<AbMetrics | null>(null);
@@ -696,6 +697,28 @@ async function removeRecording(entry: AbEntry) {
   }
 }
 
+function askApplyTake(entry: AbEntry) {
+  takeToApply.value = entry;
+}
+
+async function applyTakeSettings() {
+  const entry = takeToApply.value;
+  takeToApply.value = null;
+  if (!entry) return;
+  error.value = "";
+  try {
+    const next = await invoke<Settings>("ab_settings", { stamp: entry.stamp });
+    settings.value = next;
+    applyTheme(next.theme);
+    await refreshDevices();
+    await refreshProfiles();
+    restartSoon(true);
+    notify(t("toast.takeApplied"), "ok", t("toast.takeAppliedText"));
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 function resetSettings() {
   resetDialog.value = true;
 }
@@ -850,6 +873,7 @@ provide(APP_CONTEXT, {
   abRunning,
   applyAutostart,
   applyPreset,
+  askApplyTake,
   autostart,
   autoThreads,
   btn,
@@ -1242,6 +1266,15 @@ function saveDevices(reconnect = false) {  if (!settings.value) return;
       :confirm-label="t('confirm.reset')"
       @confirm="applyResetSettings"
       @cancel="resetDialog = false"
+    />
+
+    <AppConfirm
+      v-if="takeToApply"
+      :title="t('confirm.takeTitle')"
+      :text="t('confirm.takeText', { stamp: formatStamp(takeToApply.stamp) })"
+      :confirm-label="t('confirm.takeApply')"
+      @confirm="applyTakeSettings"
+      @cancel="takeToApply = null"
     />
 
     <!-- first-run wizard -->

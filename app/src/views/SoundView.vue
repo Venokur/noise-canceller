@@ -6,7 +6,7 @@ import AppSlider from "../components/AppSlider.vue";
 import AppSwitch from "../components/AppSwitch.vue";
 import { APP_CONTEXT } from "../appContext";
 
-const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
+const { abClean, abDelta, abFolder, abMetrics, abNormalize, abProgress, abRaw, abRunning, askApplyTake, btn, btnGhost, btnPrimary, busy, cableMessage, cableOk, deleteProfile, formatStamp, history, inputChannels, inputDb, inputIsCable, inputLevel, inputOptions, installCable, installingCable, matchLevel, micReady, outputDb, outputLevel, outputOptions, pickInput, pickOutput, pickProfile, playFile, playingKey, playProfile, probeHint, probeLeft, probeMic, probeResult, probing, profileInfo, profileMeta, profileMismatch, profileOptions, profileWeak, readouts, reconnecting, recording, recordLeft, recordProfile, refreshDevicesManually, refreshing, refreshProfiles, removeRecording, running, selectedInput, selectedOutput, selectedProfile, selectRecording, settings, shortName, shownSpectrum, spectrumLive, starting, stats, tab, t, testMode, testOutput, toggleAb, togglePower, toggleTest, u } = inject(APP_CONTEXT)!;
 
 const channelOptions = computed(() => [
   { value: "-1", label: t("sound.channelMix") },
@@ -15,6 +15,12 @@ const channelOptions = computed(() => [
     label: t("sound.channelN", { n: index + 1 }),
   })),
 ]);
+
+/// The take currently shown in the card, so its settings snapshot can be
+/// applied without hunting for the timestamp.
+const selectedTake = computed(
+  () => history.value.find((entry) => entry.raw === abRaw.value) ?? null,
+);
 
 /// The real capture format, not a hard-coded caption: a 44.1 kHz stereo
 /// interface used to be labelled "48 kHz · mono".
@@ -455,6 +461,13 @@ const noiseStage = computed(() => {
                 <AppIcon name="close" :size="10" />
               </button>
             </div>
+          </div>
+          <div v-if="selectedTake" class="mt-2 flex flex-wrap items-center gap-1.5">
+            <button :class="btnGhost" @click="askApplyTake(selectedTake)">
+              <AppIcon name="sliders" :size="14" />
+              {{ t("sound.applyTakeSettings") }}
+            </button>
+            <span class="text-[11.5px] text-[var(--muted)]">{{ t("sound.applyTakeSettingsHint") }}</span>
           </div>
         </section>
   </div>

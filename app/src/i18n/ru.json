@@ -55,6 +55,8 @@
   "toast.settingsSaved": "Настройки сохранены",
   "toast.levelMatched": "Громкость выровнена",
   "toast.levelMatchedText": "Выход сдвинут на {sign}{db} дБ относительно оригинала.",
+  "toast.takeApplied": "Настройки дубля применены",
+  "toast.takeAppliedText": "Обработка перезапущена с параметрами этой записи.",
   "toast.profileWeakTitle": "Профиль голоса слабый",
   "toast.profileWeakText": "Запишите новый — 15 секунд в тишине, обычным голосом.",
   "toast.engineRestarted": "Движок перезапущен",
@@ -101,6 +103,9 @@
   "confirm.resetTitle": "Сбросить настройки?",
   "confirm.resetText": "Все параметры вернутся к заводским: устройства, профиль, громкость и обработка звука. Записи A/B и профили голоса останутся на диске.",
   "confirm.reset": "Сбросить",
+  "confirm.takeTitle": "Применить настройки дубля?",
+  "confirm.takeText": "Текущие параметры обработки будут заменены теми, с которыми записан дубль {stamp}. Устройства и профиль тоже переключатся.",
+  "confirm.takeApply": "Применить",
 
   "sound.powerOff": "Выключить обработку",
   "sound.powerOn": "Включить обработку",
@@ -158,6 +163,8 @@
   "sound.normalize": "выравнивать громкость",
   "sound.matchLevel": "Сравнять громкость с оригиналом",
   "sound.history": "История",
+  "sound.applyTakeSettings": "Настройки дубля",
+  "sound.applyTakeSettingsHint": "вернуть параметры, с которыми записан этот дубль",
   "sound.deleteTake": "Удалить запись",
   "sound.noMicFound": "Микрофон не найден",
 

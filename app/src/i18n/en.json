@@ -55,6 +55,8 @@
   "toast.settingsSaved": "Settings saved",
   "toast.levelMatched": "Level matched",
   "toast.levelMatchedText": "The output moved {sign}{db} dB relative to the original.",
+  "toast.takeApplied": "Take settings applied",
+  "toast.takeAppliedText": "Processing restarted with the parameters of this take.",
   "toast.profileWeakTitle": "The voice profile is weak",
   "toast.profileWeakText": "Record a new one — 15 seconds of silence, in your normal voice.",
   "toast.engineRestarted": "Engine restarted",
@@ -101,6 +103,9 @@
   "confirm.resetTitle": "Reset the settings?",
   "confirm.resetText": "Everything returns to factory values: devices, profile, level and sound processing. A/B takes and voice profiles stay on disk.",
   "confirm.reset": "Reset",
+  "confirm.takeTitle": "Apply the take settings?",
+  "confirm.takeText": "The current processing parameters will be replaced with those of take {stamp}. Devices and profile switch too.",
+  "confirm.takeApply": "Apply",
 
   "sound.powerOff": "Turn processing off",
   "sound.powerOn": "Turn processing on",
@@ -158,6 +163,8 @@
   "sound.normalize": "normalize the level",
   "sound.matchLevel": "Match the level of the original",
   "sound.history": "History",
+  "sound.applyTakeSettings": "Take settings",
+  "sound.applyTakeSettingsHint": "restore the parameters this take was recorded with",
   "sound.deleteTake": "Delete the take",
   "sound.noMicFound": "No microphone found",
 
